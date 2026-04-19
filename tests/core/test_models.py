@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from cloudguardiq.core.enums import (
     CloudProvider,
@@ -23,7 +24,6 @@ from cloudguardiq.core.models import (
     ScanRequest,
     ScanResponse,
 )
-
 
 # ── Enum tests ──────────────────────────────────────────────────────
 
@@ -322,7 +322,10 @@ class TestRemediationCard:
         return RemediationCard(
             finding_result=finding,
             narrative="Enable HTTPS on the storage account.",
-            terraform_fix='resource "azurerm_storage_account" "sa" { enable_https_traffic_only = true }',
+            terraform_fix=(
+                'resource "azurerm_storage_account" "sa"'
+                " { enable_https_traffic_only = true }"
+            ),
             cli_fix="az storage account update --https-only true",
             confidence_qualifier="High confidence (Tier 1 data)",
             estimated_savings_usd=0.0,
@@ -486,7 +489,7 @@ class TestResourceSnapshotEdgeCases:
         assert snap.captured_at == ts
 
     def test_missing_required_field_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ResourceSnapshot(
                 subscription_id="s",
                 resource_group="rg",

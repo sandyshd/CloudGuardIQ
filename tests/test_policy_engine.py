@@ -47,7 +47,6 @@ class TestPolicyEngine:
 
     def test_no_azure_imports_in_policy(self) -> None:
         """Verify that cloudguardiq.policy.engine does not import azure SDK."""
-        import cloudguardiq.policy.engine as mod
         import sys
 
         for name in sys.modules:
