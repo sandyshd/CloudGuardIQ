@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from cloudguardiq.core.enums import CloudProvider, DataTier, FindingCategory, Severity
+from cloudguardiq.core.enums import DataTier, FindingCategory, Severity
 from cloudguardiq.core.models import FindingResult, RemediationCard, ResourceSnapshot
 from cloudguardiq.healing.contract_monitor import ContractMonitor
 from cloudguardiq.healing.drift_detector import DriftDetector
