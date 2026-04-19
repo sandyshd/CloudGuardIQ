@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, cast
 
 from cloudguardiq.ai.prompt_templates import (
     REMEDIATION_SYSTEM_PROMPT,
@@ -35,12 +35,13 @@ class RemediationEngine:
         Retries up to 3 times with exponential backoff, then raises AIEngineError.
         """
         finding_json = finding.model_dump_json(indent=2)
+        category = finding.category.value if finding.category is not None else "unknown"
         user_prompt = REMEDIATION_USER_TEMPLATE.format(
             finding_json=finding_json,
             resource_type=finding.resource_type,
             resource_name=finding.resource_name,
             severity=finding.severity.value,
-            category=finding.category.value if finding.category is not None else "",
+            category=category,
         )
 
         last_error: Exception | None = None
@@ -75,7 +76,9 @@ class RemediationEngine:
             temperature=0.2,
         )
         content = response.choices[0].message.content
-        return json.loads(content)  # type: ignore[no-any-return]
+        if not isinstance(content, str):
+            raise AIEngineError("Empty or non-string response content from OpenAI")
+        return cast(dict[str, Any], json.loads(content))
 
     def _parse_response(
         self, finding: FindingResult, response: dict[str, Any]
