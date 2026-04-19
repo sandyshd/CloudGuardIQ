@@ -35,7 +35,12 @@ class TestRemediationEngine:
         mock_response.choices = [
             MagicMock(
                 message=MagicMock(
-                    content='{"summary":"Enable HTTPS","explanation":"Set HTTPS only","risk_if_ignored":"Data in transit exposed","terraform_code":"resource \\"azurerm\\" {}","manual_steps":["Go to portal","Enable HTTPS"]}'
+                    content=(
+                        '{"summary":"Enable HTTPS","explanation":"Set HTTPS only",'
+                        '"risk_if_ignored":"Data in transit exposed",'
+                        '"terraform_code":"resource \\"azurerm\\" {}",'
+                        '"manual_steps":["Go to portal","Enable HTTPS"]}'
+                    )
                 )
             )
         ]
@@ -77,7 +82,11 @@ class TestRemediationEngine:
         mock_response.choices = [
             MagicMock(
                 message=MagicMock(
-                    content='{"summary":"Fix","explanation":"Do it","risk_if_ignored":"Bad","terraform_code":"","manual_steps":[]}'
+                    content=(
+                        '{"summary":"Fix","explanation":"Do it",'
+                        '"risk_if_ignored":"Bad","terraform_code":"",'
+                        '"manual_steps":[]}'
+                    )
                 )
             )
         ]
