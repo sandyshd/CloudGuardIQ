@@ -1,13 +1,28 @@
-"""CloudGuardIQ — Capability detector for Azure subscription tiers."""
+"""CloudGuardIQ -- Capability detector for Azure subscription tiers.
+
+Detects which Azure data tiers are available for a given subscription.
+Results are cached in Cosmos DB with a 24-hour TTL to avoid probing on every scan.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
+from cloudguardiq.adapters.base import CapabilityFlags
 from cloudguardiq.core.enums import DataTier
 
+if TYPE_CHECKING:
+    from azure.identity.aio import TokenCredential
+
+    from cloudguardiq.core.database import CosmosRepository
+
 logger = logging.getLogger(__name__)
+
+CACHE_TTL = timedelta(hours=24)
 
 
 @dataclass
@@ -16,7 +31,9 @@ class SubscriptionCapabilities:
 
     has_defender: bool = False
     has_cost_management: bool = False
-    available_tiers: list[DataTier] = field(default_factory=lambda: [DataTier.TIER1_NATIVE])
+    available_tiers: list[DataTier] = field(
+        default_factory=lambda: [DataTier.TIER1_NATIVE]
+    )
 
     @property
     def max_tier(self) -> DataTier:
@@ -29,46 +46,127 @@ class SubscriptionCapabilities:
 
 
 class CapabilityDetector:
-    """Detects which Azure services are available for a subscription."""
+    """Detects which Azure services are available for a subscription.
 
-    async def detect(self, subscription_id: str) -> SubscriptionCapabilities:
-        """Probe the subscription to determine available data tiers.
+    Uses Cosmos DB to cache results with a 24-hour TTL.
+    """
 
-        Always returns at least TIER1_NATIVE (ARM-only scanning).
+    def __init__(
+        self,
+        credential: TokenCredential,
+        subscription_id: str,
+        db: CosmosRepository,
+    ) -> None:
+        self._credential = credential
+        self._subscription_id = subscription_id
+        self._db = db
+
+    async def detect(self) -> CapabilityFlags:
+        """Detect available data tiers for the subscription.
+
+        Checks Cosmos DB cache first. If the cache is fresh (< 24 h),
+        returns the cached flags. Otherwise probes all three tiers in
+        parallel, saves the result, and returns it.
         """
-        caps = SubscriptionCapabilities()
+        cached = await self._db.get_capability_flags(self._subscription_id)
+        if cached is not None:
+            age = datetime.now(timezone.utc) - cached.detected_at
+            if age < CACHE_TTL:
+                logger.debug(
+                    "Using cached capability flags for %s (age=%s)",
+                    self._subscription_id,
+                    age,
+                )
+                return cached
 
-        # Try Defender for Cloud
+        t1, t2, t3 = await asyncio.gather(
+            self._probe_tier1(),
+            self._probe_tier2(),
+            self._probe_tier3(),
+        )
+
+        flags = CapabilityFlags(
+            tier1_available=t1,
+            tier2_available=t2,
+            tier3_available=t3,
+            detected_at=datetime.now(timezone.utc),
+        )
+        await self._db.save_capability_flags(self._subscription_id, flags)
+        return flags
+
+    async def _probe_tier1(self) -> bool:
+        """Probe Tier 1 availability.
+
+        Tier 1 (Resource Graph + Cost Management) is always available
+        to any service principal with Reader role.
+        """
+        return True
+
+    async def _probe_tier2(self) -> bool:
+        """Probe Tier 2 availability (Defender free CSPM).
+
+        Calls SecureScores.list() to check whether Defender free tier
+        is active for the subscription.
+        """
         try:
-            caps.has_defender = await self._check_defender(subscription_id)
-            if caps.has_defender:
-                caps.available_tiers.append(DataTier.TIER3_PAID)
-        except Exception:
-            logger.warning(
-                "Defender for Cloud check failed for %s — continuing without it",
-                subscription_id,
-            )
+            from azure.mgmt.security.aio import SecurityCenter
 
-        # Try Cost Management
+            client = SecurityCenter(
+                credential=self._credential,
+                subscription_id=self._subscription_id,
+            )
+            try:
+                async for _ in client.secure_scores.list():
+                    break
+                return True
+            finally:
+                await client.close()
+        except Exception as exc:
+            _status = getattr(exc, "status_code", None)
+            if _status in (403, 404):
+                logger.info(
+                    "Tier 2 not available for %s (HTTP %s)",
+                    self._subscription_id,
+                    _status,
+                )
+            else:
+                logger.warning(
+                    "Tier 2 probe failed for %s: %s",
+                    self._subscription_id,
+                    exc,
+                )
+            return False
+
+    async def _probe_tier3(self) -> bool:
+        """Probe Tier 3 availability (paid Defender plans).
+
+        Calls Alerts.list() to check whether a paid Defender plan
+        is active for the subscription.
+        """
         try:
-            caps.has_cost_management = await self._check_cost_management(subscription_id)
-            if caps.has_cost_management and DataTier.TIER2_FREE_CSPM not in caps.available_tiers:
-                caps.available_tiers.append(DataTier.TIER2_FREE_CSPM)
-        except Exception:
-            logger.warning(
-                "Cost Management check failed for %s — continuing without it",
-                subscription_id,
+            from azure.mgmt.security.aio import SecurityCenter
+
+            client = SecurityCenter(
+                credential=self._credential,
+                subscription_id=self._subscription_id,
             )
-
-        return caps
-
-    async def _check_defender(self, subscription_id: str) -> bool:
-        """Check if Defender for Cloud is enabled."""
-        # Placeholder — real implementation in AzureAdapter
-        _ = subscription_id
-        return False
-
-    async def _check_cost_management(self, subscription_id: str) -> bool:
-        """Check if Cost Management is accessible."""
-        _ = subscription_id
-        return False
+            try:
+                async for _ in client.alerts.list():
+                    break
+                return True
+            finally:
+                await client.close()
+        except Exception as exc:
+            _status = getattr(exc, "status_code", None)
+            if _status == 403:
+                logger.info(
+                    "Tier 3 not available for %s (HTTP 403)",
+                    self._subscription_id,
+                )
+            else:
+                logger.warning(
+                    "Tier 3 probe failed for %s: %s",
+                    self._subscription_id,
+                    exc,
+                )
+            return False

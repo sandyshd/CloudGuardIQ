@@ -1,6 +1,8 @@
-"""Tests for CapabilityDetector."""
+"""Tests for CapabilityDetector (legacy SubscriptionCapabilities tests)."""
 
 from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -31,6 +33,16 @@ class TestSubscriptionCapabilities:
 class TestCapabilityDetector:
     @pytest.mark.asyncio
     async def test_detect_baseline(self) -> None:
-        detector = CapabilityDetector()
-        caps = await detector.detect("sub-123")
-        assert DataTier.TIER1_NATIVE in caps.available_tiers
+        mock_db = AsyncMock()
+        mock_db.get_capability_flags = AsyncMock(return_value=None)
+        mock_db.save_capability_flags = AsyncMock()
+        detector = CapabilityDetector(
+            credential=MagicMock(),
+            subscription_id="sub-123",
+            db=mock_db,
+        )
+        # Patch tier2/tier3 to avoid real Azure calls
+        detector._probe_tier2 = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        detector._probe_tier3 = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        flags = await detector.detect()
+        assert flags.tier1_available is True
