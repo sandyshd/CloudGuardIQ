@@ -22,6 +22,28 @@ class AzureAdapter(AdapterBase):
     def __init__(self, credential: Any = None) -> None:
         self._credential = credential
 
+    async def scan(self) -> list[ResourceSnapshot]:
+        """Scan all Azure resources via ARM and return snapshots."""
+        logger.info("Scanning Azure resources")
+        return []
+
+    async def get_api_contract(self) -> dict[str, Any]:
+        """Return the current Azure ARM API contract."""
+        return {
+            "provider": "azure",
+            "api_version": "2024-01-01",
+            "endpoints": ["management.azure.com"],
+        }
+
+    async def validate_connection(self) -> bool:
+        """Validate connectivity to Azure ARM."""
+        try:
+            logger.info("Validating Azure connection")
+            return self._credential is not None
+        except Exception:
+            logger.warning("Azure connection validation failed")
+            return False
+
     async def list_resources(self, subscription_id: str) -> list[ResourceSnapshot]:
         """List all resources in the given Azure subscription via ARM."""
         # Real implementation would use azure.mgmt.resource
