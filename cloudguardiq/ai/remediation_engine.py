@@ -40,7 +40,7 @@ class RemediationEngine:
             resource_type=finding.resource_type,
             resource_name=finding.resource_name,
             severity=finding.severity.value,
-            category=finding.category.value,
+            category=finding.category.value if finding.category is not None else "",
         )
 
         last_error: Exception | None = None
@@ -75,7 +75,7 @@ class RemediationEngine:
             temperature=0.2,
         )
         content = response.choices[0].message.content
-        return json.loads(content)  # type: ignore[arg-type]
+        return json.loads(content)  # type: ignore[no-any-return]
 
     def _parse_response(
         self, finding: FindingResult, response: dict[str, Any]
