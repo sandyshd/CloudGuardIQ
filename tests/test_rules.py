@@ -8,7 +8,7 @@ from cloudguardiq.adapters.rules.iam import OverprivilegedIdentityRule
 from cloudguardiq.adapters.rules.keyvault import KeyVaultPurgeProtectionRule, KeyVaultSoftDeleteRule
 from cloudguardiq.adapters.rules.network import NSGOpenRDPRule, NSGOpenSSHRule
 from cloudguardiq.adapters.rules.storage import StorageHttpsOnlyRule, StoragePublicAccessRule
-from cloudguardiq.core.enums import CloudProvider, DataTier, FindingCategory, Severity
+from cloudguardiq.core.enums import DataTier, FindingCategory, Severity
 from cloudguardiq.core.models import ResourceSnapshot
 
 
