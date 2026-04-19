@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
@@ -32,6 +32,7 @@ from cloudguardiq.adapters.rules.storage import (
     StorageHttpsOnlyRule,
     StoragePublicAccessRule,
 )
+from cloudguardiq.api.auth import TokenPayload, verify_token
 from cloudguardiq.core.config import get_settings
 from cloudguardiq.core.database import CosmosRepository
 from cloudguardiq.core.enums import DataTier, Severity
@@ -45,6 +46,8 @@ from cloudguardiq.core.models import (
 from cloudguardiq.policy.engine import PolicyEngine
 
 logger = logging.getLogger(__name__)
+
+_auth = Depends(verify_token)
 
 # ------------------------------------------------------------------
 # Application state
@@ -191,7 +194,10 @@ async def health() -> dict[str, str]:
 
 
 @app.post("/scan/trigger")
-async def trigger_scan(request: ScanRequest) -> dict[str, str]:
+async def trigger_scan(
+    request: ScanRequest,
+    _user: TokenPayload = _auth,
+) -> dict[str, str]:
     """Trigger an async scan for a subscription."""
     scan_id = str(uuid.uuid4())
     logger.info(
@@ -203,7 +209,10 @@ async def trigger_scan(request: ScanRequest) -> dict[str, str]:
 
 
 @app.post("/scan", response_model=ScanResponse)
-async def scan_subscription(request: ScanRequest) -> ScanResponse:
+async def scan_subscription(
+    request: ScanRequest,
+    _user: TokenPayload = _auth,
+) -> ScanResponse:
     """Scan an Azure subscription for security and cost findings."""
     adapter = AzureAdapter()
     scanner = _build_scanner()
@@ -235,6 +244,7 @@ async def scan_subscription(request: ScanRequest) -> ScanResponse:
 async def list_findings(
     subscription_id: str = Query(default="sub-stub"),
     limit: int = Query(default=50, ge=1, le=200),
+    _user: TokenPayload = _auth,
 ) -> list[RemediationCard]:
     """Return a paginated list of RemediationCards (stub)."""
     repo = get_repo()
@@ -252,7 +262,10 @@ async def list_findings(
 
 
 @app.get("/findings/{finding_id}")
-async def get_finding(finding_id: str) -> RemediationCard:
+async def get_finding(
+    finding_id: str,
+    _user: TokenPayload = _auth,
+) -> RemediationCard:
     """Get a single RemediationCard by finding ID."""
     repo = get_repo()
     if repo is not None:
@@ -269,7 +282,10 @@ async def get_finding(finding_id: str) -> RemediationCard:
     "/findings/{finding_id}/terraform",
     response_class=PlainTextResponse,
 )
-async def get_finding_terraform(finding_id: str) -> str:
+async def get_finding_terraform(
+    finding_id: str,
+    _user: TokenPayload = _auth,
+) -> str:
     """Return plain-text Terraform fix for a finding."""
     repo = get_repo()
     if repo is not None:
@@ -284,7 +300,9 @@ async def get_finding_terraform(finding_id: str) -> str:
 
 
 @app.get("/subscriptions")
-async def list_subscriptions() -> list[dict[str, str]]:
+async def list_subscriptions(
+    _user: TokenPayload = _auth,
+) -> list[dict[str, str]]:
     """List connected subscriptions (stub)."""
     return [
         {

@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     azure_client_id: str = ""
     azure_client_secret: str = ""
 
+    # Authentication
+    auth_disabled: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

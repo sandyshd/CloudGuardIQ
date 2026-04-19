@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from cloudguardiq.api.auth import TokenPayload, verify_token
 from cloudguardiq.api.main import app
+
+
+async def _no_auth() -> TokenPayload:
+    return TokenPayload(sub="test-user")
+
+
+app.dependency_overrides[verify_token] = _no_auth
 
 
 def _client() -> TestClient:
