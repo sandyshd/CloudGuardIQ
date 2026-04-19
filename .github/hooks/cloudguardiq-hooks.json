@@ -1,0 +1,50 @@
+{
+  "hooks": [
+    {
+      "event": "postToolUse",
+      "tools": ["insert_edit_into_file", "create_file"],
+      "steps": [
+        {
+          "tool": "runInTerminal",
+          "args": {
+            "command": "cd ${workspaceFolder} && python -m pytest tests/ -x --tb=line -q 2>&1 | tail -15",
+            "waitForExit": true
+          }
+        }
+      ],
+      "description": "Auto-run tests after every file edit"
+    },
+    {
+      "event": "preToolUse",
+      "tools": ["runInTerminal"],
+      "steps": [
+        {
+          "tool": "checkInput",
+          "args": {
+            "blockPatterns": [
+              "rm -rf /",
+              "DROP TABLE",
+              "--force push",
+              "git push --force"
+            ]
+          }
+        }
+      ],
+      "description": "Block destructive commands"
+    },
+    {
+      "event": "postToolUse",
+      "tools": ["insert_edit_into_file", "create_file"],
+      "steps": [
+        {
+          "tool": "runInTerminal",
+          "args": {
+            "command": "cd ${workspaceFolder} && ruff check cloudguardiq/ --quiet 2>&1 | head -10",
+            "waitForExit": true
+          }
+        }
+      ],
+      "description": "Auto-lint after every file edit"
+    }
+  ]
+}

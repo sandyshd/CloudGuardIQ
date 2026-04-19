@@ -1,0 +1,232 @@
+"""CloudGuardIQ -- Core Pydantic v2 data models."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import datetime, timezone
+from typing import Any
+from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from cloudguardiq.core.enums import (
+    CloudProvider,
+    DataTier,
+    FindingCategory,
+    FindingType,
+    RemediationStatus,
+    Severity,
+)
+
+
+class ResourceSnapshot(BaseModel):
+    """Canonical representation of a cloud resource at a point in time."""
+
+    model_config = ConfigDict(frozen=False)
+
+    id: str = ""
+    provider: CloudProvider = CloudProvider.AZURE
+    subscription_id: str
+    resource_group: str
+    resource_type: str
+    resource_name: str
+    region: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    cost_monthly: float = 0.0
+    tags: dict[str, str] = Field(default_factory=dict)
+    data_tier: DataTier
+    raw_hash: str = ""
+    captured_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @classmethod
+    def build_id(
+        cls,
+        provider: CloudProvider,
+        resource_type: str,
+        subscription_id: str,
+        resource_group: str,
+        resource_name: str,
+    ) -> str:
+        """Generate a cloud-agnostic unique ID.
+
+        Format: `<provider>/<short_type>/<sub>/<rg>/<name>` (all lower-case).
+        """
+        short_type = (
+            resource_type.split("/")[-1].lower()
+            if "/" in resource_type
+            else resource_type.lower()
+        )
+        return "/".join(
+            [
+                provider.value.lower(),
+                short_type,
+                subscription_id.lower(),
+                resource_group.lower(),
+                resource_name.lower(),
+            ]
+        )
+
+    def model_post_init(self, __context: Any) -> None:
+        """Auto-populate `id` and `raw_hash` when not supplied."""
+        if not self.id:
+            self.id = self.build_id(
+                self.provider,
+                self.resource_type,
+                self.subscription_id,
+                self.resource_group,
+                self.resource_name,
+            )
+        if not self.raw_hash:
+            payload = json.dumps(self.config, sort_keys=True, default=str)
+            self.raw_hash = hashlib.sha256(payload.encode()).hexdigest()
+
+    # ------------------------------------------------------------------
+    # Backward-compatible property aliases for legacy code
+    # ------------------------------------------------------------------
+
+    @property
+    def resource_id(self) -> str:
+        """Alias kept for adapters/rules that still reference resource_id."""
+        return self.id
+
+    @property
+    def location(self) -> str:
+        """Alias kept for code that still references location."""
+        return self.region
+
+    @property
+    def properties(self) -> dict[str, Any]:
+        """Alias kept for rules that still reference properties."""
+        return self.config
+
+    @property
+    def scanned_at(self) -> datetime:
+        """Alias kept for code that still references scanned_at."""
+        return self.captured_at
+
+
+class FindingResult(BaseModel):
+    """A security, FinOps, or compliance finding produced by the PolicyEngine."""
+
+    model_config = ConfigDict(frozen=False)
+
+    finding_id: str = Field(default_factory=lambda: str(uuid4()))
+    resource_snapshot: ResourceSnapshot | None = None
+    rule_id: str
+    rule_name: str = ""
+    severity: Severity
+    finding_type: FindingType = FindingType.SECURITY
+    description: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    compliance_frameworks: list[str] = Field(default_factory=list)
+    waste_monthly_usd: float = 0.0
+    priority_score: float = 0.0
+    detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # ------------------------------------------------------------------
+    # Backward-compatible fields / aliases for legacy code
+    # ------------------------------------------------------------------
+    snapshot_id: Any | None = Field(default=None, exclude=True)
+    title: str = Field(default="", exclude=True)
+    category: FindingCategory | None = Field(default=None, exclude=True)
+    resource_id: str = Field(default="", exclude=True)
+    resource_type: str = Field(default="", exclude=True)
+    resource_name: str = Field(default="", exclude=True)
+    recommended_action: str = Field(default="", exclude=True)
+
+    @property
+    def id(self) -> str:  # noqa: A003
+        """Alias for finding_id (legacy code uses .id)."""
+        return self.finding_id
+
+    def model_post_init(self, __context: Any) -> None:
+        """Populate rule_name from title and finding_type from category if needed."""
+        if self.title and not self.rule_name:
+            self.rule_name = self.title
+        if self.category is not None and self.finding_type == FindingType.SECURITY:
+            if self.category == FindingCategory.COST:
+                self.finding_type = FindingType.FINOPS
+            elif self.category == FindingCategory.COMPLIANCE:
+                self.finding_type = FindingType.COMPLIANCE
+
+    def compute_priority_score(
+        self,
+        alpha: float = 0.5,
+        beta: float = 0.3,
+        gamma: float = 0.2,
+    ) -> float:
+        """Compute and set the priority score (0-100).
+
+        Formula: `alpha * severity_score + beta * cost_score + gamma * compliance_score`
+        """
+        severity_map: dict[Severity, float] = {
+            Severity.CRITICAL: 100.0,
+            Severity.HIGH: 80.0,
+            Severity.MEDIUM: 60.0,
+            Severity.LOW: 40.0,
+            Severity.INFORMATIONAL: 20.0,
+        }
+        severity_score = severity_map.get(self.severity, 0.0)
+        cost_score = min(self.waste_monthly_usd, 100.0)
+        compliance_score = min(len(self.compliance_frameworks) * 25.0, 100.0)
+        self.priority_score = round(
+            alpha * severity_score + beta * cost_score + gamma * compliance_score,
+            2,
+        )
+        return self.priority_score
+
+
+class RemediationCard(BaseModel):
+    """AI-generated remediation plan with Terraform fix code."""
+
+    model_config = ConfigDict(frozen=False)
+
+    card_id: str = Field(default_factory=lambda: str(uuid4()))
+    finding_result: FindingResult | None = None
+    narrative: str = ""
+    terraform_fix: str = ""
+    cli_fix: str = ""
+    confidence_qualifier: str = ""
+    estimated_savings_usd: float = 0.0
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    model_version: str = ""
+
+    # ------------------------------------------------------------------
+    # Backward-compatible fields for legacy code
+    # ------------------------------------------------------------------
+    finding_id: Any | None = Field(default=None, exclude=True)
+    summary: str = Field(default="", exclude=True)
+    explanation: str = Field(default="", exclude=True)
+    risk_if_ignored: str = Field(default="", exclude=True)
+    terraform_code: str = Field(default="", exclude=True)
+    manual_steps: list[str] = Field(default_factory=list, exclude=True)
+    status: RemediationStatus = Field(default=RemediationStatus.PENDING, exclude=True)
+
+    @property
+    def id(self) -> str:  # noqa: A003
+        """Alias for card_id (legacy code uses .id)."""
+        return self.card_id
+
+    def model_post_init(self, __context: Any) -> None:
+        """Populate new fields from legacy fields when provided."""
+        if self.summary and not self.narrative:
+            self.narrative = self.summary
+        if self.terraform_code and not self.terraform_fix:
+            self.terraform_fix = self.terraform_code
+
+
+class ScanRequest(BaseModel):
+    """API request to trigger a subscription scan."""
+
+    subscription_id: str
+    include_cost: bool = True
+
+
+class ScanResponse(BaseModel):
+    """API response after scan completes."""
+
+    subscription_id: str
+    snapshots_count: int
+    findings_count: int
+    findings: list[FindingResult] = Field(default_factory=list)
