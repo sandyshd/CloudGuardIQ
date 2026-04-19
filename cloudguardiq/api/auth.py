@@ -52,13 +52,14 @@ def _decode_token(
 
     for key in signing_keys:
         try:
-            return jwt.decode(
+            decoded: dict[str, Any] = jwt.decode(
                 token,
                 key.key,
                 algorithms=["RS256", "HS256"],
                 audience=audience,
                 issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0",
             )
+            return decoded
         except jwt.InvalidSignatureError:
             continue
 

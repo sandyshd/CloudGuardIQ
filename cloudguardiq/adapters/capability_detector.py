@@ -16,7 +16,7 @@ from cloudguardiq.adapters.base import CapabilityFlags
 from cloudguardiq.core.enums import DataTier
 
 if TYPE_CHECKING:
-    from azure.identity.aio import TokenCredential
+    from azure.core.credentials_async import AsyncTokenCredential
 
     from cloudguardiq.core.database import CosmosRepository
 
@@ -53,7 +53,7 @@ class CapabilityDetector:
 
     def __init__(
         self,
-        credential: TokenCredential,
+        credential: AsyncTokenCredential,
         subscription_id: str,
         db: CosmosRepository,
     ) -> None:
@@ -120,7 +120,7 @@ class CapabilityDetector:
                     break
                 return True
             finally:
-                await client.close()
+                await client.close()  # type: ignore[no-untyped-call]
         except Exception as exc:
             _status = getattr(exc, "status_code", None)
             if _status in (403, 404):
@@ -155,7 +155,7 @@ class CapabilityDetector:
                     break
                 return True
             finally:
-                await client.close()
+                await client.close()  # type: ignore[no-untyped-call]
         except Exception as exc:
             _status = getattr(exc, "status_code", None)
             if _status == 403:
