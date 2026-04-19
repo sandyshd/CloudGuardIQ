@@ -17,6 +17,8 @@ _TEST_SECRET = "test-secret-key-for-unit-tests-only-32b"
 _TEST_TENANT = "test-tenant-id"
 _TEST_CLIENT_ID = "test-client-id"
 
+_auth_dep = Depends(verify_token)
+
 
 def _make_token(
     *,
@@ -40,7 +42,7 @@ def _build_app() -> FastAPI:
 
     @test_app.get("/protected")
     async def protected(
-        user: TokenPayload = Depends(verify_token),
+        user: TokenPayload = _auth_dep,
     ) -> dict[str, str]:
         return {"sub": user.sub}
 

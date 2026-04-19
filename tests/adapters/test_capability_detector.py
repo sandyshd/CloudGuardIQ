@@ -59,12 +59,11 @@ class TestProbeTier2:
         with patch(
             "cloudguardiq.adapters.capability_detector.CapabilityDetector._probe_tier2",
             wraps=detector._probe_tier2,
+        ), patch(
+            "azure.mgmt.security.aio.SecurityCenter",
+            return_value=mock_client,
         ):
-            with patch(
-                "azure.mgmt.security.aio.SecurityCenter",
-                return_value=mock_client,
-            ):
-                result = await detector._probe_tier2()
+            result = await detector._probe_tier2()
         assert result is True
 
     @pytest.mark.asyncio

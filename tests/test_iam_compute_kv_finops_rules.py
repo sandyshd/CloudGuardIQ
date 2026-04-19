@@ -5,16 +5,6 @@
 
 from __future__ import annotations
 
-from cloudguardiq.adapters.rules.iam import (
-    ClassicAdminRoleRule,
-    ExternalUserPrivilegedRoleRule,
-    GuestPrivilegedRoleRule,
-    NoMFAConditionalAccessRule,
-    OwnerRoleDirectUserRule,
-    OwnerRoleSubscriptionScopeRule,
-    SPOwnerMultipleSubscriptionsRule,
-    SPPasswordExpiryRule,
-)
 from cloudguardiq.adapters.rules.compute import (
     IdleVMRule,
     MissingCostTagsRule,
@@ -23,13 +13,6 @@ from cloudguardiq.adapters.rules.compute import (
     OutdatedOSImageRule,
     PublicIPDirectAttachedRule,
     UnmanagedDiskRule,
-)
-from cloudguardiq.adapters.rules.keyvault import (
-    NoDiagnosticLoggingRule,
-    PublicNetworkAccessRule,
-    PurgeProtectionRule,
-    SecretNoExpiryRule,
-    SoftDeleteRule,
 )
 from cloudguardiq.adapters.rules.finops import (
     AKSNoAutoscalerRule,
@@ -40,6 +23,23 @@ from cloudguardiq.adapters.rules.finops import (
     OversizedVMRule,
     UnassignedPublicIPRule,
     UnattachedManagedDiskRule,
+)
+from cloudguardiq.adapters.rules.iam import (
+    ClassicAdminRoleRule,
+    ExternalUserPrivilegedRoleRule,
+    GuestPrivilegedRoleRule,
+    NoMFAConditionalAccessRule,
+    OwnerRoleDirectUserRule,
+    OwnerRoleSubscriptionScopeRule,
+    SPOwnerMultipleSubscriptionsRule,
+    SPPasswordExpiryRule,
+)
+from cloudguardiq.adapters.rules.keyvault import (
+    NoDiagnosticLoggingRule,
+    PublicNetworkAccessRule,
+    PurgeProtectionRule,
+    SecretNoExpiryRule,
+    SoftDeleteRule,
 )
 from cloudguardiq.core.enums import CloudProvider, DataTier, FindingType, Severity
 from cloudguardiq.core.models import ResourceSnapshot
@@ -112,20 +112,31 @@ class TestIAM002OwnerRoleSubscriptionScope:
         assert result.severity == Severity.CRITICAL
 
     def test_pass_when_owner_at_resource_group_scope(self):
-        snap = _iam_snap({"role_definition_name": "Owner", "scope": "/subscriptions/sub-123/resourceGroups/rg-test"})
+        snap = _iam_snap(
+            {"role_definition_name": "Owner",
+             "scope": "/subscriptions/sub-123/resourceGroups/rg-test"}
+        )
         assert OwnerRoleSubscriptionScopeRule().evaluate(snap) is None
 
 
 class TestIAM003SPOwnerMultipleSubscriptions:
     def test_fail_when_sp_owns_multiple_subs(self):
-        snap = _iam_snap({"role_definition_name": "Owner", "principal_type": "ServicePrincipal", "owner_subscription_count": 3})
+        snap = _iam_snap(
+            {"role_definition_name": "Owner",
+             "principal_type": "ServicePrincipal",
+             "owner_subscription_count": 3}
+        )
         result = SPOwnerMultipleSubscriptionsRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "IAM-003"
         assert result.severity == Severity.CRITICAL
 
     def test_pass_when_sp_owns_single_sub(self):
-        snap = _iam_snap({"role_definition_name": "Owner", "principal_type": "ServicePrincipal", "owner_subscription_count": 1})
+        snap = _iam_snap(
+            {"role_definition_name": "Owner",
+             "principal_type": "ServicePrincipal",
+             "owner_subscription_count": 1}
+        )
         assert SPOwnerMultipleSubscriptionsRule().evaluate(snap) is None
 
 
@@ -381,90 +392,160 @@ class TestFIN001UnattachedManagedDisk:
 
 class TestFIN002UnassignedPublicIP:
     def test_fail_when_unassigned(self):
-        snap = _finops_snap(resource_type="Microsoft.Network/publicIPAddresses", resource_name="pip-test", config={"ip_association": None})
+        snap = _finops_snap(
+            resource_type="Microsoft.Network/publicIPAddresses",
+            resource_name="pip-test",
+            config={"ip_association": None}
+        )
         result = UnassignedPublicIPRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-002"
         assert result.waste_monthly_usd == 3.65
 
     def test_pass_when_assigned(self):
-        snap = _finops_snap(resource_type="Microsoft.Network/publicIPAddresses", resource_name="pip-test", config={"ip_association": "/subscriptions/sub/nic/nic-1"})
+        snap = _finops_snap(
+            resource_type="Microsoft.Network/publicIPAddresses",
+            resource_name="pip-test",
+            config={"ip_association": "/subscriptions/sub/nic/nic-1"}
+        )
         assert UnassignedPublicIPRule().evaluate(snap) is None
 
 
 class TestFIN003EmptyLoadBalancer:
     def test_fail_when_no_backend(self):
-        snap = _finops_snap(resource_type="Microsoft.Network/loadBalancers", resource_name="lb-test", config={"backend_pool_count": 0}, cost_monthly=50.0)
+        snap = _finops_snap(
+            resource_type="Microsoft.Network/loadBalancers",
+            resource_name="lb-test",
+            config={"backend_pool_count": 0},
+            cost_monthly=50.0
+        )
         result = EmptyLoadBalancerRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-003"
         assert result.waste_monthly_usd == 50.0
 
     def test_pass_when_backend_configured(self):
-        snap = _finops_snap(resource_type="Microsoft.Network/loadBalancers", resource_name="lb-test", config={"backend_pool_count": 2}, cost_monthly=50.0)
+        snap = _finops_snap(
+            resource_type="Microsoft.Network/loadBalancers",
+            resource_name="lb-test",
+            config={"backend_pool_count": 2},
+            cost_monthly=50.0
+        )
         assert EmptyLoadBalancerRule().evaluate(snap) is None
 
 
 class TestFIN004HotTierBlobNotAccessed:
     def test_fail_when_hot_blob_stale(self):
-        snap = _finops_snap(resource_type="Microsoft.Storage/storageAccounts", resource_name="sa-test", config={"access_tier": "Hot", "days_since_last_access": 45}, cost_monthly=100.0)
+        snap = _finops_snap(
+            resource_type="Microsoft.Storage/storageAccounts",
+            resource_name="sa-test",
+            config={"access_tier": "Hot", "days_since_last_access": 45},
+            cost_monthly=100.0
+        )
         result = HotTierBlobNotAccessedRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-004"
         assert result.waste_monthly_usd == 40.0
 
     def test_pass_when_recently_accessed(self):
-        snap = _finops_snap(resource_type="Microsoft.Storage/storageAccounts", resource_name="sa-test", config={"access_tier": "Hot", "days_since_last_access": 10}, cost_monthly=100.0)
+        snap = _finops_snap(
+            resource_type="Microsoft.Storage/storageAccounts",
+            resource_name="sa-test",
+            config={"access_tier": "Hot", "days_since_last_access": 10},
+            cost_monthly=100.0
+        )
         assert HotTierBlobNotAccessedRule().evaluate(snap) is None
 
 
 class TestFIN005OversizedVM:
     def test_fail_when_underutilised(self):
-        snap = _finops_snap(resource_type="Microsoft.Compute/virtualMachines", resource_name="vm-big", config={"avg_cpu_7d": 5.0, "avg_memory_7d": 8.0}, cost_monthly=200.0)
+        snap = _finops_snap(
+            resource_type="Microsoft.Compute/virtualMachines",
+            resource_name="vm-big",
+            config={"avg_cpu_7d": 5.0, "avg_memory_7d": 8.0},
+            cost_monthly=200.0
+        )
         result = OversizedVMRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-005"
         assert result.waste_monthly_usd == 100.0
 
     def test_pass_when_well_utilised(self):
-        snap = _finops_snap(resource_type="Microsoft.Compute/virtualMachines", resource_name="vm-big", config={"avg_cpu_7d": 50.0, "avg_memory_7d": 60.0}, cost_monthly=200.0)
+        snap = _finops_snap(
+            resource_type="Microsoft.Compute/virtualMachines",
+            resource_name="vm-big",
+            config={"avg_cpu_7d": 50.0, "avg_memory_7d": 60.0},
+            cost_monthly=200.0
+        )
         assert OversizedVMRule().evaluate(snap) is None
 
 
 class TestFIN006DevTestOutsideBusinessHours:
     def test_fail_when_dev_no_autoshutdown(self):
-        snap = _finops_snap(resource_type="Microsoft.Compute/virtualMachines", resource_name="vm-dev", config={"auto_shutdown_enabled": False}, cost_monthly=100.0, tags={"environment": "dev"})
+        snap = _finops_snap(
+            resource_type="Microsoft.Compute/virtualMachines",
+            resource_name="vm-dev",
+            config={"auto_shutdown_enabled": False},
+            cost_monthly=100.0,
+            tags={"environment": "dev"}
+        )
         result = DevTestOutsideBusinessHoursRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-006"
         assert result.waste_monthly_usd == 65.0
 
     def test_pass_when_prod_resource(self):
-        snap = _finops_snap(resource_type="Microsoft.Compute/virtualMachines", resource_name="vm-prod", config={"auto_shutdown_enabled": False}, cost_monthly=100.0, tags={"environment": "prod"})
+        snap = _finops_snap(
+            resource_type="Microsoft.Compute/virtualMachines",
+            resource_name="vm-prod",
+            config={"auto_shutdown_enabled": False},
+            cost_monthly=100.0,
+            tags={"environment": "prod"}
+        )
         assert DevTestOutsideBusinessHoursRule().evaluate(snap) is None
 
 
 class TestFIN007AppGatewayLowUtilisation:
     def test_fail_when_low_utilisation(self):
-        snap = _finops_snap(resource_type="Microsoft.Network/applicationGateways", resource_name="appgw-test", config={"capacity_utilisation_pct": 5.0}, cost_monthly=300.0)
+        snap = _finops_snap(
+            resource_type="Microsoft.Network/applicationGateways",
+            resource_name="appgw-test",
+            config={"capacity_utilisation_pct": 5.0},
+            cost_monthly=300.0
+        )
         result = AppGatewayLowUtilisationRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-007"
         assert result.waste_monthly_usd == 210.0
 
     def test_pass_when_well_utilised(self):
-        snap = _finops_snap(resource_type="Microsoft.Network/applicationGateways", resource_name="appgw-test", config={"capacity_utilisation_pct": 60.0}, cost_monthly=300.0)
+        snap = _finops_snap(
+            resource_type="Microsoft.Network/applicationGateways",
+            resource_name="appgw-test",
+            config={"capacity_utilisation_pct": 60.0},
+            cost_monthly=300.0
+        )
         assert AppGatewayLowUtilisationRule().evaluate(snap) is None
 
 
 class TestFIN008AKSNoAutoscaler:
     def test_fail_when_no_autoscaler(self):
-        snap = _finops_snap(resource_type="Microsoft.ContainerService/managedClusters", resource_name="aks-test", config={"autoscaler_enabled": False}, cost_monthly=500.0)
+        snap = _finops_snap(
+            resource_type="Microsoft.ContainerService/managedClusters",
+            resource_name="aks-test",
+            config={"autoscaler_enabled": False},
+            cost_monthly=500.0
+        )
         result = AKSNoAutoscalerRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-008"
         assert result.waste_monthly_usd == 150.0
 
     def test_pass_when_autoscaler_enabled(self):
-        snap = _finops_snap(resource_type="Microsoft.ContainerService/managedClusters", resource_name="aks-test", config={"autoscaler_enabled": True}, cost_monthly=500.0)
+        snap = _finops_snap(
+            resource_type="Microsoft.ContainerService/managedClusters",
+            resource_name="aks-test",
+            config={"autoscaler_enabled": True},
+            cost_monthly=500.0
+        )
         assert AKSNoAutoscalerRule().evaluate(snap) is None
