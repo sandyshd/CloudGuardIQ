@@ -18,7 +18,7 @@ class PolicyRule(ABC):
     rule_name: str
     severity: Severity
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = []
+    compliance_frameworks: list[str]
 
     @abstractmethod
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
