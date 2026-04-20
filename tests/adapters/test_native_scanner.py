@@ -1,0 +1,321 @@
+"""Tests for NativeScanner orchestrator."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from cloudguardiq.adapters.native_scanner import RULE_REGISTRY, NativeScanner
+from cloudguardiq.core.enums import DataTier
+from cloudguardiq.core.models import ResourceSnapshot
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+def _make_rg_response(data: list[dict[str, Any]], skip_token: str | None = None) -> SimpleNamespace:
+    """Build a fake Resource Graph response."""
+    return SimpleNamespace(data=data, skip_token=skip_token)
+
+
+@pytest.fixture
+def mock_credential() -> MagicMock:
+    """Fake Azure TokenCredential."""
+    return MagicMock()
+
+
+@pytest.fixture
+def raw_storage_resources() -> list[dict[str, Any]]:
+    """Raw Resource Graph output for a storage account."""
+    return [
+        {
+            "id": "/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.Storage/storageAccounts/sa1",
+            "name": "sa1",
+            "resourceGroup": "rg1",
+            "location": "eastus",
+            "tags": {"env": "prod"},
+            "properties_allowBlobPublicAccess": True,
+            "properties_minimumTlsVersion": "TLS1_0",
+            "properties_networkAcls_defaultAction": "Allow",
+            "properties_supportsHttpsTrafficOnly": False,
+            "properties_allowSharedKeyAccess": True,
+            "properties_encryption_requireInfrastructureEncryption": False,
+        },
+    ]
+
+
+@pytest.fixture
+def raw_nsg_resources() -> list[dict[str, Any]]:
+    """Raw Resource Graph output for an NSG."""
+    return [
+        {
+            "id": "/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.Network/networkSecurityGroups/nsg1",
+            "name": "nsg1",
+            "resourceGroup": "rg1",
+            "location": "eastus",
+            "tags": {},
+            "properties_securityRules": [
+                {
+                    "name": "AllowSSH",
+                    "properties": {
+                        "access": "Allow",
+                        "direction": "Inbound",
+                        "sourceAddressPrefix": "*",
+                        "destinationPortRange": "22",
+                        "protocol": "TCP",
+                        "priority": 100,
+                    },
+                },
+            ],
+            "properties_defaultSecurityRules": [],
+        },
+    ]
+
+
+@pytest.fixture
+def raw_vm_resources() -> list[dict[str, Any]]:
+    """Raw Resource Graph output for a VM."""
+    return [
+        {
+            "id": "/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm1",
+            "name": "vm1",
+            "resourceGroup": "rg1",
+            "location": "westus",
+            "tags": {"team": "infra"},
+            "properties_storageProfile_osDisk_managedDisk": {"id": "/disks/d1"},
+            "properties_storageProfile_osDisk_encryptionSettings": {"enabled": True},
+            "properties_networkProfile_networkInterfaces": [{"id": "/nics/nic1"}],
+        },
+    ]
+
+
+@pytest.fixture
+def raw_kv_resources() -> list[dict[str, Any]]:
+    """Raw Resource Graph output for a Key Vault."""
+    return [
+        {
+            "id": "/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.KeyVault/vaults/kv1",
+            "name": "kv1",
+            "resourceGroup": "rg1",
+            "location": "eastus",
+            "tags": {},
+            "properties_enableSoftDelete": True,
+            "properties_enablePurgeProtection": False,
+            "properties_publicNetworkAccess": "Enabled",
+        },
+    ]
+
+
+def _build_scanner_with_mock_rg(
+    mock_credential: MagicMock,
+    responses: dict[str, list[dict[str, Any]]],
+) -> NativeScanner:
+    """Create a NativeScanner with a mocked ResourceGraphClient."""
+    with patch(
+        "cloudguardiq.adapters.native_scanner.ResourceGraphClient",
+    ) as rg_cls:
+        mock_client = MagicMock()
+
+        def _resources_side_effect(request: Any) -> SimpleNamespace:
+            query: str = request.query
+            for keyword, data in responses.items():
+                if keyword in query:
+                    return _make_rg_response(data)
+            return _make_rg_response([])
+
+        mock_client.resources.side_effect = _resources_side_effect
+        rg_cls.return_value = mock_client
+
+        scanner = NativeScanner(mock_credential, "sub-1")
+    return scanner
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestNativeScannerRuleRegistry:
+    def test_rule_registry_has_44_rules(self) -> None:
+        """All 44 PolicyRule instances should be in the registry."""
+        assert len(RULE_REGISTRY) == 44
+
+    def test_all_rules_have_rule_id(self) -> None:
+        """Every rule must have a non-empty rule_id."""
+        for rule in RULE_REGISTRY:
+            assert rule.rule_id, f"{type(rule).__name__} has no rule_id"
+
+
+class TestScanReturnsResourceSnapshots:
+    async def test_scan_returns_resource_snapshots(
+        self,
+        mock_credential: MagicMock,
+        raw_storage_resources: list[dict[str, Any]],
+        raw_nsg_resources: list[dict[str, Any]],
+        raw_vm_resources: list[dict[str, Any]],
+        raw_kv_resources: list[dict[str, Any]],
+    ) -> None:
+        """scan() should return ResourceSnapshot objects for all resource types."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {
+                "storageaccounts": raw_storage_resources,
+                "networksecuritygroups": raw_nsg_resources,
+                "virtualmachines": raw_vm_resources,
+                "keyvault": raw_kv_resources,
+            },
+        )
+
+        with patch.object(scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}):
+            snapshots = await scanner.scan()
+
+        assert len(snapshots) == 4
+        assert all(isinstance(s, ResourceSnapshot) for s in snapshots)
+
+
+class TestAllSnapshotsHaveTier1:
+    async def test_all_snapshots_have_tier1(
+        self,
+        mock_credential: MagicMock,
+        raw_storage_resources: list[dict[str, Any]],
+    ) -> None:
+        """Every snapshot from scan() must have data_tier == TIER1_NATIVE."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"storageaccounts": raw_storage_resources},
+        )
+
+        with patch.object(scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}):
+            snapshots = await scanner.scan()
+
+        for snap in snapshots:
+            assert snap.data_tier == DataTier.TIER1_NATIVE
+
+
+class TestStorageConfigCorrectlyNormalised:
+    async def test_storage_config_correctly_normalised(
+        self,
+        mock_credential: MagicMock,
+        raw_storage_resources: list[dict[str, Any]],
+    ) -> None:
+        """Storage config fields should be mapped from Resource Graph JSON."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"storageaccounts": raw_storage_resources},
+        )
+
+        with patch.object(scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}):
+            snapshots = await scanner.scan()
+
+        storage = [s for s in snapshots if "Storage" in s.resource_type]
+        assert len(storage) == 1
+        cfg = storage[0].config
+        assert cfg["allow_blob_public_access"] is True
+        assert cfg["minimum_tls_version"] == "TLS1_0"
+        assert cfg["network_default_action"] == "Allow"
+        assert cfg["enable_https_traffic_only"] is False
+        assert cfg["allow_shared_key_access"] is True
+        assert cfg["infrastructure_encryption_enabled"] is False
+
+
+class TestNSGRulesCorrectlyFlattened:
+    async def test_nsg_rules_correctly_flattened(
+        self,
+        mock_credential: MagicMock,
+        raw_nsg_resources: list[dict[str, Any]],
+    ) -> None:
+        """NSG security rules should be flattened into config."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"networksecuritygroups": raw_nsg_resources},
+        )
+
+        with patch.object(scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}):
+            snapshots = await scanner.scan()
+
+        nsgs = [s for s in snapshots if "networkSecurityGroups" in s.resource_type]
+        assert len(nsgs) == 1
+        rules = nsgs[0].config["securityRules"]
+        assert len(rules) == 1
+        assert rules[0]["name"] == "AllowSSH"
+        assert rules[0]["access"] == "Allow"
+        assert rules[0]["direction"] == "Inbound"
+        assert rules[0]["sourceAddressPrefix"] == "*"
+        assert rules[0]["destinationPortRange"] == "22"
+
+
+class TestCostDataEnrichment:
+    async def test_cost_data_enrichment_when_available(
+        self,
+        mock_credential: MagicMock,
+        raw_storage_resources: list[dict[str, Any]],
+    ) -> None:
+        """When cost data is returned, snapshots should be enriched."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"storageaccounts": raw_storage_resources},
+        )
+
+        with patch.object(scanner, "_fetch_cost_data", new_callable=AsyncMock) as mock_cost:
+            # We need to know the snapshot ID to set cost data properly
+            # Build snapshots first to get the ID, then set cost data
+            snapshots_preview = await scanner._build_storage_snapshots(raw_storage_resources)
+            snap_id = snapshots_preview[0].id
+            mock_cost.return_value = {snap_id: 42.50}
+            snapshots = await scanner.scan()
+
+        enriched = [s for s in snapshots if s.cost_monthly == 42.50]
+        assert len(enriched) == 1
+
+
+class TestScanSucceedsWhenCostApiFails:
+    async def test_scan_succeeds_when_cost_api_fails(
+        self,
+        mock_credential: MagicMock,
+        raw_storage_resources: list[dict[str, Any]],
+    ) -> None:
+        """scan() must complete even if _fetch_cost_data raises."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"storageaccounts": raw_storage_resources},
+        )
+
+        with patch.object(
+            scanner,
+            "_fetch_cost_data",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Cost API unavailable"),
+        ):
+            # _fetch_cost_data is called internally but wrapped in try/except
+            # However, the mock replaces the method entirely so the try/except
+            # inside the real method won't apply. We need to test the real
+            # _fetch_cost_data error path instead.
+            pass
+
+        # Test the real method with a failing Cost Management client
+        with (
+            patch(
+                "cloudguardiq.adapters.native_scanner.CostManagementClient",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch.object(
+                scanner, "_query_resource_graph", new_callable=AsyncMock, return_value=raw_storage_resources,
+            ),
+        ):
+            # Replace _query_resource_graph to return data for storage only
+            async def _mock_query(query: str) -> list[dict[str, Any]]:
+                if "storageaccounts" in query:
+                    return raw_storage_resources
+                return []
+
+            scanner._query_resource_graph = _mock_query  # type: ignore[assignment]
+            snapshots = await scanner.scan()
+
+        assert len(snapshots) >= 1
+        # Cost should remain 0 since cost API failed
+        assert all(s.cost_monthly == 0.0 for s in snapshots)
