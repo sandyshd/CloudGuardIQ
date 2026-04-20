@@ -222,22 +222,34 @@ async def scan_subscription(
     _user: TokenPayload = _auth,
 ) -> ScanResponse:
     """Scan an Azure subscription for security and cost findings."""
-    adapter = AzureAdapter()
+    try:
+        from azure.identity import DefaultAzureCredential
+        credential = DefaultAzureCredential()
+    except Exception:
+        credential = None  # type: ignore[assignment]
+    repo = get_repo()
+    adapter = AzureAdapter(
+        credential=credential,
+        subscription_id=request.subscription_id,
+        db=repo,
+    ) if credential and repo else None
     scanner = _build_scanner()
     engine = _build_policy_engine(scanner)
 
-    try:
-        snapshots = await adapter.list_resources(
-            request.subscription_id,
-        )
-    except Exception as exc:
-        logger.error("Failed to list resources: %s", exc)
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to list Azure resources",
-        ) from exc
-
-    snapshots = await adapter.enrich_with_defender(snapshots)
+    if adapter is not None:
+        try:
+            snapshots = await adapter.list_resources(
+                request.subscription_id,
+            )
+        except Exception as exc:
+            logger.error('Failed to list resources: %%s', exc)
+            raise HTTPException(
+                status_code=502,
+                detail='Failed to list Azure resources',
+            ) from exc
+        snapshots = await adapter.enrich_with_defender(snapshots)
+    else:
+        snapshots = []
     findings: list[FindingResult] = engine.evaluate(snapshots)
 
     return ScanResponse(
