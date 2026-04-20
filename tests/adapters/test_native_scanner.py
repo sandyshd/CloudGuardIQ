@@ -12,7 +12,6 @@ from cloudguardiq.adapters.native_scanner import RULE_REGISTRY, NativeScanner
 from cloudguardiq.core.enums import DataTier
 from cloudguardiq.core.models import ResourceSnapshot
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -34,7 +33,10 @@ def raw_storage_resources() -> list[dict[str, Any]]:
     """Raw Resource Graph output for a storage account."""
     return [
         {
-            "id": "/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.Storage/storageAccounts/sa1",
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg1"
+                "/providers/Microsoft.Storage/storageAccounts/sa1"
+            ),
             "name": "sa1",
             "resourceGroup": "rg1",
             "location": "eastus",
@@ -54,7 +56,10 @@ def raw_nsg_resources() -> list[dict[str, Any]]:
     """Raw Resource Graph output for an NSG."""
     return [
         {
-            "id": "/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.Network/networkSecurityGroups/nsg1",
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg1"
+                "/providers/Microsoft.Network/networkSecurityGroups/nsg1"
+            ),
             "name": "nsg1",
             "resourceGroup": "rg1",
             "location": "eastus",
@@ -82,7 +87,10 @@ def raw_vm_resources() -> list[dict[str, Any]]:
     """Raw Resource Graph output for a VM."""
     return [
         {
-            "id": "/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm1",
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg1"
+                "/providers/Microsoft.Compute/virtualMachines/vm1"
+            ),
             "name": "vm1",
             "resourceGroup": "rg1",
             "location": "westus",
@@ -99,7 +107,10 @@ def raw_kv_resources() -> list[dict[str, Any]]:
     """Raw Resource Graph output for a Key Vault."""
     return [
         {
-            "id": "/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.KeyVault/vaults/kv1",
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg1"
+                "/providers/Microsoft.KeyVault/vaults/kv1"
+            ),
             "name": "kv1",
             "resourceGroup": "rg1",
             "location": "eastus",
@@ -304,7 +315,10 @@ class TestScanSucceedsWhenCostApiFails:
                 side_effect=RuntimeError("boom"),
             ),
             patch.object(
-                scanner, "_query_resource_graph", new_callable=AsyncMock, return_value=raw_storage_resources,
+                scanner,
+                "_query_resource_graph",
+                new_callable=AsyncMock,
+                return_value=raw_storage_resources,
             ),
         ):
             # Replace _query_resource_graph to return data for storage only
