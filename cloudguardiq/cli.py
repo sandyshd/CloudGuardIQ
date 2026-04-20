@@ -11,8 +11,10 @@ import asyncio
 import json
 import logging
 import sys
+from collections.abc import Callable
 from typing import Any
 
+from cloudguardiq.adapters.base import CapabilityFlags
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,7 @@ async def _run_scan(subscription_id: str, output_format: str) -> None:
     adapter = AzureAdapter(
         credential=credential,
         subscription_id=subscription_id,
-        db=db,
+        db=db,  # type: ignore[arg-type]
     )
 
     logger.info("Starting scan for subscription %s", subscription_id)
@@ -42,7 +44,7 @@ async def _run_scan(subscription_id: str, output_format: str) -> None:
 
     engine = PolicyEngine()
     for rule in RULE_REGISTRY:
-        def _wrap(r=rule):  # noqa: E301
+        def _wrap(r: Any = rule) -> Callable[[ResourceSnapshot], list[FindingResult]]:  # noqa: E301
             def _eval(snapshot: ResourceSnapshot) -> list[FindingResult]:
                 result = r.evaluate(snapshot)
                 if result is None:
@@ -93,7 +95,7 @@ def _print_table(
 class _StubCosmosRepository:
     """Minimal stub so AzureAdapter can work without a real Cosmos DB."""
 
-    async def get_capability_flags(self, sub_id: str) -> None:
+    async def get_capability_flags(self, sub_id: str) -> CapabilityFlags | None:
         """Return None (no cache)."""
         return None
 

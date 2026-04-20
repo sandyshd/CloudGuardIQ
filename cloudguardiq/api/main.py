@@ -269,7 +269,7 @@ async def scan_subscription(
         from azure.identity import DefaultAzureCredential
         credential = DefaultAzureCredential()
     except Exception:
-        credential = None  # type: ignore[assignment]
+        credential = None
     repo = get_repo()
     adapter = AzureAdapter(
         credential=credential,

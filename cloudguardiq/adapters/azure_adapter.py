@@ -50,7 +50,7 @@ class AzureAdapter(AdapterBase):
             subscription_id=subscription_id,
         )
         self._capability_detector = CapabilityDetector(
-            credential=credential,
+            credential=credential,  # type: ignore[arg-type]
             subscription_id=subscription_id,
             db=db,
         )
@@ -120,7 +120,7 @@ class AzureAdapter(AdapterBase):
             response = client.resources(query)
             columns: dict[str, str] = {}
             if response.data:
-                row = response.data[0] if isinstance(response.data, list) else {}
+                row: dict[str, Any] = response.data[0] if isinstance(response.data, list) else {}
                 columns = {k: type(v).__name__ for k, v in row.items()}
             return {
                 "provider": "azure",
@@ -214,7 +214,7 @@ class AzureAdapter(AdapterBase):
             from azure.mgmt.security.aio import SecurityCenter
 
             client = SecurityCenter(
-                credential=self._credential,
+                credential=self._credential,  # type: ignore[arg-type]
                 subscription_id=self._subscription_id,
             )
             try:
@@ -279,7 +279,7 @@ class AzureAdapter(AdapterBase):
             from azure.mgmt.security.aio import SecurityCenter
 
             client = SecurityCenter(
-                credential=self._credential,
+                credential=self._credential,  # type: ignore[arg-type]
                 subscription_id=self._subscription_id,
             )
             try:
