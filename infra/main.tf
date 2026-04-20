@@ -119,11 +119,12 @@ resource "azurerm_role_assignment" "scanner_reader" {
 # ==========================================================================
 
 resource "azurerm_cosmosdb_account" "cloudguardiq" {
-  name                = "${var.prefix}-${var.environment}-cosmos"
-  location            = azurerm_resource_group.cloudguardiq.location
-  resource_group_name = azurerm_resource_group.cloudguardiq.name
-  offer_type          = "Standard"
-  kind                = "GlobalDocumentDB"
+  name                          = "${var.prefix}-${var.environment}-cosmos"
+  location                      = azurerm_resource_group.cloudguardiq.location
+  resource_group_name           = azurerm_resource_group.cloudguardiq.name
+  offer_type                    = "Standard"
+  kind                          = "GlobalDocumentDB"
+  local_authentication_disabled = true
 
   capabilities {
     name = "EnableServerless"
@@ -184,12 +185,13 @@ resource "azurerm_cosmosdb_sql_container" "system" {
 # ==========================================================================
 
 resource "azurerm_cognitive_account" "openai" {
-  name                  = "${var.prefix}-${var.environment}-openai"
-  location              = var.openai_location
-  resource_group_name   = azurerm_resource_group.cloudguardiq.name
-  kind                  = "OpenAI"
-  sku_name              = "S0"
-  custom_subdomain_name = "${var.prefix}-${var.environment}-openai"
+  name                          = "${var.prefix}-${var.environment}-openai"
+  location                      = var.openai_location
+  resource_group_name           = azurerm_resource_group.cloudguardiq.name
+  kind                          = "OpenAI"
+  sku_name                      = "S0"
+  custom_subdomain_name         = "${var.prefix}-${var.environment}-openai"
+  local_auth_enabled            = false
 
   tags = local.tags
 }
@@ -211,7 +213,7 @@ resource "azurerm_cognitive_deployment" "gpt4o" {
 }
 
 # ==========================================================================
-# Key Vault + Secrets
+# Key Vault (retained for non-key secrets like Service Bus connection string)
 # ==========================================================================
 
 resource "azurerm_key_vault" "cloudguardiq" {
@@ -253,23 +255,7 @@ resource "azurerm_key_vault_access_policy" "function_app" {
   secret_permissions = ["Get", "List"]
 }
 
-# Secrets
-resource "azurerm_key_vault_secret" "cosmos_key" {
-  name         = "cosmos-primary-key"
-  value        = azurerm_cosmosdb_account.cloudguardiq.primary_key
-  key_vault_id = azurerm_key_vault.cloudguardiq.id
-
-  depends_on = [azurerm_key_vault_access_policy.deployer]
-}
-
-resource "azurerm_key_vault_secret" "openai_key" {
-  name         = "openai-api-key"
-  value        = azurerm_cognitive_account.openai.primary_access_key
-  key_vault_id = azurerm_key_vault.cloudguardiq.id
-
-  depends_on = [azurerm_key_vault_access_policy.deployer]
-}
-
+# Secrets (only non-key secrets remain)
 resource "azurerm_key_vault_secret" "servicebus_connection" {
   name         = "servicebus-connection-string"
   value        = azurerm_servicebus_namespace.cloudguardiq.default_primary_connection_string
@@ -284,6 +270,47 @@ resource "azurerm_key_vault_secret" "app_client_secret" {
   key_vault_id = azurerm_key_vault.cloudguardiq.id
 
   depends_on = [azurerm_key_vault_access_policy.deployer]
+}
+
+# ==========================================================================
+# RBAC Role Assignments — Cosmos DB
+# ==========================================================================
+
+# Cosmos DB Built-in Data Contributor for Container App managed identity
+resource "azurerm_cosmosdb_sql_role_assignment" "container_app_cosmos" {
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  # Built-in "Cosmos DB Built-in Data Contributor" role definition ID
+  role_definition_id  = "${azurerm_cosmosdb_account.cloudguardiq.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = azurerm_container_app.api.identity[0].principal_id
+  scope               = azurerm_cosmosdb_account.cloudguardiq.id
+}
+
+# Cosmos DB Built-in Data Contributor for Function App managed identity
+resource "azurerm_cosmosdb_sql_role_assignment" "function_app_cosmos" {
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  role_definition_id  = "${azurerm_cosmosdb_account.cloudguardiq.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = azurerm_linux_function_app.cloudguardiq.identity[0].principal_id
+  scope               = azurerm_cosmosdb_account.cloudguardiq.id
+}
+
+# ==========================================================================
+# RBAC Role Assignments — Azure OpenAI
+# ==========================================================================
+
+# Cognitive Services OpenAI User for Container App managed identity
+resource "azurerm_role_assignment" "container_app_openai" {
+  scope                = azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = azurerm_container_app.api.identity[0].principal_id
+}
+
+# Cognitive Services OpenAI User for Function App managed identity
+resource "azurerm_role_assignment" "function_app_openai" {
+  scope                = azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = azurerm_linux_function_app.cloudguardiq.identity[0].principal_id
 }
 
 # ==========================================================================
@@ -366,16 +393,8 @@ resource "azurerm_container_app" "api" {
         value = azurerm_cosmosdb_account.cloudguardiq.endpoint
       }
       env {
-        name        = "CLOUDGUARDIQ_COSMOS_KEY"
-        secret_name = "cosmos-key"
-      }
-      env {
         name  = "CLOUDGUARDIQ_AZURE_OPENAI_ENDPOINT"
         value = azurerm_cognitive_account.openai.endpoint
-      }
-      env {
-        name        = "CLOUDGUARDIQ_AZURE_OPENAI_KEY"
-        secret_name = "openai-key"
       }
       env {
         name  = "CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT"
@@ -398,16 +417,6 @@ resource "azurerm_container_app" "api" {
         value = azurerm_application_insights.cloudguardiq.connection_string
       }
     }
-  }
-
-  secret {
-    name  = "cosmos-key"
-    value = azurerm_cosmosdb_account.cloudguardiq.primary_key
-  }
-
-  secret {
-    name  = "openai-key"
-    value = azurerm_cognitive_account.openai.primary_access_key
   }
 
   ingress {
@@ -455,14 +464,33 @@ resource "azurerm_service_plan" "functions" {
   tags = local.tags
 }
 
+# Storage Blob Data Owner for Function App to use managed identity for storage
+resource "azurerm_role_assignment" "function_app_storage" {
+  scope                = azurerm_storage_account.functions.id
+  role_definition_name = "Storage Blob Data Owner"
+  principal_id         = azurerm_linux_function_app.cloudguardiq.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "function_app_storage_queue" {
+  scope                = azurerm_storage_account.functions.id
+  role_definition_name = "Storage Queue Data Contributor"
+  principal_id         = azurerm_linux_function_app.cloudguardiq.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "function_app_storage_table" {
+  scope                = azurerm_storage_account.functions.id
+  role_definition_name = "Storage Table Data Contributor"
+  principal_id         = azurerm_linux_function_app.cloudguardiq.identity[0].principal_id
+}
+
 resource "azurerm_linux_function_app" "cloudguardiq" {
   name                = "${var.prefix}-${var.environment}-func"
   location            = azurerm_resource_group.cloudguardiq.location
   resource_group_name = azurerm_resource_group.cloudguardiq.name
   service_plan_id     = azurerm_service_plan.functions.id
 
-  storage_account_name       = azurerm_storage_account.functions.name
-  storage_account_access_key = azurerm_storage_account.functions.primary_access_key
+  storage_account_name          = azurerm_storage_account.functions.name
+  storage_uses_managed_identity = true
 
   identity {
     type = "SystemAssigned"
@@ -474,17 +502,14 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     }
 
     application_insights_connection_string = azurerm_application_insights.cloudguardiq.connection_string
-    application_insights_key               = azurerm_application_insights.cloudguardiq.instrumentation_key
   }
 
   app_settings = {
-    # Cosmos DB
+    # Cosmos DB (RBAC via managed identity)
     CLOUDGUARDIQ_COSMOS_ENDPOINT = azurerm_cosmosdb_account.cloudguardiq.endpoint
-    CLOUDGUARDIQ_COSMOS_KEY      = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.cosmos_key.id})"
 
-    # Azure OpenAI
+    # Azure OpenAI (RBAC via managed identity)
     AZURE_OPENAI_ENDPOINT   = azurerm_cognitive_account.openai.endpoint
-    AZURE_OPENAI_API_KEY    = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.openai_key.id})"
     AZURE_OPENAI_DEPLOYMENT = "gpt-4o"
 
     # Subscription to scan

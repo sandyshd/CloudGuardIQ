@@ -27,22 +27,10 @@ output "cosmosdb_endpoint" {
   value       = azurerm_cosmosdb_account.cloudguardiq.endpoint
 }
 
-output "cosmosdb_primary_key" {
-  description = "Cosmos DB primary key"
-  value       = azurerm_cosmosdb_account.cloudguardiq.primary_key
-  sensitive   = true
-}
-
 # ---------- Azure OpenAI ----------
 output "openai_endpoint" {
   description = "Azure OpenAI endpoint"
   value       = azurerm_cognitive_account.openai.endpoint
-}
-
-output "openai_key" {
-  description = "Azure OpenAI primary access key"
-  value       = azurerm_cognitive_account.openai.primary_access_key
-  sensitive   = true
 }
 
 # ---------- Key Vault ----------
@@ -62,12 +50,6 @@ output "servicebus_connection_string" {
 output "appinsights_connection_string" {
   description = "Application Insights connection string"
   value       = azurerm_application_insights.cloudguardiq.connection_string
-  sensitive   = true
-}
-
-output "appinsights_instrumentation_key" {
-  description = "Application Insights instrumentation key"
-  value       = azurerm_application_insights.cloudguardiq.instrumentation_key
   sensitive   = true
 }
 
@@ -111,13 +93,10 @@ output "backend_env_file" {
   sensitive   = true
   value       = <<-EOT
     CLOUDGUARDIQ_COSMOS_ENDPOINT=${azurerm_cosmosdb_account.cloudguardiq.endpoint}
-    CLOUDGUARDIQ_COSMOS_KEY=${azurerm_cosmosdb_account.cloudguardiq.primary_key}
     CLOUDGUARDIQ_AZURE_OPENAI_ENDPOINT=${azurerm_cognitive_account.openai.endpoint}
-    CLOUDGUARDIQ_AZURE_OPENAI_KEY=${azurerm_cognitive_account.openai.primary_access_key}
     CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT=gpt-4o
     CLOUDGUARDIQ_AZURE_TENANT_ID=${data.azurerm_client_config.current.tenant_id}
     CLOUDGUARDIQ_AZURE_CLIENT_ID=${azuread_application.cloudguardiq.client_id}
-    CLOUDGUARDIQ_AZURE_CLIENT_SECRET=${azuread_application_password.cloudguardiq.value}
     AZURE_SUBSCRIPTION_ID=${data.azurerm_subscription.current.subscription_id}
     SERVICE_BUS_CONNECTION_STRING=${azurerm_servicebus_namespace.cloudguardiq.default_primary_connection_string}
   EOT

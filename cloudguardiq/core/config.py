@@ -25,7 +25,6 @@ class Settings(BaseSettings):
 
     # Cosmos DB
     cosmos_endpoint: str = ""
-    cosmos_key: str = ""
     cosmos_database: str = "cloudguardiq"
     cosmos_container_findings: str = "findings"
     cosmos_container_snapshots: str = "snapshots"
@@ -34,13 +33,11 @@ class Settings(BaseSettings):
 
     # Azure OpenAI
     azure_openai_endpoint: str = ""
-    azure_openai_key: str = ""
     azure_openai_deployment: str = "gpt-4o"
 
     # Azure AD
     azure_tenant_id: str = ""
     azure_client_id: str = ""
-    azure_client_secret: str = ""
 
     # Authentication
     auth_disabled: bool = False

@@ -59,6 +59,7 @@ async def _get_scan_pipeline():
 async def _get_ai_worker():
     """Build an AIWorker from environment configuration."""
     import openai
+    from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
 
     from cloudguardiq.ai.remediation_engine import RemediationEngine
     from cloudguardiq.core.config import get_settings
@@ -69,9 +70,14 @@ async def _get_ai_worker():
     db = CosmosRepository(settings)
     await db.connect()
 
+    credential = DefaultAzureCredential()
+    token_provider = get_bearer_token_provider(
+        credential, "https://cognitiveservices.azure.com/.default"
+    )
+
     openai_client = openai.AsyncAzureOpenAI(
         azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT", ""),
-        api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
+        azure_ad_token_provider=token_provider,
         api_version="2024-02-15-preview",
     )
     ai_engine = RemediationEngine(
@@ -80,7 +86,7 @@ async def _get_ai_worker():
         db=db,
     )
 
-    return AIWorker(ai_engine=ai_engine, db=db), db
+    return AIWorker(ai_engine=ai_engine, db=db), db, credential
 
 
 @app.timer_trigger(
@@ -129,8 +135,9 @@ async def ai_worker_trigger(msg: func.ServiceBusMessage) -> None:
 
     worker = None
     db = None
+    credential = None
     try:
-        worker, db = await _get_ai_worker()
+        worker, db, credential = await _get_ai_worker()
         card = await worker.process_message(body)
         if card is not None:
             logger.info(
@@ -148,3 +155,5 @@ async def ai_worker_trigger(msg: func.ServiceBusMessage) -> None:
     finally:
         if db is not None:
             await db.close()
+        if credential is not None:
+            await credential.close()

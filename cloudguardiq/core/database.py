@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
+from azure.identity.aio import DefaultAzureCredential
 
 from cloudguardiq.adapters.base import CapabilityFlags
 from cloudguardiq.core.config import Settings
@@ -22,21 +23,25 @@ class CosmosRepository:
         self._settings = settings
         self._client: CosmosClient | None = None
         self._db: DatabaseProxy | None = None
+        self._credential: DefaultAzureCredential | None = None
 
     async def connect(self) -> None:
-        """Initialise the Cosmos client and database proxy."""
+        """Initialise the Cosmos client and database proxy using RBAC."""
+        self._credential = DefaultAzureCredential()
         self._client = CosmosClient(
             url=self._settings.cosmos_endpoint,
-            credential=self._settings.cosmos_key,
+            credential=self._credential,
         )
         self._db = self._client.get_database_client(self._settings.cosmos_database)
-        logger.info("Connected to Cosmos DB: %s", self._settings.cosmos_database)
+        logger.info("Connected to Cosmos DB: %s (RBAC auth)", self._settings.cosmos_database)
 
     async def close(self) -> None:
-        """Close the Cosmos client."""
+        """Close the Cosmos client and credential."""
         if self._client:
             await self._client.close()
             logger.info("Cosmos DB connection closed")
+        if self._credential:
+            await self._credential.close()
 
     # ------------------------------------------------------------------
     # Container helpers
