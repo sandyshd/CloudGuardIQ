@@ -43,6 +43,7 @@ from cloudguardiq.core.models import (
     ScanRequest,
     ScanResponse,
 )
+from cloudguardiq.pipeline.scan_pipeline import ScanResult
 from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
 
 logger = logging.getLogger(__name__)
@@ -206,14 +207,56 @@ async def trigger_scan(
     request: ScanRequest,
     _user: TokenPayload = _auth,
 ) -> dict[str, str]:
-    """Trigger an async scan for a subscription."""
+    """Trigger an async scan for a subscription.
+
+    Enqueues a scan request and returns immediately with a scan_id.
+    """
     scan_id = str(uuid.uuid4())
     logger.info(
         "Scan triggered: %s for sub %s",
         scan_id,
         request.subscription_id,
     )
+    # Persist scan intent to Cosmos DB if available
+    repo = get_repo()
+    if repo is not None:
+        try:
+            await repo.save_scan_result({
+                "id": scan_id,
+                "partition_key": request.subscription_id,
+                "type": "scan_result",
+                "scan_id": scan_id,
+                "subscription_id": request.subscription_id,
+                "status": "queued",
+                "resources_scanned": 0,
+                "findings_count": 0,
+                "critical_count": 0,
+                "high_count": 0,
+                "total_waste_usd": 0.0,
+                "duration_seconds": 0.0,
+            })
+        except Exception as exc:
+            logger.warning("Failed to persist scan request: %s", exc)
+
     return {"scan_id": scan_id, "status": "queued"}
+
+
+@app.get("/scan/{scan_id}/status")
+async def get_scan_status(
+    scan_id: str,
+    _user: TokenPayload = _auth,
+) -> ScanResult:
+    """Return the status of a scan by scan_id."""
+    repo = get_repo()
+    if repo is not None:
+        try:
+            item = await repo.get_scan_result(scan_id)
+            if item is not None:
+                return ScanResult.model_validate(item)
+        except Exception as exc:
+            logger.warning("Failed to query scan status: %s", exc)
+
+    raise HTTPException(status_code=404, detail="Scan not found")
 
 
 @app.post("/scan", response_model=ScanResponse)
@@ -266,7 +309,7 @@ async def list_findings(
     limit: int = Query(default=50, ge=1, le=200),
     _user: TokenPayload = _auth,
 ) -> list[RemediationCard]:
-    """Return a paginated list of RemediationCards (stub)."""
+    """Return RemediationCards sorted by priority_score descending."""
     repo = get_repo()
     if repo is not None:
         findings = await repo.get_findings(
@@ -277,6 +320,11 @@ async def list_findings(
             card = await repo.get_remediation_card(f.finding_id)
             if card:
                 cards.append(card)
+        # Sort by priority_score descending
+        cards.sort(
+            key=lambda c: c.finding_result.priority_score if c.finding_result else 0.0,
+            reverse=True,
+        )
         return cards
     return [_mock_remediation_card(str(uuid.uuid4()))]
 

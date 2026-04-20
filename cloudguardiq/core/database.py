@@ -137,6 +137,28 @@ class CosmosRepository:
         return None
 
     # ------------------------------------------------------------------
+    # Scan result operations (system container)
+    # ------------------------------------------------------------------
+
+    async def save_scan_result(self, scan_result: dict[str, Any]) -> None:
+        """Persist a scan result document to the system container."""
+        await self._system_container().upsert_item(scan_result)
+        logger.info("Saved scan result %s", scan_result.get("scan_id", "unknown"))
+
+    async def get_scan_result(self, scan_id: str) -> dict[str, Any] | None:
+        """Retrieve a scan result by scan_id (cross-partition query)."""
+        query = (
+            "SELECT * FROM c "
+            "WHERE c.scan_id = @scan_id AND c.type = 'scan_result'"
+        )
+        params: list[dict[str, Any]] = [{"name": "@scan_id", "value": scan_id}]
+        async for item in self._system_container().query_items(
+            query=query, parameters=params, enable_cross_partition_query=True
+        ):
+            return dict(item)
+        return None
+
+    # ------------------------------------------------------------------
     # Capability flags (system container, partition_key = "system")
     # ------------------------------------------------------------------
 
