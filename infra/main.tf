@@ -177,13 +177,13 @@ resource "azurerm_cosmosdb_sql_container" "system" {
 # ==========================================================================
 
 resource "azurerm_cognitive_account" "openai" {
-  name                          = "${var.prefix}-${var.environment}-openai"
-  location                      = var.openai_location
-  resource_group_name           = azurerm_resource_group.cloudguardiq.name
-  kind                          = "OpenAI"
-  sku_name                      = "S0"
-  custom_subdomain_name         = "${var.prefix}-${var.environment}-openai"
-  local_auth_enabled            = false
+  name                  = "${var.prefix}-${var.environment}-openai"
+  location              = var.openai_location
+  resource_group_name   = azurerm_resource_group.cloudguardiq.name
+  kind                  = "OpenAI"
+  sku_name              = "S0"
+  custom_subdomain_name = "${var.prefix}-${var.environment}-openai"
+  local_auth_enabled    = false
 
   tags = local.tags
 }
@@ -273,9 +273,9 @@ resource "azurerm_cosmosdb_sql_role_assignment" "container_app_cosmos" {
   resource_group_name = azurerm_resource_group.cloudguardiq.name
   account_name        = azurerm_cosmosdb_account.cloudguardiq.name
   # Built-in "Cosmos DB Built-in Data Contributor" role definition ID
-  role_definition_id  = "${azurerm_cosmosdb_account.cloudguardiq.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
-  principal_id        = azurerm_container_app.api.identity[0].principal_id
-  scope               = azurerm_cosmosdb_account.cloudguardiq.id
+  role_definition_id = "${azurerm_cosmosdb_account.cloudguardiq.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id       = azurerm_container_app.api.identity[0].principal_id
+  scope              = azurerm_cosmosdb_account.cloudguardiq.id
 }
 
 # Cosmos DB Built-in Data Contributor for Function App managed identity
