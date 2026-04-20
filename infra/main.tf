@@ -1,23 +1,15 @@
 # CloudGuardIQ — Terraform Infrastructure
 # =========================================
-# Backend configuration for Azure Blob Storage.
-# Uncomment and configure before running `terraform init`:
-#
-# terraform {
-#   backend "azurerm" {
-#     resource_group_name  = "tfstate-rg"
-#     storage_account_name = "cguardiqtfstate"
-#     container_name       = "tfstate"
-#     key                  = "cloudguardiq.tfstate"
-#   }
-# }
-#
-# To create the backend storage:
+# Backend uses Azure Blob Storage with partial configuration.
+# Values are supplied via -backend-config flags in the CI pipeline.
+# For local use:
 #   az group create -n tfstate-rg -l eastus
 #   az storage account create -n cguardiqtfstate -g tfstate-rg -l eastus --sku Standard_LRS
 #   az storage container create -n tfstate --account-name cguardiqtfstate
 
 terraform {
+  backend "azurerm" {}
+
   required_version = ">= 1.8.0"
 
   required_providers {
