@@ -43,7 +43,7 @@ from cloudguardiq.core.models import (
     ScanRequest,
     ScanResponse,
 )
-from cloudguardiq.policy.engine import PolicyEngine
+from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,15 @@ def _build_policy_engine(scanner: NativeScanner) -> PolicyEngine:
     """Build a PolicyEngine backed by native scanner rules."""
     engine = PolicyEngine()
     for rule in scanner._rules:
-        engine.register_rule(rule.evaluate)
+
+        def _wrap(r: Any = rule) -> PolicyRule:
+            def _eval(snap: ResourceSnapshot) -> list[FindingResult]:
+                result = r.evaluate(snap)
+                return [result] if result is not None else []
+
+            return _eval
+
+        engine.register_rule(_wrap())
     return engine
 
 

@@ -12,16 +12,19 @@ import logging
 from functools import partial
 from typing import Any, Protocol
 
-from azure.core.credentials import TokenCredential  # type: ignore[import-untyped]
-from azure.mgmt.costmanagement import CostManagementClient  # type: ignore[import-untyped]
-from azure.mgmt.costmanagement.models import (  # type: ignore[import-untyped]
+from azure.core.credentials import TokenCredential
+from azure.mgmt.costmanagement import CostManagementClient
+from azure.mgmt.costmanagement.models import (
     ExportType,
+    QueryAggregation,
+    QueryDataset,
     QueryDefinition,
+    QueryGrouping,
     QueryTimePeriod,
     TimeframeType,
 )
-from azure.mgmt.resourcegraph import ResourceGraphClient  # type: ignore[import-untyped]
-from azure.mgmt.resourcegraph.models import (  # type: ignore[import-untyped]
+from azure.mgmt.resourcegraph import ResourceGraphClient
+from azure.mgmt.resourcegraph.models import (
     QueryRequest,
     QueryRequestOptions,
 )
@@ -286,6 +289,8 @@ class NativeScanner:
                 options=options,
             )
             try:
+                assert self._rg_client is not None
+                assert self._rg_client is not None
                 response = await loop.run_in_executor(
                     None, partial(self._rg_client.resources, request),
                 )
@@ -523,6 +528,8 @@ class NativeScanner:
 
         try:
             loop = asyncio.get_running_loop()
+            assert self._credential is not None
+            assert self._credential is not None
             client = CostManagementClient(self._credential)
             scope = f"/subscriptions/{self._subscription_id}"
 
@@ -535,16 +542,20 @@ class NativeScanner:
             query_def = QueryDefinition(
                 type=ExportType.ACTUAL_COST,
                 timeframe=TimeframeType.CUSTOM,
-                time_period=QueryTimePeriod(from_property=start, to_property=end),
-                dataset={
-                    "granularity": "None",
-                    "aggregation": {
-                        "totalCost": {"name": "Cost", "function": "Sum"},
+                time_period=QueryTimePeriod(from_property=start, to=end),
+                dataset=QueryDataset(
+                    granularity="None",
+                    aggregation={
+                        "totalCost": QueryAggregation(
+                            name="Cost", function="Sum",
+                        ),
                     },
-                    "grouping": [
-                        {"type": "Dimension", "name": "ResourceId"},
+                    grouping=[
+                        QueryGrouping(
+                            type="Dimension", name="ResourceId",
+                        ),
                     ],
-                },
+                ),
             )
 
             response = await loop.run_in_executor(
