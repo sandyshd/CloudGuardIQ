@@ -64,7 +64,8 @@ jobs:
             -backend-config="key=cloudguardiq.${{ github.event.inputs.environment }}.tfstate" \
             -backend-config="use_oidc=true" \
             -backend-config="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}"
+            -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -backend-config="use_azuread_auth=true"
         env:
           ARM_USE_OIDC: true
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
