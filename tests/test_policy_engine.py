@@ -1,4 +1,4 @@
-"""Tests for PolicyEngine."""
+"""Tests for PolicyEngine (legacy backward-compatible tests)."""
 
 from __future__ import annotations
 
@@ -10,25 +10,25 @@ from cloudguardiq.policy.engine import PolicyEngine
 
 class TestPolicyEngine:
     def test_evaluate_with_no_rules(self, storage_snapshot: ResourceSnapshot) -> None:
-        engine = PolicyEngine()
+        engine = PolicyEngine(rules=[])
         findings = engine.evaluate([storage_snapshot])
         assert findings == []
 
     def test_evaluate_with_rules(self, insecure_storage_snapshot: ResourceSnapshot) -> None:
-        engine = PolicyEngine()
+        engine = PolicyEngine(rules=[])
         engine.register_rule(StorageHttpsOnlyRule().evaluate)
         engine.register_rule(StoragePublicAccessRule().evaluate)
         findings = engine.evaluate([insecure_storage_snapshot])
         assert len(findings) == 2
 
     def test_rule_count(self) -> None:
-        engine = PolicyEngine()
+        engine = PolicyEngine(rules=[])
         assert engine.rule_count == 0
         engine.register_rule(StorageHttpsOnlyRule().evaluate)
         assert engine.rule_count == 1
 
     def test_severity_filter(self, insecure_storage_snapshot: ResourceSnapshot) -> None:
-        engine = PolicyEngine()
+        engine = PolicyEngine(rules=[])
         engine.register_rule(StorageHttpsOnlyRule().evaluate)
         engine.register_rule(StoragePublicAccessRule().evaluate)
         engine.set_severity_filter(Severity.CRITICAL)
@@ -36,7 +36,7 @@ class TestPolicyEngine:
         assert all(f.severity == Severity.CRITICAL for f in findings)
 
     def test_failing_rule_handled(self, storage_snapshot: ResourceSnapshot) -> None:
-        engine = PolicyEngine()
+        engine = PolicyEngine(rules=[])
 
         def bad_rule(snap: ResourceSnapshot) -> list:
             raise ValueError("boom")
