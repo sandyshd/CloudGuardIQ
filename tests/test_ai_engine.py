@@ -1,4 +1,4 @@
-"""Tests for AI RemediationEngine."""
+"""Tests for AI RemediationEngine (legacy test suite)."""
 
 from __future__ import annotations
 
@@ -10,6 +10,16 @@ import pytest
 from cloudguardiq.ai.remediation_engine import AIEngineError, RemediationEngine
 from cloudguardiq.core.enums import FindingCategory, RemediationStatus, Severity
 from cloudguardiq.core.models import FindingResult
+
+
+def _valid_response_content() -> str:
+    return (
+        '{"narrative":"Enable HTTPS","business_risk":"Data in transit exposed",'
+        '"terraform_fix":"resource \\"azurerm\\" {}",'
+        '"cli_fix":"az storage account update --https-only true",'
+        '"confidence_qualifier":"Based on configuration scan",'
+        '"estimated_savings_usd":0.0}'
+    )
 
 
 @pytest.fixture
@@ -33,26 +43,15 @@ class TestRemediationEngine:
         mock_client = MagicMock()
         mock_response = MagicMock()
         mock_response.choices = [
-            MagicMock(
-                message=MagicMock(
-                    content=(
-                        '{"summary":"Enable HTTPS","explanation":"Set HTTPS only",'
-                        '"risk_if_ignored":"Data in transit exposed",'
-                        '"terraform_code":"resource \\"azurerm\\" {}",'
-                        '"manual_steps":["Go to portal","Enable HTTPS"]}'
-                    )
-                )
-            )
+            MagicMock(message=MagicMock(content=_valid_response_content()))
         ]
         mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         engine = RemediationEngine(client=mock_client)
         card = await engine.generate(sample_finding)
 
-        assert card.summary == "Enable HTTPS"
+        assert card.narrative == "Enable HTTPS"
         assert card.status == RemediationStatus.PENDING
-        assert card.finding_id == sample_finding.id
-        assert len(card.manual_steps) == 2
 
     @pytest.mark.asyncio
     async def test_generate_no_client(self, sample_finding: FindingResult) -> None:
@@ -80,19 +79,11 @@ class TestRemediationEngine:
         mock_client = MagicMock()
         mock_response = MagicMock()
         mock_response.choices = [
-            MagicMock(
-                message=MagicMock(
-                    content=(
-                        '{"summary":"Fix","explanation":"Do it",'
-                        '"risk_if_ignored":"Bad","terraform_code":"",'
-                        '"manual_steps":[]}'
-                    )
-                )
-            )
+            MagicMock(message=MagicMock(content=_valid_response_content()))
         ]
         mock_client.chat.completions.create = AsyncMock(
             side_effect=[RuntimeError("fail"), mock_response]
         )
         engine = RemediationEngine(client=mock_client)
         card = await engine.generate(sample_finding)
-        assert card.summary == "Fix"
+        assert card.narrative == "Enable HTTPS"

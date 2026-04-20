@@ -58,3 +58,5 @@ frontend/build/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+scan_output.json
