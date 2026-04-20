@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 
@@ -19,7 +18,6 @@ async def _get_scan_pipeline():
     from azure.servicebus.aio import ServiceBusClient
 
     from cloudguardiq.adapters.azure_adapter import AzureAdapter
-    from cloudguardiq.ai.remediation_engine import RemediationEngine
     from cloudguardiq.core.config import get_settings
     from cloudguardiq.core.database import CosmosRepository
     from cloudguardiq.pipeline.scan_pipeline import ScanPipeline

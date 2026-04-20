@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,7 +10,6 @@ from cloudguardiq.adapters.azure_adapter import AzureAdapter
 from cloudguardiq.adapters.base import CapabilityFlags
 from cloudguardiq.core.enums import CloudProvider, DataTier
 from cloudguardiq.core.models import ResourceSnapshot
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

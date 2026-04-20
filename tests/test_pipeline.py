@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,7 +10,6 @@ from cloudguardiq.core.enums import DataTier, Severity
 from cloudguardiq.core.models import FindingResult, RemediationCard, ResourceSnapshot
 from cloudguardiq.pipeline.ai_worker import AIWorker
 from cloudguardiq.pipeline.scan_pipeline import ScanPipeline, ScanResult
-
 
 # ------------------------------------------------------------------
 # Fixtures

@@ -6,12 +6,10 @@ import asyncio
 
 import pytest
 
-from cloudguardiq.adapters.rules.base import PolicyRule as PolicyRuleBase
 from cloudguardiq.adapters.rules.storage import PublicBlobAccessRule
 from cloudguardiq.core.enums import CloudProvider, DataTier, FindingType, Severity
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 from cloudguardiq.policy.engine import PolicyEngine, _compute_priority, _discover_rules
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

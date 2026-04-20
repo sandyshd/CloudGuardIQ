@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,7 +13,6 @@ from cloudguardiq.ai.remediation_engine import AIEngineError, RemediationEngine
 from cloudguardiq.ai.risk_scorer import compute_risk_score
 from cloudguardiq.core.enums import DataTier, Severity
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
