@@ -69,7 +69,7 @@ resource "azuread_application" "cloudguardiq" {
 
   single_page_application {
     redirect_uris = concat(
-      ["https://${var.prefix}-${var.environment}-swa.azurestaticapps.net"],
+      ["https://${var.prefix}-${var.environment}-swa.azurestaticapps.net/"],
       var.frontend_redirect_uris
     )
   }
@@ -310,7 +310,7 @@ resource "azurerm_role_assignment" "function_app_openai" {
 # ==========================================================================
 
 resource "azurerm_servicebus_namespace" "cloudguardiq" {
-  name                = "${var.prefix}-${var.environment}-sb"
+  name                = "${var.prefix}-${var.environment}-sbus"
   location            = azurerm_resource_group.cloudguardiq.location
   resource_group_name = azurerm_resource_group.cloudguardiq.name
   sku                 = "Standard"

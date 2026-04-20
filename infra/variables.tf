@@ -48,5 +48,5 @@ variable "api_container_image" {
 variable "frontend_redirect_uris" {
   description = "Additional redirect URIs for the Azure AD app (e.g. localhost for dev)"
   type        = list(string)
-  default     = ["http://localhost:3000"]
+  default     = ["http://localhost:3000/"]
 }
