@@ -279,6 +279,16 @@ Azure, `az login` locally):
 GitHub Actions authenticates via **OIDC workload identity federation** — no
 stored secrets for Azure credentials.
 
+### App Registrations
+
+| App | Client ID | Purpose |
+|-----|-----------|---------|
+| **CloudGuardIQ-dev** | From Terraform output `azure_ad_client_id` | User login (MSAL SPA flow), JWT validation |
+| **CloudGuardIQ-GitHub-OIDC** | GitHub secret `AZURE_CLIENT_ID` | CI/CD pipeline OIDC auth only (no redirect URIs) |
+
+> **Important:** The frontend uses `APP_CLIENT_ID` (CloudGuardIQ-dev) for MSAL,
+> not `AZURE_CLIENT_ID` (GitHub OIDC). These are different app registrations.
+
 ---
 
 ## Local Development Setup
@@ -461,7 +471,8 @@ terraform apply tfplan
    | `TF_STATE_STORAGE_ACCOUNT` | Repository | Storage account for tfstate |
    | `FRONTEND_URL` | Environment | Static Web App URL (e.g. `https://cguardiq-dev-swa.azurestaticapps.net`) |
    | `API_URL` | Environment | Container App URL (e.g. `https://cguardiq-dev-api.<region>.azurecontainerapps.io`) |
-   | `SWA_DEPLOYMENT_TOKEN` | Environment | Static Web App deployment token (from Portal) |
+   | `APP_CLIENT_ID` | Environment | CloudGuardIQ-dev app client ID (for frontend MSAL auth) |
+| `SWA_DEPLOYMENT_TOKEN` | Environment | Static Web App deployment token (from Portal) |
 
 6. Create a GitHub environment named `dev`
 7. Go to **Actions → Terraform Infrastructure → Run workflow**
@@ -564,9 +575,11 @@ terraform output -raw frontend_env_file > ../frontend/.env.local
 |-----|-------|
 | **deploy-frontend** | `npm ci` → Build with `VITE_*` env vars → Deploy to Static Web App |
 | **deploy-backend** | Azure Login → Docker build → Push to ACR → Update Container App |
+| **deploy-functions** | Setup Python → Azure Login → Deploy to Azure Functions via `functions-action` |
 
 **Frontend `VITE_*` variables** are injected as build-time env vars during `npm run build`
-and baked into the static JS bundle. These come from **environment-scoped** GitHub secrets.
+and baked into the static JS bundle. `VITE_AZURE_CLIENT_ID` uses the `APP_CLIENT_ID`
+environment secret (CloudGuardIQ-dev app), not the `AZURE_CLIENT_ID` repository secret.
 
 **Backend env vars** (Cosmos, OpenAI, etc.) are already set on the Container App by Terraform —
 the deploy workflow only updates the container image.
@@ -625,7 +638,7 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 
 | Variable | Description |
 |----------|-------------|
-| `VITE_AZURE_CLIENT_ID` | Azure AD app client ID |
+| `VITE_AZURE_CLIENT_ID` | CloudGuardIQ-dev app client ID (from `APP_CLIENT_ID` secret) |
 | `VITE_AZURE_TENANT_ID` | Azure AD tenant ID |
 | `VITE_REDIRECT_URI` | Auth redirect URI (default: `http://localhost:3000`) |
 | `VITE_API_BASE_URL` | Backend API URL (default: `/api`) |
