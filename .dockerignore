@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+.git
+.github
+.env
+.env.*
+*.md
+tests/
+frontend/
+infra/
+node_modules/
+.terraform/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+scan_output.json
