@@ -145,12 +145,14 @@ cloudguardiq/
 │   ├── core/
 │   ├── policy/
 │   └── conftest.py             # Shared fixtures
+├── Dockerfile                  # Backend container image
 ├── function_app.py             # Azure Functions entry point
 ├── pyproject.toml              # Python project metadata
 ├── .env.example                # Environment variable template
 └── .github/workflows/
     ├── ci.yml                  # Lint, type-check, test, TF validate
-    └── infra.yml               # Terraform plan/apply (OIDC)
+    ├── infra.yml               # Terraform plan/apply (OIDC)
+    └── deploy.yml              # Build & deploy frontend + backend
 ```
 
 ---
@@ -450,13 +452,16 @@ terraform apply tfplan
 
 4. Configure GitHub repository secrets:
 
-   | Secret | Description |
-   |--------|-------------|
-   | `AZURE_CLIENT_ID` | App registration client ID |
-   | `AZURE_TENANT_ID` | Azure AD tenant ID |
-   | `AZURE_SUBSCRIPTION_ID` | Target subscription |
-   | `TF_STATE_RESOURCE_GROUP` | Resource group for tfstate storage |
-   | `TF_STATE_STORAGE_ACCOUNT` | Storage account for tfstate |
+   | Secret | Scope | Description |
+   |--------|-------|-------------|
+   | `AZURE_CLIENT_ID` | Repository | App registration client ID |
+   | `AZURE_TENANT_ID` | Repository | Azure AD tenant ID |
+   | `AZURE_SUBSCRIPTION_ID` | Repository | Target subscription |
+   | `TF_STATE_RESOURCE_GROUP` | Repository | Resource group for tfstate storage |
+   | `TF_STATE_STORAGE_ACCOUNT` | Repository | Storage account for tfstate |
+   | `FRONTEND_URL` | Environment | Static Web App URL (e.g. `https://cguardiq-dev-swa.azurestaticapps.net`) |
+   | `API_URL` | Environment | Container App URL (e.g. `https://cguardiq-dev-api.<region>.azurecontainerapps.io`) |
+   | `SWA_DEPLOYMENT_TOKEN` | Environment | Static Web App deployment token (from Portal) |
 
 6. Create a GitHub environment named `dev`
 7. Go to **Actions → Terraform Infrastructure → Run workflow**
@@ -474,6 +479,7 @@ terraform apply tfplan
 | Service Bus | `cguardiq-{env}-sb` | Async findings queue |
 | Container App | `cguardiq-{env}-api` | FastAPI backend |
 | Function App | `cguardiq-{env}-func` | Timer scan + AI worker |
+| Container Registry | `cguardiq{env}acr` | Docker image storage (Basic SKU) |
 | Static Web App | `cguardiq-{env}-swa` | React frontend |
 | App Insights | `cguardiq-{env}-ai` | Monitoring & tracing |
 | Log Analytics | `cguardiq-{env}-law` | Log aggregation |
@@ -491,6 +497,8 @@ terraform apply tfplan
 | Function App MI | Storage Blob Data Owner | Function storage account |
 | Function App MI | Storage Queue Data Contributor | Function storage account |
 | Function App MI | Storage Table Data Contributor | Function storage account |
+| Container App MI | AcrPull | Container Registry |
+| GitHub SP | AcrPush | Container Registry |
 | Service Principal | Reader | Subscription |
 
 > **Key-based authentication is disabled** on Cosmos DB
@@ -538,6 +546,33 @@ terraform output -raw frontend_env_file > ../frontend/.env.local
 **Auth:** OIDC workload identity federation (no stored Azure credentials).
 
 **Flow:** Login → Init (Azure Blob backend with `use_azuread_auth`) → Format Check → Validate → Plan → Apply (if selected).
+
+---
+
+### Deploy — Build & Ship Application
+
+**File:** `.github/workflows/deploy.yml`
+**Trigger:** Manual with inputs
+
+| Input | Options | Default |
+|-------|---------|---------|
+| `environment` | `dev`, `staging`, `prod` | `dev` |
+
+**Jobs:**
+
+| Job | Steps |
+|-----|-------|
+| **deploy-frontend** | `npm ci` → Build with `VITE_*` env vars → Deploy to Static Web App |
+| **deploy-backend** | Azure Login → Docker build → Push to ACR → Update Container App |
+
+**Frontend `VITE_*` variables** are injected as build-time env vars during `npm run build`
+and baked into the static JS bundle. These come from **environment-scoped** GitHub secrets.
+
+**Backend env vars** (Cosmos, OpenAI, etc.) are already set on the Container App by Terraform —
+the deploy workflow only updates the container image.
+
+**ACR name** is computed from the naming convention (`cguardiq{env}acr`) — no `ACR_NAME`
+secret is needed.
 
 ---
 
@@ -627,6 +662,8 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 | `api_url` | Backend API URL |
 | `function_app_name` | Function App name |
 | `frontend_url` | Frontend Static Web App URL |
+| `acr_name` | Azure Container Registry name |
+| `acr_login_server` | Azure Container Registry login server |
 | `backend_env_file` | Ready-to-use `.env` contents |
 | `frontend_env_file` | Ready-to-use frontend `.env.local` contents |
 

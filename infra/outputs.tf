@@ -111,3 +111,14 @@ output "frontend_env_file" {
     VITE_API_BASE_URL=http://localhost:8000
   EOT
 }
+
+# ---------- Azure Container Registry ----------
+output "acr_name" {
+  description = "Azure Container Registry name"
+  value       = azurerm_container_registry.cloudguardiq.name
+}
+
+output "acr_login_server" {
+  description = "Azure Container Registry login server"
+  value       = azurerm_container_registry.cloudguardiq.login_server
+}

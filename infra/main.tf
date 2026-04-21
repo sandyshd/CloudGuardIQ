@@ -539,6 +539,34 @@ resource "azurerm_role_assignment" "function_app_reader" {
   principal_id         = azurerm_linux_function_app.cloudguardiq.identity[0].principal_id
 }
 
+
+# ==========================================================================
+# Azure Container Registry
+# ==========================================================================
+
+resource "azurerm_container_registry" "cloudguardiq" {
+  name                = "${var.prefix}${var.environment}acr"
+  location            = azurerm_resource_group.cloudguardiq.location
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  sku                 = "Basic"
+  admin_enabled       = false
+
+  tags = local.tags
+}
+
+# AcrPull role for Container App managed identity
+resource "azurerm_role_assignment" "container_app_acr_pull" {
+  scope                = azurerm_container_registry.cloudguardiq.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_container_app.api.identity[0].principal_id
+}
+
+# AcrPush role for GitHub Actions service principal
+resource "azurerm_role_assignment" "github_acr_push" {
+  scope                = azurerm_container_registry.cloudguardiq.id
+  role_definition_name = "AcrPush"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
 # ==========================================================================
 # Static Web App — React Frontend
 # ==========================================================================
