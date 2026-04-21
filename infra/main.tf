@@ -29,6 +29,9 @@ terraform {
 }
 
 provider "azurerm" {
+  storage_use_azuread = true
+
+
   features {
     key_vault {
       purge_soft_delete_on_destroy = false
@@ -129,6 +132,7 @@ resource "azurerm_cosmosdb_account" "cloudguardiq" {
   geo_location {
     location          = azurerm_resource_group.cloudguardiq.location
     failover_priority = 0
+    zone_redundant    = false
   }
 
   tags = local.tags
@@ -195,7 +199,7 @@ resource "azurerm_cognitive_deployment" "gpt4o" {
   model {
     format  = "OpenAI"
     name    = "gpt-4o"
-    version = "2024-08-06"
+    version = "2024-11-20"
   }
 
   scale {
