@@ -93,6 +93,12 @@ jobs:
 
       - name: Deploy to Container App
         run: |
+          az containerapp registry set \
+            --name ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-api \
+            --resource-group ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-rg \
+            --server ${{ env.ACR_NAME }}.azurecr.io \
+            --identity system
+
           az containerapp update \
             --name ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-api \
             --resource-group ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-rg \
