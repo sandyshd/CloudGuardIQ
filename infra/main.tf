@@ -567,6 +567,13 @@ resource "azurerm_role_assignment" "github_acr_push" {
   role_definition_name = "AcrPush"
   principal_id         = data.azurerm_client_config.current.object_id
 }
+
+# Storage Blob Data Contributor for GitHub Actions SP (function app deployment)
+resource "azurerm_role_assignment" "github_func_storage" {
+  scope                = azurerm_storage_account.functions.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
 # ==========================================================================
 # Static Web App — React Frontend
 # ==========================================================================
