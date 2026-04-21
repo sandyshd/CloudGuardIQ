@@ -1,4 +1,4 @@
-"""CloudGuardIQ -- Prompt templates for GPT-4o remediation engine."""
+"""CloudGuardIQ -- Prompt templates for GPT-5.1 remediation engine."""
 
 from __future__ import annotations
 

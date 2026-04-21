@@ -116,7 +116,7 @@ def mock_ai_engine() -> AsyncMock:
         narrative="Fix the issue",
         terraform_fix='resource "example" {}',
         confidence_qualifier="high",
-        model_version="gpt-4o",
+        model_version="gpt-5.1",
     )
     return engine
 

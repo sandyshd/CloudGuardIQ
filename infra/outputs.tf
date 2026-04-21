@@ -94,7 +94,7 @@ output "backend_env_file" {
   value       = <<-EOT
     CLOUDGUARDIQ_COSMOS_ENDPOINT=${azurerm_cosmosdb_account.cloudguardiq.endpoint}
     CLOUDGUARDIQ_AZURE_OPENAI_ENDPOINT=${azurerm_cognitive_account.openai.endpoint}
-    CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT=gpt-4o
+    CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT=gpt-5.1
     CLOUDGUARDIQ_AZURE_TENANT_ID=${data.azurerm_client_config.current.tenant_id}
     CLOUDGUARDIQ_AZURE_CLIENT_ID=${azuread_application.cloudguardiq.client_id}
     AZURE_SUBSCRIPTION_ID=${data.azurerm_subscription.current.subscription_id}

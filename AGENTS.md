@@ -16,7 +16,7 @@ Always read .github/copilot-instructions.md for full project context.
   ResourceSnapshot objects only
 - ALWAYS wrap Defender for Cloud API calls in try/except — return graceful fallback
 - ALWAYS set data_tier field on every ResourceSnapshot
-- NEVER send raw API responses to GPT-4o — always send structured FindingResult JSON
+- NEVER send raw API responses to GPT-5.1 — always send structured FindingResult JSON
 
 ## Error handling pattern
 - External API failures (Azure, OpenAI, GitHub) must NEVER propagate as unhandled exceptions

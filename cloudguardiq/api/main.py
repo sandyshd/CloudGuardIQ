@@ -189,7 +189,7 @@ def _mock_remediation_card(card_id: str) -> RemediationCard:
         narrative="Enable HTTPS-only traffic on the storage account.",
         terraform_fix=_MOCK_TF,
         confidence_qualifier="high",
-        model_version="gpt-4o-2024-05-13",
+        model_version="gpt-5.1-2025-11-13",
     )
 
 

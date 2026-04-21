@@ -192,14 +192,14 @@ resource "azurerm_cognitive_account" "openai" {
   tags = local.tags
 }
 
-resource "azurerm_cognitive_deployment" "gpt4o" {
-  name                 = "gpt-4o"
+resource "azurerm_cognitive_deployment" "gpt51" {
+  name                 = "gpt-5.1"
   cognitive_account_id = azurerm_cognitive_account.openai.id
 
   model {
     format  = "OpenAI"
-    name    = "gpt-4o"
-    version = "2024-11-20"
+    name    = "gpt-5.1"
+    version = "2025-11-13"
   }
 
   scale {
@@ -394,7 +394,7 @@ resource "azurerm_container_app" "api" {
       }
       env {
         name  = "CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT"
-        value = "gpt-4o"
+        value = "gpt-5.1"
       }
       env {
         name  = "CLOUDGUARDIQ_AZURE_TENANT_ID"
@@ -506,7 +506,7 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
 
     # Azure OpenAI (RBAC via managed identity)
     AZURE_OPENAI_ENDPOINT   = azurerm_cognitive_account.openai.endpoint
-    AZURE_OPENAI_DEPLOYMENT = "gpt-4o"
+    AZURE_OPENAI_DEPLOYMENT = "gpt-5.1"
 
     # Subscription to scan
     AZURE_SUBSCRIPTION_ID = data.azurerm_subscription.current.subscription_id

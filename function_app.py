@@ -82,7 +82,7 @@ async def _get_ai_worker():
     )
     ai_engine = RemediationEngine(
         client=openai_client,
-        deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o"),
+        deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5.1"),
         db=db,
     )
 

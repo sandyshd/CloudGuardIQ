@@ -7,7 +7,7 @@ data source strategy — no hard dependency on Microsoft Defender for Cloud.
 
 ## Tech stack
 - Python 3.12, FastAPI, Pydantic v2
-- Azure Cosmos DB (serverless), Azure OpenAI GPT-4o
+- Azure Cosmos DB (serverless), Azure OpenAI GPT-5.1
 - React 18 + TypeScript + Tailwind CSS
 - Terraform for all infrastructure
 - pytest, ruff, mypy for quality
@@ -17,7 +17,7 @@ data source strategy — no hard dependency on Microsoft Defender for Cloud.
 - PolicyEngine rules evaluate ResourceSnapshot objects ONLY — never import Azure SDK
 - ResourceSnapshot has a data_tier field: TIER1_NATIVE | TIER2_FREE_CSPM | TIER3_PAID
 - Every Defender for Cloud API call MUST be in try/except — graceful degradation always
-- GPT-4o receives structured FindingResult JSON — never raw API data
+- GPT-5.1 receives structured FindingResult JSON — never raw API data
 - All secrets via environment variables or Azure Key Vault — never hardcoded
 
 ## Code standards

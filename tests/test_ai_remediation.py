@@ -101,14 +101,14 @@ class TestGenerate:
     async def test_generate_returns_remediation_card(
         self, finding: FindingResult, mock_client: MagicMock, mock_db: MagicMock
     ) -> None:
-        engine = RemediationEngine(client=mock_client, deployment="gpt-4o", db=mock_db)
+        engine = RemediationEngine(client=mock_client, deployment="gpt-5.1", db=mock_db)
         card = await engine.generate(finding)
 
         assert card.narrative == "Storage account allows unencrypted HTTP traffic."
         assert card.terraform_fix != ""
         assert card.cli_fix != ""
         assert card.confidence_qualifier != ""
-        assert card.model_version == "gpt-4o"
+        assert card.model_version == "gpt-5.1"
         assert card.finding_result == finding
         mock_db.save_remediation_card.assert_awaited_once()
 

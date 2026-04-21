@@ -1,4 +1,4 @@
-"""CloudGuardIQ -- AI remediation engine using Azure OpenAI GPT-4o."""
+"""CloudGuardIQ -- AI remediation engine using Azure OpenAI GPT-5.1."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class RemediationEngine:
     def __init__(
         self,
         client: Any,
-        deployment: str = "gpt-4o",
+        deployment: str = "gpt-5.1",
         db: Any | None = None,
     ) -> None:
         """Initialise the engine.
@@ -50,7 +50,7 @@ class RemediationEngine:
     async def generate(self, finding: FindingResult) -> RemediationCard:
         """Generate an AI remediation plan for a single finding.
 
-        Uses Azure OpenAI GPT-4o with structured JSON output mode.
+        Uses Azure OpenAI GPT-5.1 with structured JSON output mode.
         Retries up to 3 times on malformed JSON response.
         Saves result to Cosmos DB when a db is configured.
         """
@@ -120,7 +120,7 @@ class RemediationEngine:
         return list(await asyncio.gather(*[_limited(f) for f in findings]))
 
     async def _call_openai(self, prompt: str) -> dict[str, Any]:
-        """Call GPT-4o, parse response, validate against expected schema."""
+        """Call GPT-5.1, parse response, validate against expected schema."""
         if self._client is None:
             raise AIEngineError("OpenAI client not configured")
 

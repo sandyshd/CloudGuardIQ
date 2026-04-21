@@ -329,7 +329,7 @@ class TestRemediationCard:
             cli_fix="az storage account update --https-only true",
             confidence_qualifier="High confidence (Tier 1 data)",
             estimated_savings_usd=0.0,
-            model_version="gpt-4o-2024-05-13",
+            model_version="gpt-5.1-2025-11-13",
         )
 
     def test_card_id_auto(self, card: RemediationCard) -> None:
@@ -338,7 +338,7 @@ class TestRemediationCard:
     def test_fields(self, card: RemediationCard) -> None:
         assert card.narrative.startswith("Enable")
         assert "azurerm" in card.terraform_fix
-        assert card.model_version.startswith("gpt-4o")
+        assert card.model_version.startswith("gpt-5.1")
         assert card.finding_result is not None
 
     def test_json_round_trip(self, card: RemediationCard) -> None:
@@ -725,7 +725,7 @@ class TestRemediationCardEdgeCases:
             narrative="Enable HTTPS",
             terraform_fix='resource "x" {}',
             cli_fix="az ...",
-            model_version="gpt-4o-2025-01",
+            model_version="gpt-5.1-2025-11-13",
             estimated_savings_usd=42.0,
         )
         json_str = card.model_dump_json()

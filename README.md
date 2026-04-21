@@ -1,7 +1,7 @@
 # CloudGuardIQ
 
 Azure-native SaaS combining **CSPM** (Cloud Security Posture Management) and **FinOps** cost
-governance with **AI-generated remediation** powered by GPT-4o.
+governance with **AI-generated remediation** powered by GPT-5.1.
 
 ---
 
@@ -49,7 +49,7 @@ governance with **AI-generated remediation** powered by GPT-4o.
 ┌──────────────────────▼───────────────────────────────────────────┐
 │  Azure Functions (Timer + Service Bus triggers)                  │
 │  ├─ scan_trigger      — scheduled every 6 hours                  │
-│  └─ ai_worker_trigger — processes findings → GPT-4o              │
+│  └─ ai_worker_trigger — processes findings → GPT-5.1              │
 │     └─ RemediationEngine → Terraform fix, CLI fix, savings       │
 └──────────────────────┬───────────────────────────────────────────┘
                        │
@@ -78,7 +78,7 @@ wrapped in `try/except` with fallback to empty enrichment.
 |-------|------------|
 | **Frontend** | React 18, TypeScript, Tailwind CSS 4, MSAL |
 | **Backend API** | Python 3.12, FastAPI, Pydantic v2, uvicorn |
-| **AI** | Azure OpenAI GPT-4o (structured JSON mode) |
+| **AI** | Azure OpenAI GPT-5.1 (structured JSON mode) |
 | **Database** | Azure Cosmos DB (serverless, NoSQL) |
 | **Messaging** | Azure Service Bus |
 | **Identity** | Azure AD / Entra ID, MSAL, RBAC (DefaultAzureCredential) |
@@ -106,7 +106,7 @@ cloudguardiq/
 │   │       ├── keyvault.py     # KV-001 .. KV-005
 │   │       └── finops.py       # FINOPS-001 .. FINOPS-008
 │   ├── ai/                     # AI remediation
-│   │   ├── remediation_engine.py  # GPT-4o structured output
+│   │   ├── remediation_engine.py  # GPT-5.1 structured output
 │   │   └── prompt_templates.py    # System + user prompts
 │   ├── api/                    # FastAPI REST layer
 │   │   ├── main.py             # Route definitions
@@ -315,7 +315,7 @@ CLOUDGUARDIQ_COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
 
 # Azure OpenAI (RBAC via DefaultAzureCredential)
 AZURE_OPENAI_ENDPOINT=https://<account>.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT=gpt-4o
+AZURE_OPENAI_DEPLOYMENT=gpt-5.1
 
 # Azure Service Bus
 SERVICE_BUS_CONNECTION_STRING=<connection-string>
@@ -444,7 +444,7 @@ terraform apply tfplan
 | Resource Group | `cguardiq-{env}-rg` | Container for all resources |
 | Azure AD App | `CloudGuardIQ-{env}` | SPA + API auth |
 | Cosmos DB | `cguardiq-{env}-cosmos` | Serverless NoSQL (RBAC, local auth disabled) |
-| Azure OpenAI | `cguardiq-{env}-openai` | GPT-4o deployment (local auth disabled) |
+| Azure OpenAI | `cguardiq-{env}-openai` | GPT-5.1 deployment (local auth disabled) |
 | Key Vault | `cguardiq-{env}-kv` | Service Bus connection string |
 | Service Bus | `cguardiq-{env}-sb` | Async findings queue |
 | Container App | `cguardiq-{env}-api` | FastAPI backend |
@@ -554,7 +554,7 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 | `AZURE_SUBSCRIPTION_ID` | Yes | Subscription to scan |
 | `CLOUDGUARDIQ_COSMOS_ENDPOINT` | Yes | Cosmos DB account endpoint |
 | `CLOUDGUARDIQ_AZURE_OPENAI_ENDPOINT` | Yes | Azure OpenAI endpoint |
-| `CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT` | No | Model deployment name (default: `gpt-4o`) |
+| `CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT` | No | Model deployment name (default: `gpt-5.1`) |
 | `CLOUDGUARDIQ_AZURE_TENANT_ID` | Yes | Tenant ID for JWT validation |
 | `CLOUDGUARDIQ_AZURE_CLIENT_ID` | Yes | Client ID for JWT audience validation |
 | `CLOUDGUARDIQ_AUTH_DISABLED` | No | Set `true` to disable JWT auth (dev only) |
