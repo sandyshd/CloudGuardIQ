@@ -421,9 +421,34 @@ terraform apply tfplan
    - Organization: `<your-github-org>`
    - Repository: `CloudGuardIQ`
    - Environment: `dev` (repeat for `staging`, `prod`)
-3. Assign **Contributor** role on the subscription to the service principal
-4. Assign **Storage Blob Data Contributor** on the tfstate storage account
-5. Configure GitHub repository secrets:
+3. Assign the following roles to the service principal:
+
+   | Role | Scope | Purpose |
+   |------|-------|---------|
+   | **Contributor** | Subscription | Create/manage Azure resources |
+   | **User Access Administrator** | Subscription | Create RBAC role assignments for managed identities |
+   | **Application Administrator** | Azure AD (Entra ID) | Create app registrations and service principals |
+   | **Storage Blob Data Contributor** | tfstate storage account | Read/write Terraform state via Azure AD auth |
+
+   ```bash
+   # Contributor (resource management)
+   az role assignment create --assignee <AZURE_CLIENT_ID> \
+     --role "Contributor" --scope /subscriptions/<SUBSCRIPTION_ID>
+
+   # User Access Administrator (RBAC assignments)
+   az role assignment create --assignee <AZURE_CLIENT_ID> \
+     --role "User Access Administrator" --scope /subscriptions/<SUBSCRIPTION_ID>
+
+   # Storage Blob Data Contributor (tfstate)
+   az role assignment create --assignee <AZURE_CLIENT_ID> \
+     --role "Storage Blob Data Contributor" \
+     --scope /subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<TF_STATE_RG>/providers/Microsoft.Storage/storageAccounts/<TF_STATE_STORAGE>
+
+   # Application Administrator (Azure AD directory role — assign via Portal)
+   # Portal: Entra ID > Roles and administrators > Application Administrator > Add assignment
+   ```
+
+4. Configure GitHub repository secrets:
 
    | Secret | Description |
    |--------|-------------|
