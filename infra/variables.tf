@@ -18,7 +18,7 @@ variable "environment" {
 variable "location" {
   description = "Azure region for all resources"
   type        = string
-  default     = "eastus"
+  default     = "eastus2"
 }
 
 variable "openai_location" {
