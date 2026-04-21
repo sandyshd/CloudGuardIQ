@@ -45,6 +45,13 @@ provider "azurerm" {
 provider "azuread" {}
 
 data "azurerm_client_config" "current" {}
+resource "random_string" "kv_suffix" {
+  length  = 4
+  special = false
+  upper   = false
+}
+
+
 data "azurerm_subscription" "current" {}
 
 # ---------- Resource Group ----------
@@ -216,13 +223,13 @@ resource "azurerm_cognitive_deployment" "gpt51" {
 # ==========================================================================
 
 resource "azurerm_key_vault" "cloudguardiq" {
-  name                       = "${var.prefix}-${var.environment}-kv"
+  name                       = "${var.prefix}-${var.environment}-kv-${random_string.kv_suffix.result}"
   location                   = azurerm_resource_group.cloudguardiq.location
   resource_group_name        = azurerm_resource_group.cloudguardiq.name
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = "standard"
   soft_delete_retention_days = 7
-  purge_protection_enabled   = true
+  purge_protection_enabled   = var.environment == "prod" ? true : false
 
   tags = local.tags
 }
