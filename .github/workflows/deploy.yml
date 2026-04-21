@@ -103,3 +103,34 @@ jobs:
             --name ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-api \
             --resource-group ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-rg \
             --image ${{ env.ACR_NAME }}.azurecr.io/cloudguardiq:${{ github.sha }}
+
+  deploy-functions:
+    name: "Deploy Functions (${{ github.event.inputs.environment }})"
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Azure Functions
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-func
+          package: .
+          scm-do-build-during-deployment: true
