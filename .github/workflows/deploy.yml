@@ -45,7 +45,7 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         env:
-          VITE_AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          VITE_AZURE_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}
           VITE_AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           VITE_REDIRECT_URI: ${{ secrets.FRONTEND_URL }}
           VITE_API_BASE_URL: ${{ secrets.API_URL }}

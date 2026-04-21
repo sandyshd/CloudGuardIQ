@@ -82,7 +82,7 @@ resource "azuread_application" "cloudguardiq" {
 
   single_page_application {
     redirect_uris = concat(
-      ["https://${var.prefix}-${var.environment}-swa.azurestaticapps.net/"],
+      ["https://${azurerm_static_web_app.frontend.default_host_name}/"],
       var.frontend_redirect_uris
     )
   }
