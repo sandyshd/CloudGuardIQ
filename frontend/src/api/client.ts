@@ -1,6 +1,7 @@
 import axios from "axios";
 import { msalInstance } from "../main";
 import { apiScopes } from "../auth/msalConfig";
+import { InteractionRequiredAuthError } from "@azure/msal-browser";
 
 const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "/api",
@@ -18,8 +19,11 @@ apiClient.interceptors.request.use(async (config) => {
         account: accounts[0],
       });
       config.headers.Authorization = `Bearer ${response.accessToken}`;
-    } catch {
-      // Token acquisition failed silently; request proceeds without auth
+    } catch (error) {
+      if (error instanceof InteractionRequiredAuthError) {
+        // Only redirect for interactive auth errors, not network failures
+        await msalInstance.acquireTokenRedirect(apiScopes);
+      }
     }
   }
   return config;
@@ -28,9 +32,7 @@ apiClient.interceptors.request.use(async (config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      msalInstance.loginRedirect(apiScopes);
-    }
+    // Do not auto-redirect on 401 — let RequireAuth handle authentication
     return Promise.reject(error);
   }
 );

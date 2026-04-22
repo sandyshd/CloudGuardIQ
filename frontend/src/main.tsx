@@ -8,12 +8,22 @@ import "./index.css";
 
 export const msalInstance = new PublicClientApplication(msalConfig);
 
-msalInstance.initialize().then(async () => {
-  // Handle the redirect response from Azure AD login
-  await msalInstance.handleRedirectPromise();
+async function startApp() {
+  await msalInstance.initialize();
+  
+  // Process the auth code returned by Azure AD after redirect login
+  try {
+    const response = await msalInstance.handleRedirectPromise();
+    if (response?.account) {
+      msalInstance.setActiveAccount(response.account);
+    }
+  } catch (error) {
+    console.error("Redirect error:", error);
+  }
 
+  // Set active account if one exists
   const accounts = msalInstance.getAllAccounts();
-  if (accounts.length > 0) {
+  if (accounts.length > 0 && !msalInstance.getActiveAccount()) {
     msalInstance.setActiveAccount(accounts[0]);
   }
 
@@ -34,4 +44,6 @@ msalInstance.initialize().then(async () => {
       </StrictMode>
     );
   }
-});
+}
+
+startApp();
