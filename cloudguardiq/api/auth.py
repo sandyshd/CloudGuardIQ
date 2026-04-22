@@ -50,18 +50,27 @@ def _decode_token(
     """Decode and validate a JWT token against Azure AD JWKS."""
     signing_keys = _get_signing_keys(tenant_id)
 
+    # Accept both v1 and v2 issuer formats from Azure AD
+    valid_issuers = [
+        f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+        f"https://sts.windows.net/{tenant_id}/",
+    ]
+
     for key in signing_keys:
-        try:
-            decoded: dict[str, Any] = jwt.decode(
-                token,
-                key.key,
-                algorithms=["RS256", "HS256"],
-                audience=audience,
-                issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0",
-            )
-            return decoded
-        except jwt.InvalidSignatureError:
-            continue
+        for issuer in valid_issuers:
+            try:
+                decoded: dict[str, Any] = jwt.decode(
+                    token,
+                    key.key,
+                    algorithms=["RS256", "HS256"],
+                    audience=audience,
+                    issuer=issuer,
+                )
+                return decoded
+            except jwt.InvalidIssuerError:
+                continue
+            except jwt.InvalidSignatureError:
+                break
 
     raise jwt.InvalidTokenError("No valid signing key found")
 
@@ -71,7 +80,7 @@ async def verify_token(
 ) -> TokenPayload:
     """FastAPI dependency that validates an Azure AD Bearer token.
 
-    When `auth_disabled` is *True* in settings, returns an anonymous
+    When ``auth_disabled`` is *True* in settings, returns an anonymous
     payload so that development and testing can proceed without Azure AD.
     """
     settings = get_settings()

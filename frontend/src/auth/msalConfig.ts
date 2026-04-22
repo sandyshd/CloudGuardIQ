@@ -1,8 +1,10 @@
 import { Configuration, LogLevel } from "@azure/msal-browser";
 
+const clientId = import.meta.env.VITE_AZURE_CLIENT_ID || "00000000-0000-0000-0000-000000000000";
+
 export const msalConfig: Configuration = {
   auth: {
-    clientId: import.meta.env.VITE_AZURE_CLIENT_ID || "00000000-0000-0000-0000-000000000000",
+    clientId,
     authority: `https://login.microsoftonline.com/${import.meta.env.VITE_AZURE_TENANT_ID || "common"}`,
     redirectUri: import.meta.env.VITE_REDIRECT_URI || `${window.location.origin}/`,
   },
@@ -24,9 +26,9 @@ export const msalConfig: Configuration = {
 };
 
 export const loginRequest = {
-  scopes: ["https://management.azure.com/user_impersonation"],
+  scopes: [`${clientId}/.default`],
 };
 
 export const apiScopes = {
-  scopes: ["https://management.azure.com/user_impersonation"],
+  scopes: [`${clientId}/.default`],
 };
