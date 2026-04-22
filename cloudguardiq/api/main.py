@@ -55,7 +55,6 @@ _auth = Depends(verify_token)
 # ------------------------------------------------------------------
 _repo: CosmosRepository | None = None
 
-
 def get_repo() -> CosmosRepository | None:
     """Return the CosmosRepository instance (may be None in tests)."""
     return _repo
@@ -426,7 +425,6 @@ async def _persist_scan_results(
     try:
         await repo.save_scan_result({
             "id": scan_id,
-            "partition_key": subscription_id,
             "type": "scan_result",
             "scan_id": scan_id,
             "subscription_id": subscription_id,
@@ -445,6 +443,7 @@ async def _persist_scan_results(
         "Persisted scan %s: %d snapshots, %d findings",
         scan_id, len(snapshots), len(findings),
     )
+
 
 
 # ------------------------------------------------------------------
@@ -477,7 +476,6 @@ async def trigger_scan(
         try:
             await repo.save_scan_result({
                 "id": scan_id,
-                "partition_key": request.subscription_id,
                 "type": "scan_result",
                 "scan_id": scan_id,
                 "subscription_id": request.subscription_id,
@@ -573,13 +571,13 @@ async def scan_subscription(
 
 @app.get("/findings", response_model=list[FindingResult])
 async def list_findings(
-    subscription_id: str = Query(default="sub-stub"),
+    subscription_id: str = Query(default=""),
     limit: int = Query(default=50, ge=1, le=200),
     _user: TokenPayload = _auth,
 ) -> list[FindingResult]:
     """Return FindingResults for a subscription, sorted by priority_score descending."""
     repo = get_repo()
-    if repo is not None:
+    if repo is not None and subscription_id:
         try:
             findings = await repo.get_findings(subscription_id, limit=limit)
             if findings:

@@ -1,4 +1,11 @@
-"""CloudGuardIQ -- Cosmos DB repository (async)."""
+"""CloudGuardIQ -- Cosmos DB repository (async).
+
+Partition key mapping (must match Terraform container definitions):
+  - findings:     /subscription_id
+  - snapshots:    /provider
+  - remediations: /finding_id
+  - system:       /type
+"""
 
 from __future__ import annotations
 
@@ -68,19 +75,19 @@ class CosmosRepository:
         return self._db.get_container_client(self._settings.cosmos_container_system)
 
     # ------------------------------------------------------------------
-    # Snapshot operations
+    # Snapshot operations  (partition key: /provider)
     # ------------------------------------------------------------------
 
     async def save_snapshot(self, snapshot: ResourceSnapshot) -> str:
         """Persist a ResourceSnapshot. Returns the snapshot id."""
         doc = snapshot.model_dump(mode="json")
-        doc["partition_key"] = snapshot.subscription_id
+        # /provider is already in the model; ensure it is at root level
         await self._snapshots_container().upsert_item(doc)
         logger.info("Saved snapshot %s", snapshot.id)
         return snapshot.id
 
     # ------------------------------------------------------------------
-    # Finding operations
+    # Finding operations  (partition key: /subscription_id)
     # ------------------------------------------------------------------
 
     async def save_finding(self, finding: FindingResult) -> str:
@@ -92,7 +99,8 @@ class CosmosRepository:
             else "unknown"
         )
         doc["id"] = finding.finding_id
-        doc["partition_key"] = sub_id
+        # Root-level subscription_id for partition key /subscription_id
+        doc["subscription_id"] = sub_id
         await self._findings_container().upsert_item(doc)
         logger.info("Saved finding %s", finding.finding_id)
         return finding.finding_id
@@ -103,10 +111,10 @@ class CosmosRepository:
         """Return findings for a subscription, newest first."""
         query = (
             "SELECT TOP @limit * FROM c "
-            "WHERE c.partition_key = @sub_id "
+            "WHERE c.subscription_id = @sub_id "
             "ORDER BY c.detected_at DESC"
         )
-        params: list[dict[str, Any]] = [
+        params: list[dict[str, object]] = [
             {"name": "@limit", "value": limit},
             {"name": "@sub_id", "value": subscription_id},
         ]
@@ -131,10 +139,10 @@ class CosmosRepository:
                 return None
         # Cross-partition fallback
         query = "SELECT * FROM c WHERE c.finding_id = @fid"
-        params: list[dict[str, Any]] = [
+        params: list[dict[str, object]] = [
             {"name": "@fid", "value": finding_id},
         ]
-        async for item in self._findings_container().query_items(
+        async for item in self._findings_container().query_items(  # type: ignore[assignment]
             query=query, parameters=params,
             enable_cross_partition_query=True,
         ):
@@ -142,17 +150,18 @@ class CosmosRepository:
         return None
 
     # ------------------------------------------------------------------
-    # Remediation card operations
+    # Remediation card operations  (partition key: /finding_id)
     # ------------------------------------------------------------------
 
     async def save_remediation_card(self, card: RemediationCard) -> str:
         """Persist a RemediationCard. Returns the card_id."""
         doc = card.model_dump(mode="json")
-        sub_id = "unknown"
-        if card.finding_result and card.finding_result.resource_snapshot:
-            sub_id = card.finding_result.resource_snapshot.subscription_id
         doc["id"] = card.card_id
-        doc["partition_key"] = sub_id
+        # Root-level finding_id for partition key /finding_id
+        finding_id = (
+            card.finding_result.finding_id if card.finding_result else "unknown"
+        )
+        doc["finding_id"] = finding_id
         await self._remediations_container().upsert_item(doc)
         logger.info("Saved remediation card %s", card.card_id)
         return card.card_id
@@ -160,7 +169,7 @@ class CosmosRepository:
     async def get_remediation_card(self, card_id: str) -> RemediationCard | None:
         """Retrieve a single RemediationCard by id (cross-partition query)."""
         query = "SELECT * FROM c WHERE c.card_id = @card_id"
-        params: list[dict[str, Any]] = [{"name": "@card_id", "value": card_id}]
+        params: list[dict[str, object]] = [{"name": "@card_id", "value": card_id}]
         async for item in self._remediations_container().query_items(
             query=query, parameters=params, enable_cross_partition_query=True
         ):
@@ -168,29 +177,31 @@ class CosmosRepository:
         return None
 
     # ------------------------------------------------------------------
-    # Scan result operations (system container)
+    # Scan result operations  (system container, partition key: /type)
     # ------------------------------------------------------------------
 
     async def save_scan_result(self, scan_result: dict[str, Any]) -> None:
         """Persist a scan result document to the system container."""
+        # Ensure /type is set for partition key
+        scan_result.setdefault("type", "scan_result")
         await self._system_container().upsert_item(scan_result)
         logger.info("Saved scan result %s", scan_result.get("scan_id", "unknown"))
 
     async def get_scan_result(self, scan_id: str) -> dict[str, Any] | None:
-        """Retrieve a scan result by scan_id (cross-partition query)."""
+        """Retrieve a scan result by scan_id."""
         query = (
             "SELECT * FROM c "
             "WHERE c.scan_id = @scan_id AND c.type = 'scan_result'"
         )
-        params: list[dict[str, Any]] = [{"name": "@scan_id", "value": scan_id}]
+        params: list[dict[str, object]] = [{"name": "@scan_id", "value": scan_id}]
         async for item in self._system_container().query_items(
-            query=query, parameters=params, enable_cross_partition_query=True
+            query=query, parameters=params, partition_key="scan_result"
         ):
             return dict(item)
         return None
 
     # ------------------------------------------------------------------
-    # Capability flags (system container, partition_key = "system")
+    # Capability flags  (system container, type = "capability")
     # ------------------------------------------------------------------
 
     async def save_capability_flags(
@@ -201,7 +212,7 @@ class CosmosRepository:
 
         doc: dict[str, Any] = asdict(flags)
         doc["id"] = f"capability:{sub_id}"
-        doc["partition_key"] = "system"
+        doc["type"] = "capability"
         doc["detected_at"] = doc["detected_at"].isoformat()
         await self._system_container().upsert_item(doc)
         logger.info("Saved capability flags for %s", sub_id)
@@ -210,7 +221,7 @@ class CosmosRepository:
         """Retrieve capability flags for a subscription."""
         try:
             item = await self._system_container().read_item(
-                item=f"capability:{sub_id}", partition_key="system"
+                item=f"capability:{sub_id}", partition_key="capability"
             )
             return CapabilityFlags(
                 tier1_available=item.get("tier1_available", True),

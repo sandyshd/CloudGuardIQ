@@ -159,6 +159,6 @@ class ScanPipeline:
             return
         doc = result.model_dump(mode="json")
         doc["id"] = result.scan_id
-        doc["partition_key"] = result.subscription_id
+        doc["subscription_id"] = result.subscription_id
         doc["type"] = "scan_result"
         await self._db.save_scan_result(doc)
