@@ -43,11 +43,14 @@ async def _get_scan_pipeline():
     # AI engine (used by worker, not scan pipeline directly)
     ai_engine = None
 
-    # Service Bus sender
+    # Service Bus sender (managed identity)
     sender = None
-    sb_conn = os.environ.get("SERVICE_BUS_CONNECTION_STRING")
-    if sb_conn:
-        sb_client = ServiceBusClient.from_connection_string(sb_conn)
+    sb_fqns = os.environ.get("SERVICE_BUS_CONNECTION__fullyQualifiedNamespace")  # noqa: SIM112 -- Azure Functions binding requires exact casing
+    if sb_fqns:
+        sb_client = ServiceBusClient(
+            fully_qualified_namespace=sb_fqns,
+            credential=async_credential,
+        )
         sender = sb_client.get_queue_sender(queue_name="findings-queue")
 
     return ScanPipeline(
@@ -129,7 +132,7 @@ async def scan_trigger(timer: func.TimerRequest) -> None:
 @app.service_bus_queue_trigger(
     arg_name="msg",
     queue_name="findings-queue",
-    connection="SERVICE_BUS_CONNECTION_STRING",
+    connection="SERVICE_BUS_CONNECTION",
 )
 async def ai_worker_trigger(msg: func.ServiceBusMessage) -> None:
     """Service Bus triggered AI worker for processing findings."""

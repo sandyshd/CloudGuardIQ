@@ -320,6 +320,25 @@ resource "azurerm_role_assignment" "function_app_openai" {
 }
 
 # ==========================================================================
+# RBAC Role Assignments - Service Bus (managed identity)
+# ==========================================================================
+
+# Azure Service Bus Data Owner for Function App managed identity
+# Needed for receiver trigger binding and sender in scan pipeline.
+resource "azurerm_role_assignment" "function_app_servicebus" {
+  scope                = azurerm_servicebus_namespace.cloudguardiq.id
+  role_definition_name = "Azure Service Bus Data Owner"
+  principal_id         = azurerm_linux_function_app.cloudguardiq.identity[0].principal_id
+}
+
+# Azure Service Bus Data Sender for Container App managed identity (API publishes findings)
+resource "azurerm_role_assignment" "container_app_servicebus" {
+  scope                = azurerm_servicebus_namespace.cloudguardiq.id
+  role_definition_name = "Azure Service Bus Data Sender"
+  principal_id         = azurerm_container_app.api.identity[0].principal_id
+}
+
+# ==========================================================================
 # Service Bus
 # ==========================================================================
 
@@ -527,7 +546,7 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     AZURE_SUBSCRIPTION_ID = data.azurerm_subscription.current.subscription_id
 
     # Service Bus
-    SERVICE_BUS_CONNECTION_STRING = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.servicebus_connection.id})"
+    SERVICE_BUS_CONNECTION__fullyQualifiedNamespace = "${azurerm_servicebus_namespace.cloudguardiq.name}.servicebus.windows.net"
 
     # Azure AD
     CLOUDGUARDIQ_AZURE_TENANT_ID = data.azurerm_client_config.current.tenant_id
