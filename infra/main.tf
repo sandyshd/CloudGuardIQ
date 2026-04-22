@@ -509,6 +509,10 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     }
 
     application_insights_connection_string = azurerm_application_insights.cloudguardiq.connection_string
+
+    cors {
+      allowed_origins = ["https://portal.azure.com"]
+    }
   }
 
   app_settings = {
