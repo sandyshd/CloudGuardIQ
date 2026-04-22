@@ -91,6 +91,7 @@ class CosmosRepository:
             if finding.resource_snapshot
             else "unknown"
         )
+        doc["id"] = finding.finding_id
         doc["partition_key"] = sub_id
         await self._findings_container().upsert_item(doc)
         logger.info("Saved finding %s", finding.finding_id)
@@ -116,6 +117,30 @@ class CosmosRepository:
             items.append(item)
         return [FindingResult.model_validate(i) for i in items]
 
+    async def get_finding(
+        self, finding_id: str, subscription_id: str | None = None,
+    ) -> FindingResult | None:
+        """Retrieve a single FindingResult by finding_id."""
+        if subscription_id:
+            try:
+                item = await self._findings_container().read_item(
+                    item=finding_id, partition_key=subscription_id,
+                )
+                return FindingResult.model_validate(item)
+            except Exception:
+                return None
+        # Cross-partition fallback
+        query = "SELECT * FROM c WHERE c.finding_id = @fid"
+        params: list[dict[str, Any]] = [
+            {"name": "@fid", "value": finding_id},
+        ]
+        async for item in self._findings_container().query_items(
+            query=query, parameters=params,
+            enable_cross_partition_query=True,
+        ):
+            return FindingResult.model_validate(item)
+        return None
+
     # ------------------------------------------------------------------
     # Remediation card operations
     # ------------------------------------------------------------------
@@ -126,6 +151,7 @@ class CosmosRepository:
         sub_id = "unknown"
         if card.finding_result and card.finding_result.resource_snapshot:
             sub_id = card.finding_result.resource_snapshot.subscription_id
+        doc["id"] = card.card_id
         doc["partition_key"] = sub_id
         await self._remediations_container().upsert_item(doc)
         logger.info("Saved remediation card %s", card.card_id)

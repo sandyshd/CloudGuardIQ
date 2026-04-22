@@ -49,8 +49,35 @@ class TestScanEndpoint:
 
 
 class TestFindingsEndpoint:
-    def test_get_finding_stub(self) -> None:
+    def test_list_findings(self) -> None:
         client = _client()
-        response = client.get("/findings/abc-123")
+        response = client.get("/findings")
         assert response.status_code == 200
-        assert response.json()["card_id"] == "abc-123"
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) >= 1
+        assert "finding_id" in data[0]
+
+    def test_get_finding_by_id(self) -> None:
+        client = _client()
+        # Get a valid finding_id from the list
+        findings = client.get("/findings").json()
+        finding_id = findings[0]["finding_id"]
+        response = client.get(f"/findings/{finding_id}")
+        assert response.status_code == 200
+        assert response.json()["finding_id"] == finding_id
+
+    def test_get_finding_not_found(self) -> None:
+        client = _client()
+        response = client.get("/findings/nonexistent-id")
+        assert response.status_code == 404
+
+    def test_get_finding_remediation(self) -> None:
+        client = _client()
+        findings = client.get("/findings").json()
+        finding_id = findings[0]["finding_id"]
+        response = client.get(f"/findings/{finding_id}/remediation")
+        assert response.status_code == 200
+        data = response.json()
+        assert "card_id" in data
+        assert "terraform_fix" in data

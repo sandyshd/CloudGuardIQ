@@ -54,17 +54,44 @@ class TestFindingsEndpoints:
         data = response.json()
         assert isinstance(data, list)
         assert len(data) >= 1
+        # Verify it returns FindingResult objects
+        assert "finding_id" in data[0]
+        assert "severity" in data[0]
+        assert "rule_id" in data[0]
 
     @pytest.mark.asyncio
-    async def test_get_finding_stub(self, client: AsyncClient) -> None:
-        response = await client.get("/findings/abc-123")
+    async def test_get_finding_by_id(self, client: AsyncClient) -> None:
+        # First get a valid finding_id from the list
+        list_resp = await client.get("/findings")
+        findings = list_resp.json()
+        finding_id = findings[0]["finding_id"]
+
+        response = await client.get(f"/findings/{finding_id}")
         assert response.status_code == 200
         data = response.json()
-        assert data["card_id"] == "abc-123"
+        assert data["finding_id"] == finding_id
+
+    @pytest.mark.asyncio
+    async def test_get_finding_not_found(self, client: AsyncClient) -> None:
+        response = await client.get("/findings/nonexistent-id")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_finding_remediation(self, client: AsyncClient) -> None:
+        # Get a valid finding_id first
+        list_resp = await client.get("/findings")
+        findings = list_resp.json()
+        finding_id = findings[0]["finding_id"]
+
+        response = await client.get(f"/findings/{finding_id}/remediation")
+        assert response.status_code == 200
+        data = response.json()
+        assert "card_id" in data
+        assert "terraform_fix" in data
 
     @pytest.mark.asyncio
     async def test_get_finding_terraform(self, client: AsyncClient) -> None:
-        response = await client.get("/findings/abc-123/terraform")
+        response = await client.get("/findings/any-id/terraform")
         assert response.status_code == 200
         assert "azurerm_storage_account" in response.text
 
@@ -76,4 +103,5 @@ class TestSubscriptions:
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
-        assert data[0]["subscription_id"] == "sub-stub"
+        assert data[0]["id"] == "sub-stub"
+        assert data[0]["display_name"] == "Dev Subscription"

@@ -1,0 +1,179 @@
+"""Tests for scan persistence to Cosmos DB."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from cloudguardiq.api.main import app
+from cloudguardiq.core.enums import DataTier, Severity
+from cloudguardiq.core.models import FindingResult, ResourceSnapshot
+
+
+@pytest.fixture
+async def client() -> AsyncClient:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+
+class TestScanPersistence:
+    @pytest.mark.asyncio
+    async def test_scan_calls_persist_when_repo_available(
+        self, client: AsyncClient,
+    ) -> None:
+        """POST /scan should persist findings to Cosmos when repo exists."""
+        mock_repo = AsyncMock()
+        mock_repo.save_snapshot = AsyncMock(return_value="snap-id")
+        mock_repo.save_finding = AsyncMock(return_value="finding-id")
+        mock_repo.save_scan_result = AsyncMock()
+
+        # Mock credential to None so no real Azure calls are made
+        with (
+            patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch(
+                "cloudguardiq.api.main.scan_subscription.__module__",
+                create=True,
+            ),
+            patch(
+                "azure.identity.DefaultAzureCredential",
+                side_effect=Exception("no creds"),
+            ),
+        ):
+            response = await client.post(
+                "/scan",
+                json={"subscription_id": "sub-123"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["subscription_id"] == "sub-123"
+        # scan_result should always be saved
+        mock_repo.save_scan_result.assert_called_once()
+        scan_doc = mock_repo.save_scan_result.call_args[0][0]
+        assert scan_doc["status"] == "completed"
+        assert scan_doc["subscription_id"] == "sub-123"
+
+    @pytest.mark.asyncio
+    async def test_scan_persists_snapshots_and_findings(
+        self, client: AsyncClient,
+    ) -> None:
+        """POST /scan should save each snapshot and finding individually."""
+        mock_repo = AsyncMock()
+        mock_repo.save_snapshot = AsyncMock(return_value="snap-id")
+        mock_repo.save_finding = AsyncMock(return_value="finding-id")
+        mock_repo.save_scan_result = AsyncMock()
+
+        snap = ResourceSnapshot(
+            subscription_id="sub-test",
+            resource_group="rg1",
+            resource_type="Microsoft.Storage/storageAccounts",
+            resource_name="sa-insecure",
+            region="eastus",
+            data_tier=DataTier.TIER1_NATIVE,
+            config={
+                "supportsHttpsTrafficOnly": False,
+                "allowBlobPublicAccess": True,
+            },
+        )
+        mock_adapter = AsyncMock()
+        mock_adapter.list_resources = AsyncMock(return_value=[snap])
+        mock_adapter.enrich_with_defender = AsyncMock(return_value=[snap])
+
+        with (
+            patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch(
+                "azure.identity.DefaultAzureCredential",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "cloudguardiq.api.main.AzureAdapter",
+                return_value=mock_adapter,
+            ),
+        ):
+            response = await client.post(
+                "/scan",
+                json={"subscription_id": "sub-test"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["snapshots_count"] == 1
+        assert data["findings_count"] >= 1
+
+        # Snapshots persisted
+        assert mock_repo.save_snapshot.call_count == 1
+        # Findings persisted
+        assert mock_repo.save_finding.call_count >= 1
+        # Scan summary persisted
+        mock_repo.save_scan_result.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_scan_without_repo_still_returns(
+        self, client: AsyncClient,
+    ) -> None:
+        """POST /scan should work without Cosmos DB (no persistence)."""
+        with (
+            patch("cloudguardiq.api.main.get_repo", return_value=None),
+            patch(
+                "azure.identity.DefaultAzureCredential",
+                side_effect=Exception("no creds"),
+            ),
+        ):
+            response = await client.post(
+                "/scan",
+                json={"subscription_id": "sub-456"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["subscription_id"] == "sub-456"
+
+
+class TestGetFinding:
+    @pytest.mark.asyncio
+    async def test_get_finding_from_db(
+        self, client: AsyncClient,
+    ) -> None:
+        """GET /findings/{id} should query Cosmos when available."""
+        snap = ResourceSnapshot(
+            subscription_id="sub-123",
+            resource_group="rg1",
+            resource_type="Microsoft.Storage/storageAccounts",
+            resource_name="sa1",
+            region="eastus",
+            data_tier=DataTier.TIER1_NATIVE,
+        )
+        finding = FindingResult(
+            finding_id="test-finding-1",
+            rule_id="STORAGE-001",
+            rule_name="Storage HTTPS Only",
+            severity=Severity.HIGH,
+            resource_snapshot=snap,
+            description="Test finding",
+        )
+        mock_repo = AsyncMock()
+        mock_repo.get_finding = AsyncMock(return_value=finding)
+
+        with patch("cloudguardiq.api.main.get_repo", return_value=mock_repo):
+            response = await client.get("/findings/test-finding-1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["finding_id"] == "test-finding-1"
+        mock_repo.get_finding.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_finding_falls_back_to_demo(
+        self, client: AsyncClient,
+    ) -> None:
+        """GET /findings/{id} falls back to demo data when DB empty."""
+        # Get a valid demo finding ID first
+        list_resp = await client.get("/findings")
+        finding_id = list_resp.json()[0]["finding_id"]
+
+        response = await client.get(f"/findings/{finding_id}")
+        assert response.status_code == 200
+        assert response.json()["finding_id"] == finding_id
