@@ -416,7 +416,7 @@ resource "azurerm_container_app" "api" {
       }
       env {
         name  = "CLOUDGUARDIQ_CORS_ORIGINS"
-        value = "[\"https://${var.prefix}-${var.environment}-swa.azurestaticapps.net\"]"
+        value = "[\"https://${azurerm_static_web_app.frontend.default_host_name}\",\"http://localhost:3000\"]"
       }
       env {
         name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
