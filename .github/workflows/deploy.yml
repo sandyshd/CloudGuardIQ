@@ -118,8 +118,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install dependencies into package
+        run: |
+          pip install -r requirements.txt --target=".python_packages/lib/site-packages"
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
@@ -133,4 +134,3 @@ jobs:
         with:
           app-name: ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-func
           package: .
-          scm-do-build-during-deployment: true
