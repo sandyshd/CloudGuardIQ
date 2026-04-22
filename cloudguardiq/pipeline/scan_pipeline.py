@@ -148,7 +148,12 @@ class ScanPipeline:
             return
         try:
             message_body = finding.model_dump_json()
-            await self._sender.send_messages(message_body)
+            try:
+                from azure.servicebus import ServiceBusMessage  # type: ignore[import-untyped]
+                msg: object = ServiceBusMessage(message_body)
+            except ImportError:
+                msg = message_body
+            await self._sender.send_messages(msg)
             logger.debug("Queued finding %s", finding.finding_id)
         except Exception as exc:
             logger.warning("Failed to queue finding %s: %s", finding.finding_id, exc)
