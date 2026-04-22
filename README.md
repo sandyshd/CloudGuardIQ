@@ -263,7 +263,7 @@ Azure, `az login` locally):
 | Azure OpenAI | `DefaultAzureCredential` → Cognitive Services OpenAI User |
 | Resource Graph | `DefaultAzureCredential` → Reader |
 | Cost Management | `DefaultAzureCredential` → Reader |
-| Service Bus | Connection string (via Key Vault) |
+| Service Bus | `DefaultAzureCredential` -> Azure Service Bus Data Owner (Functions) / Data Sender (API) |
 | Function App Storage | Managed identity → Storage Blob Data Owner |
 
 ### Frontend → Backend
@@ -329,8 +329,8 @@ CLOUDGUARDIQ_COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
 AZURE_OPENAI_ENDPOINT=https://<account>.openai.azure.com/
 AZURE_OPENAI_DEPLOYMENT=gpt-5.1
 
-# Azure Service Bus
-SERVICE_BUS_CONNECTION_STRING=<connection-string>
+# Azure Service Bus (managed identity)
+SERVICE_BUS_CONNECTION__fullyQualifiedNamespace=<namespace>.servicebus.windows.net
 
 # Azure Key Vault
 KEY_VAULT_URL=https://<vault>.vault.azure.net/
@@ -486,7 +486,7 @@ terraform apply tfplan
 | Azure AD App | `CloudGuardIQ-{env}` | SPA + API auth |
 | Cosmos DB | `cguardiq-{env}-cosmos` | Serverless NoSQL (RBAC, local auth disabled) |
 | Azure OpenAI | `cguardiq-{env}-openai` | GPT-5.1 deployment (local auth disabled) |
-| Key Vault | `cguardiq-{env}-kv` | Service Bus connection string |
+| Key Vault | `cguardiq-{env}-kv` | Application secrets (e.g. app client secret) |
 | Service Bus | `cguardiq-{env}-sb` | Async findings queue |
 | Container App | `cguardiq-{env}-api` | FastAPI backend |
 | Function App | `cguardiq-{env}-func` | Timer scan + AI worker |
@@ -508,6 +508,8 @@ terraform apply tfplan
 | Function App MI | Storage Blob Data Owner | Function storage account |
 | Function App MI | Storage Queue Data Contributor | Function storage account |
 | Function App MI | Storage Table Data Contributor | Function storage account |
+| Function App MI | Azure Service Bus Data Owner | Service Bus namespace |
+| Container App MI | Azure Service Bus Data Sender | Service Bus namespace |
 | Container App MI | AcrPull | Container Registry |
 | GitHub SP | AcrPush | Container Registry |
 | GitHub SP | Storage Blob Data Owner | Function storage account |
@@ -632,7 +634,7 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 | `CLOUDGUARDIQ_AZURE_TENANT_ID` | Yes | Tenant ID for JWT validation |
 | `CLOUDGUARDIQ_AZURE_CLIENT_ID` | Yes | Client ID for JWT audience validation |
 | `CLOUDGUARDIQ_AUTH_DISABLED` | No | Set `true` to disable JWT auth (dev only) |
-| `SERVICE_BUS_CONNECTION_STRING` | No | Service Bus connection (for async mode) |
+| `SERVICE_BUS_CONNECTION__fullyQualifiedNamespace` | No | Service Bus namespace FQDN (managed identity auth) |
 | `KEY_VAULT_URL` | No | Key Vault URI |
 
 ### Frontend (React)
