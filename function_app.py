@@ -14,7 +14,8 @@ app = func.FunctionApp()
 
 async def _get_scan_pipeline():
     """Build a ScanPipeline from environment configuration."""
-    from azure.identity.aio import DefaultAzureCredential
+    from azure.identity import DefaultAzureCredential as SyncDefaultAzureCredential
+    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
     from azure.servicebus.aio import ServiceBusClient
 
     from cloudguardiq.adapters.azure_adapter import AzureAdapter
@@ -24,16 +25,18 @@ async def _get_scan_pipeline():
     from cloudguardiq.policy.engine import PolicyEngine
 
     settings = get_settings()
-    credential = DefaultAzureCredential()
+    sync_credential = SyncDefaultAzureCredential()
+    async_credential = AsyncDefaultAzureCredential()
     subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
 
     db = CosmosRepository(settings)
     await db.connect()
 
     adapter = AzureAdapter(
-        credential=credential,
+        credential=sync_credential,
         subscription_id=subscription_id,
         db=db,
+        async_credential=async_credential,
     )
     policy_engine = PolicyEngine()
 
@@ -53,7 +56,7 @@ async def _get_scan_pipeline():
         ai_engine=ai_engine,
         db=db,
         service_bus_sender=sender,
-    ), db, credential
+    ), db, async_credential
 
 
 async def _get_ai_worker():

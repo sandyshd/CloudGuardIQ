@@ -12,6 +12,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 from azure.mgmt.resourcegraph import ResourceGraphClient
 from azure.mgmt.resourcegraph.models import QueryRequest, QueryRequestOptions
 
@@ -41,8 +42,10 @@ class AzureAdapter(AdapterBase):
         credential: TokenCredential,
         subscription_id: str,
         db: CosmosRepository,
+        async_credential: AsyncTokenCredential | None = None,
     ) -> None:
         self._credential = credential
+        self._async_credential: AsyncTokenCredential = async_credential or credential  # type: ignore[assignment]
         self._subscription_id = subscription_id
         self._db = db
         self._scanner = NativeScanner(
@@ -50,7 +53,7 @@ class AzureAdapter(AdapterBase):
             subscription_id=subscription_id,
         )
         self._capability_detector = CapabilityDetector(
-            credential=credential,  # type: ignore[arg-type]
+            credential=self._async_credential,
             subscription_id=subscription_id,
             db=db,
         )
@@ -214,7 +217,7 @@ class AzureAdapter(AdapterBase):
             from azure.mgmt.security.aio import SecurityCenter
 
             client = SecurityCenter(
-                credential=self._credential,  # type: ignore[arg-type]
+                credential=self._async_credential,
                 subscription_id=self._subscription_id,
             )
             try:
@@ -279,7 +282,7 @@ class AzureAdapter(AdapterBase):
             from azure.mgmt.security.aio import SecurityCenter
 
             client = SecurityCenter(
-                credential=self._credential,  # type: ignore[arg-type]
+                credential=self._async_credential,
                 subscription_id=self._subscription_id,
             )
             try:
