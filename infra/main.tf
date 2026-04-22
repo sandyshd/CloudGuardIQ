@@ -434,6 +434,7 @@ resource "azurerm_container_app" "api" {
       latest_revision = true
       percentage      = 100
     }
+
   }
 
   tags = local.tags
