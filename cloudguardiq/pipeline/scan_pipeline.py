@@ -99,13 +99,17 @@ class ScanPipeline:
 
         # Step 4: Save findings to Cosmos DB
         if self._db is not None:
+            logger.info("Saving %d findings to Cosmos DB", len(findings))
             for finding in findings:
                 try:
                     await self._db.save_finding(finding)
                 except Exception as exc:
-                    logger.warning(
-                        "Failed to save finding %s: %s", finding.finding_id, exc
+                    logger.error(
+                        "Failed to save finding %s: %s", finding.finding_id, exc,
+                        exc_info=True,
                     )
+        else:
+            logger.error("No database connection -- cannot save findings")
 
         # Build result
         critical_count = sum(1 for f in findings if f.severity == Severity.CRITICAL)
@@ -130,7 +134,7 @@ class ScanPipeline:
             try:
                 await self._save_scan_result(result)
             except Exception as exc:
-                logger.warning("Failed to save scan result %s: %s", scan_id, exc)
+                logger.error("Failed to save scan result %s: %s", scan_id, exc, exc_info=True)
 
         logger.info(
             "Scan %s completed: %d resources, %d findings in %.1fs",

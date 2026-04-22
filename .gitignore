@@ -60,3 +60,7 @@ Thumbs.db
 Desktop.ini
 
 scan_output.json
+
+# Azure Functions local build artifacts
+.python_packages/
+deploy.zip
