@@ -8,11 +8,13 @@ with cost data, and exposes a RULE_REGISTRY of all PolicyRule instances.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from functools import partial
 from typing import Any, Protocol
 
 from azure.core.credentials import TokenCredential
+from azure.core.exceptions import HttpResponseError
 from azure.mgmt.costmanagement import CostManagementClient
 from azure.mgmt.costmanagement.models import (
     ExportType,
@@ -515,6 +517,44 @@ class NativeScanner:
     # Cost enrichment
     # ------------------------------------------------------------------
 
+    async def _run_cost_query_with_retry(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        call: Any,
+        max_attempts: int = 5,
+        base_delay: float = 2.0,
+        max_delay: float = 60.0,
+    ) -> Any:
+        """Invoke the Cost Management query with exponential backoff on 429s.
+
+        Azure Cost Management enforces strict per-subscription rate limits.
+        When a 429 is returned, we honor the ``Retry-After`` header if
+        present, otherwise apply exponential backoff capped at ``max_delay``.
+        Non-throttling errors propagate immediately to the outer handler.
+        """
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                return await loop.run_in_executor(None, call)
+            except HttpResponseError as exc:
+                status = getattr(exc, "status_code", None)
+                if status != 429 or attempt >= max_attempts:
+                    raise
+                retry_after = base_delay * (2 ** (attempt - 1))
+                response = getattr(exc, "response", None)
+                headers = getattr(response, "headers", None) or {}
+                header_value = headers.get("Retry-After") or headers.get("retry-after")
+                if header_value:
+                    with contextlib.suppress(TypeError, ValueError):
+                        retry_after = float(header_value)
+                retry_after = min(retry_after, max_delay)
+                logger.warning(
+                    "Cost Management API returned 429 (attempt %d/%d); retrying in %.1fs",
+                    attempt, max_attempts, retry_after,
+                )
+                await asyncio.sleep(retry_after)
+
     async def _fetch_cost_data(
         self, resource_ids: list[str],
     ) -> dict[str, float]:
@@ -558,8 +598,8 @@ class NativeScanner:
                 ),
             )
 
-            response = await loop.run_in_executor(
-                None, partial(client.query.usage, scope, query_def),
+            response = await self._run_cost_query_with_retry(
+                loop, partial(client.query.usage, scope, query_def),
             )
 
             cost_map: dict[str, float] = {}
