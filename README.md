@@ -469,7 +469,7 @@ terraform apply tfplan
    | `AZURE_SUBSCRIPTION_ID` | Repository | Target subscription |
    | `TF_STATE_RESOURCE_GROUP` | Repository | Resource group for tfstate storage |
    | `TF_STATE_STORAGE_ACCOUNT` | Repository | Storage account for tfstate |
-   | `FRONTEND_URL` | Environment | Static Web App URL (e.g. `https://cguardiq-dev-swa.azurestaticapps.net`) |
+   | `FRONTEND_URL` | Environment | Static Web App URL (e.g. `https://<random-name>.azurestaticapps.net` — get from Azure Portal) |
    | `API_URL` | Environment | Container App URL (e.g. `https://cguardiq-dev-api.<region>.azurecontainerapps.io`) |
    | `APP_CLIENT_ID` | Environment | CloudGuardIQ-dev app client ID (for frontend MSAL auth) |
 | `SWA_DEPLOYMENT_TOKEN` | Environment | Static Web App deployment token (from Portal) |
