@@ -434,6 +434,10 @@ resource "azurerm_container_app" "api" {
         value = azuread_application.cloudguardiq.client_id
       }
       env {
+        name  = "AZURE_SUBSCRIPTION_ID"
+        value = data.azurerm_subscription.current.subscription_id
+      }
+      env {
         name  = "CLOUDGUARDIQ_CORS_ORIGINS"
         value = "[\"https://${azurerm_static_web_app.frontend.default_host_name}\",\"http://localhost:3000\"]"
       }

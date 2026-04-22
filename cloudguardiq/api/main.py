@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -58,6 +59,17 @@ _repo: CosmosRepository | None = None
 def get_repo() -> CosmosRepository | None:
     """Return the CosmosRepository instance (may be None in tests)."""
     return _repo
+
+
+def _resolve_subscription_id(subscription_id: str | None) -> str:
+    """Return the query-provided subscription id, or fall back to env var.
+
+    The dashboard and findings pages do not pass subscription_id, so we
+    default to the AZURE_SUBSCRIPTION_ID configured for the deployment.
+    """
+    if subscription_id:
+        return subscription_id
+    return os.environ.get("AZURE_SUBSCRIPTION_ID", "")
 
 
 @asynccontextmanager
@@ -577,19 +589,20 @@ async def list_findings(
 ) -> list[FindingResult]:
     """Return FindingResults for a subscription, sorted by priority_score descending."""
     repo = get_repo()
-    if repo is not None and subscription_id:
+    sub_id = _resolve_subscription_id(subscription_id)
+    if repo is not None and sub_id:
         try:
-            findings = await repo.get_findings(subscription_id, limit=limit)
-            if findings:
-                return sorted(
-                    findings,
-                    key=lambda f: f.priority_score,
-                    reverse=True,
-                )
+            findings = await repo.get_findings(sub_id, limit=limit)
+            return sorted(
+                findings,
+                key=lambda f: f.priority_score,
+                reverse=True,
+            )
         except Exception as exc:
             logger.warning("Failed to query findings from Cosmos: %s", exc)
+            return []
 
-    # Return demo data when DB is unavailable or empty
+    # Only fall back to demo data when no database is wired at all (local/dev)
     demo = _demo_findings()
     return sorted(demo, key=lambda f: f.priority_score, reverse=True)[:limit]
 
@@ -602,18 +615,19 @@ async def get_finding(
 ) -> FindingResult:
     """Get a single FindingResult by finding ID."""
     repo = get_repo()
+    sub_id = _resolve_subscription_id(subscription_id)
     if repo is not None:
         try:
             finding = await repo.get_finding(
                 finding_id,
-                subscription_id=subscription_id or None,
+                subscription_id=sub_id or None,
             )
             if finding is not None:
                 return finding
         except Exception as exc:
             logger.warning("Failed to query finding: %s", exc)
 
-    # Search demo data
+    # Demo fallback for local/dev only
     for f in _demo_findings():
         if f.finding_id == finding_id:
             return f
@@ -663,11 +677,14 @@ async def get_finding_terraform(
 async def list_subscriptions(
     _user: TokenPayload = _auth,
 ) -> list[dict[str, str]]:
-    """List connected subscriptions."""
+    """List connected subscriptions (configured via AZURE_SUBSCRIPTION_ID)."""
+    sub_id = os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip()
+    if not sub_id:
+        return []
     return [
         {
-            "id": "sub-stub",
-            "display_name": "Dev Subscription",
+            "id": sub_id,
+            "display_name": sub_id,
             "state": "Enabled",
         },
     ]

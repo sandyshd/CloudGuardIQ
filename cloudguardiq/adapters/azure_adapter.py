@@ -27,6 +27,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Suppress noisy Azure SDK polymorphic deserialization warnings that surface
+# when Defender for Cloud returns alert/assessment payloads without an
+# explicit discriminator -- these are informational and expected.
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.ERROR)
+logging.getLogger("azure.core.serialization").setLevel(logging.ERROR)
+
 
 class AzureAdapter(AdapterBase):
     """Azure cloud adapter that orchestrates tiered scanning.
