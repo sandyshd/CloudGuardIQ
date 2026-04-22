@@ -8,7 +8,10 @@ import "./index.css";
 
 export const msalInstance = new PublicClientApplication(msalConfig);
 
-msalInstance.initialize().then(() => {
+msalInstance.initialize().then(async () => {
+  // Handle the redirect response from Azure AD login
+  await msalInstance.handleRedirectPromise();
+
   const accounts = msalInstance.getAllAccounts();
   if (accounts.length > 0) {
     msalInstance.setActiveAccount(accounts[0]);
