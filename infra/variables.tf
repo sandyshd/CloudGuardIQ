@@ -50,3 +50,8 @@ variable "frontend_redirect_uris" {
   type        = list(string)
   default     = ["http://localhost:3000/"]
 }
+variable "deploy_sp_object_id" {
+  description = "Object ID of the GitHub Actions service principal used for app deployment. If empty, falls back to the Terraform deployer identity."
+  type        = string
+  default     = ""
+}

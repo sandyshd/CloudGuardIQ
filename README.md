@@ -510,6 +510,7 @@ terraform apply tfplan
 | Function App MI | Storage Table Data Contributor | Function storage account |
 | Container App MI | AcrPull | Container Registry |
 | GitHub SP | AcrPush | Container Registry |
+| GitHub SP | Storage Blob Data Owner | Function storage account |
 | Service Principal | Reader | Subscription |
 
 > **Key-based authentication is disabled** on Cosmos DB
