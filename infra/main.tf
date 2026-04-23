@@ -426,23 +426,6 @@ resource "azurerm_container_app" "api" {
   resource_group_name          = azurerm_resource_group.cloudguardiq.name
   revision_mode                = "Single"
 
-  dynamic "secret" {
-    for_each = var.stripe_api_key == "" ? {} : { enabled = "1" }
-    content {
-      name                = "stripe-api-key"
-      key_vault_secret_id = azurerm_key_vault_secret.stripe_api_key[0].id
-      identity            = "System"
-    }
-  }
-
-  dynamic "secret" {
-    for_each = var.stripe_webhook_secret == "" ? {} : { enabled = "1" }
-    content {
-      name                = "stripe-webhook-secret"
-      key_vault_secret_id = azurerm_key_vault_secret.stripe_webhook_secret[0].id
-      identity            = "System"
-    }
-  }
 
   identity {
     type = "SystemAssigned"
@@ -514,19 +497,13 @@ resource "azurerm_container_app" "api" {
         name  = "CLOUDGUARDIQ_STRIPE_CANCEL_URL"
         value = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=cancel"
       }
-      dynamic "env" {
-        for_each = var.stripe_api_key == "" ? {} : { enabled = "1" }
-        content {
-          name        = "CLOUDGUARDIQ_STRIPE_API_KEY"
-          secret_name = "stripe-api-key"
-        }
+      env {
+        name  = "CLOUDGUARDIQ_STRIPE_API_KEY"
+        value = var.stripe_api_key
       }
-      dynamic "env" {
-        for_each = var.stripe_webhook_secret == "" ? {} : { enabled = "1" }
-        content {
-          name        = "CLOUDGUARDIQ_STRIPE_WEBHOOK_SECRET"
-          secret_name = "stripe-webhook-secret"
-        }
+      env {
+        name  = "CLOUDGUARDIQ_STRIPE_WEBHOOK_SECRET"
+        value = var.stripe_webhook_secret
       }
     }
   }
