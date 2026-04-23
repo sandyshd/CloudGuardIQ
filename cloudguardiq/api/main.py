@@ -33,7 +33,11 @@ from cloudguardiq.adapters.rules.storage import (
     StorageHttpsOnlyRule,
     StoragePublicAccessRule,
 )
+from cloudguardiq.api import billing as billing_module
 from cloudguardiq.api.auth import TokenPayload, verify_token
+from cloudguardiq.billing.middleware import TierEnforcementMiddleware
+from cloudguardiq.billing.repository import BillingRepository
+from cloudguardiq.billing.stripe_service import StripeService
 from cloudguardiq.core.config import get_settings
 from cloudguardiq.core.database import CosmosRepository
 from cloudguardiq.core.enums import DataTier, FindingType, Severity
@@ -55,6 +59,13 @@ _auth = Depends(verify_token)
 # Application state
 # ------------------------------------------------------------------
 _repo: CosmosRepository | None = None
+_billing_repo: BillingRepository | None = None
+_tier_middleware: TierEnforcementMiddleware | None = None
+
+
+def get_billing_repo() -> BillingRepository | None:
+    """Return the BillingRepository instance (may be None in tests)."""
+    return _billing_repo
 
 def get_repo() -> CosmosRepository | None:
     """Return the CosmosRepository instance (may be None in tests)."""
@@ -85,6 +96,20 @@ async def lifespan(
         _repo = CosmosRepository(settings)
         await _repo.connect()
 
+    global _billing_repo  # noqa: PLW0603
+    _billing_repo = BillingRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
+    stripe_service = StripeService(settings)
+    billing_module.configure(
+        repository=_billing_repo,
+        stripe_service=stripe_service,
+        invalidate_cache=(
+            _tier_middleware.invalidate if _tier_middleware is not None else None
+        ),
+    )
+
     yield
 
     if _repo is not None:
@@ -106,6 +131,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Tier enforcement middleware. Uses an in-memory BillingRepository at boot;
+# at lifespan startup the billing router is reconfigured to share state with
+# the Cosmos-backed repo when available.
+_bootstrap_billing_repo = BillingRepository(get_settings(), cosmos_db=None)
+app.add_middleware(
+    TierEnforcementMiddleware,
+    settings=get_settings(),
+    repository=_bootstrap_billing_repo,
+)
+
+# Wire bootstrap dependencies so tests that never run lifespan still work.
+billing_module.configure(
+    repository=_bootstrap_billing_repo,
+    stripe_service=StripeService(get_settings()),
+)
+
+# Billing routes
+app.include_router(billing_module.router)
 
 
 # ------------------------------------------------------------------
@@ -688,3 +732,4 @@ async def list_subscriptions(
             "state": "Enabled",
         },
     ]
+

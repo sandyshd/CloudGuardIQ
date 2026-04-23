@@ -24,6 +24,7 @@ dependencies = [
     "aiohttp>=3.9.0",
     "uvicorn>=0.30.0",
     "python-dotenv>=1.0.0",
+    "stripe>=9.0.0",
 ]
 
 [project.optional-dependencies]
@@ -43,3 +44,4 @@ testpaths = ["tests"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["cloudguardiq*"]
+

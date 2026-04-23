@@ -17,6 +17,7 @@ export default function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/findings" element={<Findings />} />
+            <Route path="/findings/:id" element={<AIFix />} />
             <Route path="/ai-fix" element={<AIFix />} />
             <Route path="/finops" element={<FinOps />} />
             <Route path="/compliance" element={<Compliance />} />

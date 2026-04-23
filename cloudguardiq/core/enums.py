@@ -74,3 +74,11 @@ class RemediationStatus(StrEnum):
     APPLIED = "APPLIED"
     FAILED = "FAILED"
     DISMISSED = "DISMISSED"
+
+
+class SubscriptionTier(StrEnum):
+    """Billing subscription tiers offered by CloudGuardIQ."""
+
+    FREE = "FREE"
+    PRO = "PRO"
+    ENTERPRISE = "ENTERPRISE"

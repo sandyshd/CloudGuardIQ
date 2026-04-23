@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     cosmos_container_snapshots: str = "snapshots"
     cosmos_container_remediations: str = "remediations"
     cosmos_container_system: str = "system"
+    cosmos_container_billing: str = "billing"
 
     # Azure OpenAI
     azure_openai_endpoint: str = ""
@@ -41,6 +42,19 @@ class Settings(BaseSettings):
 
     # Authentication
     auth_disabled: bool = False
+
+    # Stripe billing
+    stripe_api_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_price_free: str = ""
+    stripe_price_pro: str = ""
+    stripe_price_enterprise: str = ""
+    stripe_success_url: str = "http://localhost:3000/settings?billing=success"
+    stripe_cancel_url: str = "http://localhost:3000/settings?billing=cancel"
+
+    # Tier limits (free tier)
+    free_max_subscriptions: int = 1
+    free_max_resources_per_scan: int = 50
 
 
 @lru_cache
