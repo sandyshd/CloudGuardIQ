@@ -186,6 +186,14 @@ resource "azurerm_cosmosdb_sql_container" "system" {
   partition_key_paths = ["/type"]
 }
 
+resource "azurerm_cosmosdb_sql_container" "billing" {
+  name                = "billing"
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
+  partition_key_paths = ["/tenant_id"]
+}
+
 # ==========================================================================
 # Azure OpenAI
 # ==========================================================================
@@ -273,6 +281,25 @@ resource "azurerm_key_vault_secret" "servicebus_connection" {
 resource "azurerm_key_vault_secret" "app_client_secret" {
   name         = "app-client-secret"
   value        = azuread_application_password.cloudguardiq.value
+  key_vault_id = azurerm_key_vault.cloudguardiq.id
+
+  depends_on = [azurerm_key_vault_access_policy.deployer]
+}
+
+# Stripe secrets (only set when the corresponding TF_VAR_* is provided)
+resource "azurerm_key_vault_secret" "stripe_api_key" {
+  count        = var.stripe_api_key == "" ? 0 : 1
+  name         = "stripe-api-key"
+  value        = var.stripe_api_key
+  key_vault_id = azurerm_key_vault.cloudguardiq.id
+
+  depends_on = [azurerm_key_vault_access_policy.deployer]
+}
+
+resource "azurerm_key_vault_secret" "stripe_webhook_secret" {
+  count        = var.stripe_webhook_secret == "" ? 0 : 1
+  name         = "stripe-webhook-secret"
+  value        = var.stripe_webhook_secret
   key_vault_id = azurerm_key_vault.cloudguardiq.id
 
   depends_on = [azurerm_key_vault_access_policy.deployer]
@@ -399,6 +426,24 @@ resource "azurerm_container_app" "api" {
   resource_group_name          = azurerm_resource_group.cloudguardiq.name
   revision_mode                = "Single"
 
+  dynamic "secret" {
+    for_each = var.stripe_api_key == "" ? [] : [1]
+    content {
+      name                = "stripe-api-key"
+      key_vault_secret_id = azurerm_key_vault_secret.stripe_api_key[0].id
+      identity            = "System"
+    }
+  }
+
+  dynamic "secret" {
+    for_each = var.stripe_webhook_secret == "" ? [] : [1]
+    content {
+      name                = "stripe-webhook-secret"
+      key_vault_secret_id = azurerm_key_vault_secret.stripe_webhook_secret[0].id
+      identity            = "System"
+    }
+  }
+
   identity {
     type = "SystemAssigned"
   }
@@ -444,6 +489,44 @@ resource "azurerm_container_app" "api" {
       env {
         name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
         value = azurerm_application_insights.cloudguardiq.connection_string
+      }
+      env {
+        name  = "CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING"
+        value = azurerm_cosmosdb_sql_container.billing.name
+      }
+      env {
+        name  = "CLOUDGUARDIQ_STRIPE_PRICE_FREE"
+        value = var.stripe_price_free
+      }
+      env {
+        name  = "CLOUDGUARDIQ_STRIPE_PRICE_PRO"
+        value = var.stripe_price_pro
+      }
+      env {
+        name  = "CLOUDGUARDIQ_STRIPE_PRICE_ENTERPRISE"
+        value = var.stripe_price_enterprise
+      }
+      env {
+        name  = "CLOUDGUARDIQ_STRIPE_SUCCESS_URL"
+        value = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=success"
+      }
+      env {
+        name  = "CLOUDGUARDIQ_STRIPE_CANCEL_URL"
+        value = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=cancel"
+      }
+      dynamic "env" {
+        for_each = var.stripe_api_key == "" ? [] : [1]
+        content {
+          name        = "CLOUDGUARDIQ_STRIPE_API_KEY"
+          secret_name = "stripe-api-key"
+        }
+      }
+      dynamic "env" {
+        for_each = var.stripe_webhook_secret == "" ? [] : [1]
+        content {
+          name        = "CLOUDGUARDIQ_STRIPE_WEBHOOK_SECRET"
+          secret_name = "stripe-webhook-secret"
+        }
       }
     }
   }
@@ -555,6 +638,17 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     # Azure AD
     CLOUDGUARDIQ_AZURE_TENANT_ID = data.azurerm_client_config.current.tenant_id
     CLOUDGUARDIQ_AZURE_CLIENT_ID = azuread_application.cloudguardiq.client_id
+
+    # Billing
+    CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING = azurerm_cosmosdb_sql_container.billing.name
+    CLOUDGUARDIQ_STRIPE_PRICE_FREE        = var.stripe_price_free
+    CLOUDGUARDIQ_STRIPE_PRICE_PRO         = var.stripe_price_pro
+    CLOUDGUARDIQ_STRIPE_PRICE_ENTERPRISE  = var.stripe_price_enterprise
+    CLOUDGUARDIQ_STRIPE_SUCCESS_URL       = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=success"
+    CLOUDGUARDIQ_STRIPE_CANCEL_URL        = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=cancel"
+    # Stripe secrets flow through Key Vault references (empty when not configured).
+    CLOUDGUARDIQ_STRIPE_API_KEY        = var.stripe_api_key == "" ? "" : "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.stripe_api_key[0].versionless_id})"
+    CLOUDGUARDIQ_STRIPE_WEBHOOK_SECRET = var.stripe_webhook_secret == "" ? "" : "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.stripe_webhook_secret[0].versionless_id})"
   }
 
   tags = local.tags

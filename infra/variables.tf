@@ -55,3 +55,41 @@ variable "deploy_sp_object_id" {
   type        = string
   default     = ""
 }
+
+# ==========================================================================
+# Stripe billing
+# ==========================================================================
+# Price IDs are non-sensitive Stripe identifiers (e.g. "price_1ABCxyz").
+# The API key and webhook secret are sensitive and flow through Key Vault.
+
+variable "stripe_price_free" {
+  description = "Stripe price id for the FREE tier"
+  type        = string
+  default     = ""
+}
+
+variable "stripe_price_pro" {
+  description = "Stripe price id for the PRO tier"
+  type        = string
+  default     = ""
+}
+
+variable "stripe_price_enterprise" {
+  description = "Stripe price id for the ENTERPRISE tier"
+  type        = string
+  default     = ""
+}
+
+variable "stripe_api_key" {
+  description = "Stripe secret API key (sk_live_... or sk_test_...). Pass via TF_VAR_stripe_api_key."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "stripe_webhook_secret" {
+  description = "Stripe webhook signing secret (whsec_...). Pass via TF_VAR_stripe_webhook_secret."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
