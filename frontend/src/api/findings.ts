@@ -42,3 +42,8 @@ export async function applyTerraformFix(findingId: string): Promise<void> {
     /* optimistic */
   }
 }
+
+export async function generateRemediation(findingId: string): Promise<RemediationCard> {
+  const { data } = await apiClient.post<RemediationCard>(`/findings/${findingId}/generate-remediation`);
+  return data;
+}

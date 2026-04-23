@@ -19,6 +19,7 @@ import {
   getRemediation,
   markFindingResolved,
   snoozeFinding,
+  generateRemediation,
 } from "../api/findings";
 import type { FindingResult, RemediationCard } from "../types";
 
@@ -213,10 +214,28 @@ export function AIFix() {
               {narrativeParagraphs.length > 0 ? (
                 narrativeParagraphs.map((p, i) => <p key={i}>{p}</p>)
               ) : (
-                <p className="italic text-blue-900/70">
-                  Remediation narrative is not available yet. Run the AI engine
-                  to generate one.
+                <p className="italic text-blue-900/70 mb-2">
+                  Remediation narrative is not available yet.
                 </p>
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    setAction("applying");
+                    setActionMessage(null);
+                    try {
+                      const newCard = await generateRemediation(finding.finding_id);
+                      setCard(newCard);
+                      setActionMessage("AI remediation generated successfully.");
+                    } catch {
+                      setActionMessage("AI generation failed. Check that Azure OpenAI is configured.");
+                    } finally {
+                      setAction("idle");
+                    }
+                  }}
+                  disabled={action !== "idle"}
+                >
+                  {action === "applying" ? "Generating…" : "Generate AI Remediation"}
+                </Button>
               )}
             </CardContent>
           </Card>
@@ -338,3 +357,4 @@ export function AIFix() {
     </div>
   );
 }
+

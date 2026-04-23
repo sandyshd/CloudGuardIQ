@@ -699,6 +699,97 @@ async def get_finding_remediation(
     raise HTTPException(status_code=404, detail="Finding not found")
 
 
+@app.post("/findings/{finding_id}/generate-remediation", response_model=RemediationCard)
+async def generate_finding_remediation(
+    finding_id: str,
+    _user: TokenPayload = _auth,
+) -> RemediationCard:
+    """Generate an AI remediation card on-demand for a finding.
+
+    Calls Azure OpenAI GPT directly — does NOT go through Service Bus.
+    If a card already exists in Cosmos it is returned immediately.
+    """
+    repo = get_repo()
+
+    # Return cached card if one exists
+    if repo is not None:
+        existing = await repo.get_remediation_card(finding_id)
+        if existing is not None:
+            return existing
+
+    # Load the finding
+    finding: FindingResult | None = None
+    sub_id = _resolve_subscription_id(None)
+    if repo is not None:
+        try:
+            finding = await repo.get_finding(finding_id, subscription_id=sub_id or None)
+        except Exception as exc:
+            logger.warning("Failed to load finding %s: %s", finding_id, exc)
+
+    if finding is None:
+        for f in _demo_findings():
+            if f.finding_id == finding_id:
+                finding = f
+                break
+
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found")
+
+    # Build the AI engine
+    try:
+        import openai as _openai
+        from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail="AI engine dependencies not installed",
+        ) from exc
+
+    settings = get_settings()
+    credential: Any = None
+    try:
+        credential = DefaultAzureCredential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default",
+        )
+        openai_client = _openai.AsyncAzureOpenAI(
+            azure_endpoint=(
+                settings.azure_openai_endpoint
+                or os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+            ),
+            azure_ad_token_provider=token_provider,
+            api_version="2024-02-15-preview",
+        )
+        deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", settings.azure_openai_deployment)
+
+        from cloudguardiq.ai.remediation_engine import AIEngineError, RemediationEngine
+
+        engine = RemediationEngine(
+            client=openai_client,
+            deployment=deployment,
+            db=repo,
+        )
+        card = await engine.generate(finding)
+        return card
+    except AIEngineError as exc:
+        logger.error("AI generation failed for %s: %s", finding_id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI generation failed: {exc}",
+        ) from exc
+    except Exception as exc:
+        logger.error("AI generation error for %s: %s", finding_id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail="AI generation failed",
+        ) from exc
+    finally:
+        if credential is not None:
+            import contextlib
+            with contextlib.suppress(Exception):
+                await credential.close()
+
+
 @app.get(
     "/findings/{finding_id}/terraform",
     response_class=PlainTextResponse,
