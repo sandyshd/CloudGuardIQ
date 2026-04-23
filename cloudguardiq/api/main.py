@@ -735,11 +735,22 @@ async def generate_finding_remediation(
     if finding is None:
         raise HTTPException(status_code=404, detail="Finding not found")
 
-    # Build the AI engine
+    # Import AI engine deps up-front so exception handlers can reference them
     try:
+        import contextlib
+
         import openai as _openai
-        from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+        from azure.identity.aio import (
+            DefaultAzureCredential,
+            get_bearer_token_provider,
+        )
+
+        from cloudguardiq.ai.remediation_engine import (
+            AIEngineError,
+            RemediationEngine,
+        )
     except ImportError as exc:
+        logger.error("AI engine import failed: %s", exc)
         raise HTTPException(
             status_code=501,
             detail="AI engine dependencies not installed",
@@ -752,17 +763,23 @@ async def generate_finding_remediation(
         token_provider = get_bearer_token_provider(
             credential, "https://cognitiveservices.azure.com/.default",
         )
+        endpoint = (
+            settings.azure_openai_endpoint
+            or os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+        )
+        if not endpoint:
+            raise HTTPException(
+                status_code=503,
+                detail="Azure OpenAI endpoint not configured",
+            )
         openai_client = _openai.AsyncAzureOpenAI(
-            azure_endpoint=(
-                settings.azure_openai_endpoint
-                or os.environ.get("AZURE_OPENAI_ENDPOINT", "")
-            ),
+            azure_endpoint=endpoint,
             azure_ad_token_provider=token_provider,
             api_version="2024-02-15-preview",
         )
-        deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", settings.azure_openai_deployment)
-
-        from cloudguardiq.ai.remediation_engine import AIEngineError, RemediationEngine
+        deployment = os.environ.get(
+            "AZURE_OPENAI_DEPLOYMENT", settings.azure_openai_deployment,
+        )
 
         engine = RemediationEngine(
             client=openai_client,
@@ -771,6 +788,8 @@ async def generate_finding_remediation(
         )
         card = await engine.generate(finding)
         return card
+    except HTTPException:
+        raise
     except AIEngineError as exc:
         logger.error("AI generation failed for %s: %s", finding_id, exc)
         raise HTTPException(
@@ -778,14 +797,13 @@ async def generate_finding_remediation(
             detail=f"AI generation failed: {exc}",
         ) from exc
     except Exception as exc:
-        logger.error("AI generation error for %s: %s", finding_id, exc)
+        logger.exception("AI generation error for %s", finding_id)
         raise HTTPException(
             status_code=502,
-            detail="AI generation failed",
+            detail=f"AI generation failed: {exc.__class__.__name__}",
         ) from exc
     finally:
         if credential is not None:
-            import contextlib
             with contextlib.suppress(Exception):
                 await credential.close()
 

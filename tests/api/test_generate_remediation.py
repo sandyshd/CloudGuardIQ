@@ -34,9 +34,13 @@ async def client() -> AsyncClient:
 class TestGenerateRemediation:
     @pytest.mark.asyncio
     async def test_generates_card_for_demo_finding(
-        self, client: AsyncClient
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """POST should call AI engine and return a card for a known finding."""
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
+
         list_resp = await client.get("/findings")
         finding_id = list_resp.json()[0]["finding_id"]
 
@@ -84,3 +88,17 @@ class TestGenerateRemediation:
             "/findings/nonexistent-id/generate-remediation"
         )
         assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_503_when_openai_not_configured(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+        list_resp = await client.get("/findings")
+        finding_id = list_resp.json()[0]["finding_id"]
+        resp = await client.post(
+            f"/findings/{finding_id}/generate-remediation"
+        )
+        assert resp.status_code == 503
