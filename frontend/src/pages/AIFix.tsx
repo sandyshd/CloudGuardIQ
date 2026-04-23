@@ -214,6 +214,7 @@ export function AIFix() {
               {narrativeParagraphs.length > 0 ? (
                 narrativeParagraphs.map((p, i) => <p key={i}>{p}</p>)
               ) : (
+                <>
                 <p className="italic text-blue-900/70 mb-2">
                   Remediation narrative is not available yet.
                 </p>
@@ -236,6 +237,7 @@ export function AIFix() {
                 >
                   {action === "applying" ? "Generating…" : "Generate AI Remediation"}
                 </Button>
+                </>
               )}
             </CardContent>
           </Card>
