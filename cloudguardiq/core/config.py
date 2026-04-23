@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json as _json
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,7 +22,15 @@ class Settings(BaseSettings):
     # API
     app_version: str = "0.1.0"
     debug: bool = False
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: str = "http://localhost:3000"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse cors_origins as JSON array or comma-separated string."""
+        v = self.cors_origins.strip()
+        if v.startswith("["):
+            return _json.loads(v)
+        return [o.strip() for o in v.split(",") if o.strip()]
 
     # Cosmos DB
     cosmos_endpoint: str = ""
