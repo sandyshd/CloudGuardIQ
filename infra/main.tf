@@ -427,7 +427,7 @@ resource "azurerm_container_app" "api" {
   revision_mode                = "Single"
 
   dynamic "secret" {
-    for_each = var.stripe_api_key == "" ? [] : [1]
+    for_each = var.stripe_api_key == "" ? toset([]) : toset(["enabled"])
     content {
       name                = "stripe-api-key"
       key_vault_secret_id = azurerm_key_vault_secret.stripe_api_key[0].id
@@ -436,7 +436,7 @@ resource "azurerm_container_app" "api" {
   }
 
   dynamic "secret" {
-    for_each = var.stripe_webhook_secret == "" ? [] : [1]
+    for_each = var.stripe_webhook_secret == "" ? toset([]) : toset(["enabled"])
     content {
       name                = "stripe-webhook-secret"
       key_vault_secret_id = azurerm_key_vault_secret.stripe_webhook_secret[0].id
@@ -515,14 +515,14 @@ resource "azurerm_container_app" "api" {
         value = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=cancel"
       }
       dynamic "env" {
-        for_each = var.stripe_api_key == "" ? [] : [1]
+        for_each = var.stripe_api_key == "" ? toset([]) : toset(["enabled"])
         content {
           name        = "CLOUDGUARDIQ_STRIPE_API_KEY"
           secret_name = "stripe-api-key"
         }
       }
       dynamic "env" {
-        for_each = var.stripe_webhook_secret == "" ? [] : [1]
+        for_each = var.stripe_webhook_secret == "" ? toset([]) : toset(["enabled"])
         content {
           name        = "CLOUDGUARDIQ_STRIPE_WEBHOOK_SECRET"
           secret_name = "stripe-webhook-secret"
@@ -722,3 +722,4 @@ locals {
     managed_by  = "terraform"
   }
 }
+
