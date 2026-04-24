@@ -687,9 +687,14 @@ async def get_finding_remediation(
     """Get a RemediationCard for a finding."""
     repo = get_repo()
     if repo is not None:
-        card = await repo.get_remediation_card(finding_id)
-        if card:
-            return card
+        try:
+            card = await repo.get_remediation_card(finding_id)
+            if card:
+                return card
+        except Exception as exc:
+            logger.warning(
+                "Remediation lookup failed for %s: %s", finding_id, exc,
+            )
 
     # Generate mock remediation from demo finding
     for f in _demo_findings():
@@ -713,9 +718,14 @@ async def generate_finding_remediation(
 
     # Return cached card if one exists
     if repo is not None:
-        existing = await repo.get_remediation_card(finding_id)
-        if existing is not None:
-            return existing
+        try:
+            existing = await repo.get_remediation_card(finding_id)
+            if existing is not None:
+                return existing
+        except Exception as exc:
+            logger.warning(
+                "Cached remediation lookup failed for %s: %s", finding_id, exc,
+            )
 
     # Load the finding
     finding: FindingResult | None = None
