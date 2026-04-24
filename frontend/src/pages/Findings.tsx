@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
+import { triggerScan } from "../api/scans";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { Button } from "../components/ui/button";
@@ -19,6 +20,30 @@ export function Findings() {
   const [selected, setSelected] = useState<FindingResult | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Severity | "ALL">("ALL");
   const [typeFilter, setTypeFilter] = useState<FindingType | "ALL">("ALL");
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+
+  const handleRunScan = async () => {
+    const subId =
+      subscriptionFilter !== "ALL"
+        ? subscriptionFilter
+        : subscriptions[0]?.id;
+    if (!subId) {
+      navigate("/settings");
+      return;
+    }
+    setScanning(true);
+    setScanError(null);
+    try {
+      await triggerScan({ subscription_id: subId, include_cost: true });
+      await refresh();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Scan failed";
+      setScanError(msg);
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const filtered = findings.filter((f) => {
     if (severityFilter !== "ALL" && f.severity !== severityFilter) return false;
@@ -129,8 +154,11 @@ export function Findings() {
           <p className="text-sm text-[hsl(var(--muted-foreground))] mt-1 mb-4">
             Run your first scan to discover security issues and cost waste.
           </p>
-          <Button onClick={() => navigate("/settings")}>
-            Run Your First Scan
+          {scanError && (
+            <p className="mb-2 text-sm text-red-600">{scanError}</p>
+          )}
+          <Button onClick={handleRunScan} disabled={scanning}>
+            {scanning ? "Scanning..." : "Run Your First Scan"}
           </Button>
         </div>
       ) : (
