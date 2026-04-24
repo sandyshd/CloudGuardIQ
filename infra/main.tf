@@ -15,7 +15,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 3.100"
+      version = "~> 4.3"
     }
     azuread = {
       source  = "hashicorp/azuread"
@@ -220,8 +220,8 @@ resource "azurerm_cognitive_deployment" "gpt51" {
     version = "2025-11-13"
   }
 
-  scale {
-    type     = "Standard"
+  sku {
+    name     = "Standard"
     capacity = var.openai_capacity
   }
 }
@@ -518,6 +518,14 @@ resource "azurerm_container_app" "api" {
       percentage      = 100
     }
 
+    # CORS - allow the Static Web App frontend to call the API.
+    # Mirrors the manual Azure Portal CORS settings on the Container App.
+    cors {
+      allowed_origins           = ["https://${azurerm_static_web_app.frontend.default_host_name}"]
+      allowed_headers           = ["*"]
+      max_age_in_seconds        = 0
+      allow_credentials_enabled = false
+    }
   }
 
   tags = local.tags
