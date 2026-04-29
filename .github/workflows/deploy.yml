@@ -12,6 +12,16 @@ on:
           - staging
           - prod
         default: dev
+      component:
+        description: "Which application(s) to deploy"
+        required: true
+        type: choice
+        options:
+          - all
+          - frontend
+          - backend
+          - functions
+        default: all
 
 permissions:
   id-token: write
@@ -24,6 +34,7 @@ env:
 jobs:
   deploy-frontend:
     name: "Build & Deploy Frontend (${{ github.event.inputs.environment }})"
+    if: ${{ github.event.inputs.component == 'all' || github.event.inputs.component == 'frontend' }}
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
 
@@ -62,6 +73,7 @@ jobs:
 
   deploy-backend:
     name: "Build & Deploy Backend (${{ github.event.inputs.environment }})"
+    if: ${{ github.event.inputs.component == 'all' || github.event.inputs.component == 'backend' }}
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
 
@@ -106,6 +118,7 @@ jobs:
 
   deploy-functions:
     name: "Deploy Functions (${{ github.event.inputs.environment }})"
+    if: ${{ github.event.inputs.component == 'all' || github.event.inputs.component == 'functions' }}
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
 
