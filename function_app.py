@@ -13,11 +13,20 @@ app = func.FunctionApp()
 
 
 async def _build_scan_pipeline(subscription_id: str, db, async_credential):
-    """Build a ScanPipeline bound to a single Azure subscription."""
+    """Build a ScanPipeline bound to a single Azure subscription.
+
+    The pipeline is wired with billing + usage repositories so the producer
+    side of the Service Bus path respects per-tenant AI quotas (Phase 2.6):
+    a capped tenant\'s lowest-priority findings are not queued at all
+    instead of being queued and then dropped by the consumer worker.
+    """
     from azure.identity import DefaultAzureCredential as SyncDefaultAzureCredential
     from azure.servicebus.aio import ServiceBusClient
 
     from cloudguardiq.adapters.azure_adapter import AzureAdapter
+    from cloudguardiq.billing.repository import BillingRepository
+    from cloudguardiq.billing.usage import UsageRepository
+    from cloudguardiq.core.config import get_settings
     from cloudguardiq.pipeline.scan_pipeline import ScanPipeline
     from cloudguardiq.policy.engine import PolicyEngine
 
@@ -39,12 +48,19 @@ async def _build_scan_pipeline(subscription_id: str, db, async_credential):
         )
         sender = sb_client.get_queue_sender(queue_name="findings-queue")
 
+    settings = get_settings()
+    cosmos_db = db._db if db is not None else None
+    billing_repo = BillingRepository(settings, cosmos_db=cosmos_db)
+    usage_repo = UsageRepository(settings, cosmos_db=cosmos_db)
+
     return ScanPipeline(
         adapter=adapter,
         policy_engine=PolicyEngine(),
         ai_engine=None,
         db=db,
         service_bus_sender=sender,
+        billing_repo=billing_repo,
+        usage_repo=usage_repo,
     )
 
 

@@ -10,6 +10,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from cloudguardiq.billing.plans import UNLIMITED, get_plan
+from cloudguardiq.billing.quota import check_ai_quota
+from cloudguardiq.billing.repository import BillingRepository
+from cloudguardiq.billing.usage import UsageRepository
 from cloudguardiq.core.enums import Severity
 from cloudguardiq.core.models import FindingResult
 
@@ -47,6 +51,9 @@ class ScanPipeline:
         ai_engine: Any,
         db: Any,
         service_bus_sender: Any | None = None,
+        *,
+        billing_repo: BillingRepository | None = None,
+        usage_repo: UsageRepository | None = None,
     ) -> None:
         """Initialise the scan pipeline.
 
@@ -56,12 +63,17 @@ class ScanPipeline:
             ai_engine: RemediationEngine (not used during scan -- AI is async).
             db: CosmosRepository for persisting scan results.
             service_bus_sender: Azure Service Bus sender for findings queue.
+            billing_repo: Billing repository (enables producer-side quota
+                awareness; when omitted findings are queued without limits).
+            usage_repo: Usage repository (required alongside *billing_repo*).
         """
         self._adapter = adapter
         self._policy_engine = policy_engine
         self._ai_engine = ai_engine
         self._db = db
         self._sender = service_bus_sender
+        self._billing_repo = billing_repo
+        self._usage_repo = usage_repo
 
     async def run(self, subscription_id: str, tenant_id: str = "") -> ScanResult:
         """Execute the full scan pipeline.
@@ -101,9 +113,18 @@ class ScanPipeline:
             if finding.priority_score == 0.0:
                 finding.compute_priority_score()
 
-        # Step 3: Send findings to Service Bus queue
-        for finding in findings:
-            await self._send_to_queue(finding)
+        # Step 3: Send findings to Service Bus queue, capped by tenant\'s
+        # remaining AI quota. Findings are persisted in full (Step 4) -- the
+        # cap only applies to the AI generation that the queue triggers.
+        # Highest-priority findings are queued first so a capped tenant
+        # still gets remediation for the most important issues.
+        deferred_count = await self._queue_findings(findings, tenant_id)
+        if deferred_count:
+            logger.info(
+                "Deferred %d finding(s) past tenant=%s AI quota; "
+                "raw findings still saved -- upgrade to unlock more",
+                deferred_count, tenant_id or "<unknown>",
+            )
 
         # Step 4: Save findings to Cosmos DB
         if self._db is not None:
@@ -152,6 +173,48 @@ class ScanPipeline:
             result.duration_seconds,
         )
         return result
+
+    async def _queue_findings(
+        self, findings: list[FindingResult], tenant_id: str,
+    ) -> int:
+        """Send findings to Service Bus, respecting the tenant AI quota.
+
+        Returns the number of findings *not* queued because the tenant has
+        exhausted its monthly AI remediation cap. When billing/usage repos
+        are not configured (legacy callers and most unit tests), all
+        findings are queued -- preserves prior behaviour.
+        """
+        if not findings:
+            return 0
+        if (
+            self._billing_repo is None
+            or self._usage_repo is None
+            or not tenant_id
+        ):
+            for finding in findings:
+                await self._send_to_queue(finding)
+            return 0
+
+        quota = await check_ai_quota(
+            tenant_id,
+            billing_repo=self._billing_repo,
+            usage_repo=self._usage_repo,
+        )
+        plan = get_plan(quota.tier)
+        if plan.max_ai_remediations_per_month == UNLIMITED:
+            for finding in findings:
+                await self._send_to_queue(finding)
+            return 0
+
+        remaining = max(0, quota.cap - quota.current)
+        if remaining == 0:
+            return len(findings)
+
+        ordered = sorted(findings, key=lambda f: f.priority_score, reverse=True)
+        to_send = ordered[:remaining]
+        for finding in to_send:
+            await self._send_to_queue(finding)
+        return max(0, len(findings) - len(to_send))
 
     async def _send_to_queue(self, finding: FindingResult) -> None:
         """Send a finding to the Service Bus queue."""
