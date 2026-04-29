@@ -1,9 +1,9 @@
 """CloudGuardIQ -- Onboarding helpers (Phase 2.8).
 
 Surfaces the data a tenant needs to grant CloudGuardIQ Reader access on
-their Azure subscription before linking it. The principal ID belongs to
-the CloudGuardIQ managed identity (set at deploy time via the
-``CLOUDGUARDIQ_AZURE_PRINCIPAL_ID`` env var).
+their Azure subscription before linking it. The principal id is
+discovered at runtime by ``identity_resolver`` -- see that module for
+why this is not a Terraform input.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from cloudguardiq.core.config import get_settings
+from cloudguardiq.core.identity_resolver import resolve_principal_id
 
 
 class OnboardingInfo(BaseModel):
@@ -25,10 +26,10 @@ class OnboardingInfo(BaseModel):
     @classmethod
     def build(cls) -> OnboardingInfo:
         settings = get_settings()
-        principal = settings.azure_principal_id or "<principal-id-not-configured>"
+        principal = resolve_principal_id(settings.azure_principal_id)
         cmd = (
             "az role assignment create "
-            f'--assignee {principal} '
+            f"--assignee {principal} "
             "--role Reader "
             "--scope /subscriptions/<your-subscription-id>"
         )
