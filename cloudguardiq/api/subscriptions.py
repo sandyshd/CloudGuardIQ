@@ -35,6 +35,30 @@ _GUID_RE = re.compile(
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
+# AWS account IDs are exactly 12 digits.
+_AWS_ACCOUNT_RE = re.compile(r"^\d{12}$")
+
+# GCP project IDs: 6-30 chars, must start with a lowercase letter, end
+# with a letter or digit, and contain at least one hyphen to avoid
+# eating short alphanumeric typos.
+_GCP_PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+
+
+def _detect_provider(value: str) -> str:
+    """Return ``azure`` | ``aws`` | ``gcp`` | ``unknown`` for an id string.
+
+    Short-term guard for Phase 6.10. The full Phase 6 implementation
+    will replace this with a ``CloudProvider`` discriminator on the
+    request model.
+    """
+    if _GUID_RE.match(value):
+        return "azure"
+    if _AWS_ACCOUNT_RE.match(value):
+        return "aws"
+    if _GCP_PROJECT_RE.match(value) and "-" in value:
+        return "gcp"
+    return "unknown"
+
 
 # ---------------------------------------------------------------------------
 # Wire-format models
@@ -59,17 +83,21 @@ class SubscriptionResponse(BaseModel):
 
 
 class AddSubscriptionRequest(BaseModel):
-    """Body for ``POST /subscriptions``."""
+    """Body for ``POST /subscriptions``.
 
-    subscription_id: str = Field(..., min_length=36, max_length=36)
+    ``subscription_id`` is validated only loosely at the Pydantic layer
+    so the route handler can return tailored 400 responses for non-Azure
+    cloud identifiers. Pydantic-level rejection would surface as a
+    generic 422 which hides *why* the id was rejected.
+    """
+
+    subscription_id: str = Field(..., min_length=1, max_length=64)
     display_name: str = ""
 
     @field_validator("subscription_id")
     @classmethod
-    def _validate_guid(cls, v: str) -> str:
-        if not _GUID_RE.match(v):
-            raise ValueError("subscription_id must be an Azure GUID")
-        return v.lower()
+    def _normalize(cls, v: str) -> str:
+        return v.strip().lower()
 
 
 class PatchSubscriptionRequest(BaseModel):
@@ -219,6 +247,39 @@ async def add_subscription(
     repo = _get_repo()
     billing = _get_billing()
     settings = _get_settings()
+
+    # Phase 6.10 short-term guard: reject AWS / GCP identifiers with a
+    # clear roadmap message. Without this they would fall through to the
+    # access probe and fail with a confusing Azure-flavoured error.
+    provider = _detect_provider(body.subscription_id)
+    if provider in ("aws", "gcp"):
+        logger.info(
+            "Rejected non-Azure subscription_id tenant=%s provider=%s",
+            tenant_id, provider,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "unsupported_provider",
+                "provider": provider,
+                "message": (
+                    f"{provider.upper()} accounts are on the CloudGuardIQ "
+                    "roadmap (Phase 6) but are not yet supported. Today "
+                    "you can link Azure subscriptions only."
+                ),
+            },
+        )
+    if provider != "azure":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_subscription_id",
+                "message": (
+                    "subscription_id must be an Azure subscription GUID "
+                    "(8-4-4-4-12 hex)."
+                ),
+            },
+        )
 
     record = await billing.get(tenant_id)
     tier = record.tier if record else SubscriptionTier.FREE

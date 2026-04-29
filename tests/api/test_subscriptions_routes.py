@@ -262,3 +262,45 @@ def test_onboarding_info_endpoint() -> None:
     assert body["role"] == "Reader"
     assert "az role assignment create" in body["az_command_template"]
 
+
+
+def test_add_rejects_aws_account_id() -> None:
+    # AWS 12-digit account IDs must return 400 unsupported_provider.
+    _wire()
+    client = _client()
+    r = client.post(
+        "/subscriptions",
+        json={"subscription_id": "123456789012", "display_name": "aws-prod"},
+    )
+    assert r.status_code == 400, r.text
+    body = r.json()
+    assert body["detail"]["error"] == "unsupported_provider"
+    assert body["detail"]["provider"] == "aws"
+
+
+def test_add_rejects_gcp_project_id() -> None:
+    # GCP project IDs must return 400 unsupported_provider.
+    _wire()
+    client = _client()
+    r = client.post(
+        "/subscriptions",
+        json={"subscription_id": "my-prod-project-42", "display_name": "gcp"},
+    )
+    assert r.status_code == 400, r.text
+    body = r.json()
+    assert body["detail"]["error"] == "unsupported_provider"
+    assert body["detail"]["provider"] == "gcp"
+
+
+def test_add_rejects_garbage_with_invalid_id_error() -> None:
+    # Non-cloud junk strings must return 400 invalid_subscription_id.
+    _wire()
+    client = _client()
+    r = client.post(
+        "/subscriptions",
+        json={"subscription_id": "not_a_guid_at_all", "display_name": "x"},
+    )
+    assert r.status_code == 400, r.text
+    body = r.json()
+    assert body["detail"]["error"] == "invalid_subscription_id"
+
