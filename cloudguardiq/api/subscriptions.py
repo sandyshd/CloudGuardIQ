@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator
 
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
+from cloudguardiq.billing.plans import get_plan
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.core.config import Settings
 from cloudguardiq.core.enums import SubscriptionTier
@@ -132,13 +133,14 @@ def _get_settings() -> Settings:
     return _settings
 
 
-def _cap_for_tier(settings: Settings, tier: SubscriptionTier) -> int:
-    """Return the subscription cap for *tier* (-1 means unlimited)."""
-    if tier == SubscriptionTier.FREE:
-        return settings.free_max_subscriptions
-    if tier == SubscriptionTier.PRO:
-        return settings.pro_max_subscriptions
-    return settings.enterprise_max_subscriptions
+def _cap_for_tier(settings: Settings, tier: SubscriptionTier) -> int:  # noqa: ARG001
+    """Return the subscription cap for *tier* (-1 means unlimited).
+
+    Sourced from the plan catalog (cloudguardiq.billing.plans) — the single
+    cloud-agnostic source of truth for tier limits. The *settings* parameter
+    is retained for call-site backward compatibility.
+    """
+    return get_plan(tier).max_subscriptions
 
 
 # ---------------------------------------------------------------------------

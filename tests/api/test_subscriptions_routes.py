@@ -104,10 +104,11 @@ def test_add_enforces_free_cap_of_1() -> None:
     assert r2.json()["detail"]["error"] == "upgrade_required"
 
 
-def test_pro_cap_is_10() -> None:
+def test_pro_cap_is_3() -> None:
+    """PRO plan caps subscriptions at 3 (from plan catalog)."""
     _wire(tier=SubscriptionTier.PRO)
     client = _client()
-    for i in range(10):
+    for i in range(3):
         sid = f"{i:08d}-1111-1111-1111-111111111111"
         r = client.post("/subscriptions", json={"subscription_id": sid})
         assert r.status_code == 201, f"add #{i} failed: {r.text}"
@@ -116,6 +117,7 @@ def test_pro_cap_is_10() -> None:
         json={"subscription_id": "99999999-9999-9999-9999-999999999999"},
     )
     assert r.status_code == 402
+    assert r.json()["detail"]["cap"] == 3
 
 
 def test_delete_subscription() -> None:

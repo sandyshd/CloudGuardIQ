@@ -37,11 +37,13 @@ from cloudguardiq.api import billing as billing_module
 from cloudguardiq.api import subscriptions as subscriptions_module
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
 from cloudguardiq.billing.middleware import TierEnforcementMiddleware
+from cloudguardiq.billing.plans import UNLIMITED, get_plan
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.billing.stripe_service import StripeService
+from cloudguardiq.billing.usage import UsageRepository
 from cloudguardiq.core.config import get_settings
 from cloudguardiq.core.database import CosmosRepository
-from cloudguardiq.core.enums import DataTier, FindingType, Severity
+from cloudguardiq.core.enums import DataTier, FindingType, Severity, SubscriptionTier
 from cloudguardiq.core.models import (
     FindingResult,
     RemediationCard,
@@ -125,6 +127,11 @@ async def lifespan(
         settings,
         cosmos_db=_repo._db if _repo is not None else None,
     )
+    global _usage_repo  # noqa: PLW0603
+    _usage_repo = UsageRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
     stripe_service = StripeService(settings)
     billing_module.configure(
         repository=_billing_repo,
@@ -171,6 +178,7 @@ app.add_middleware(
 # at lifespan startup the billing router is reconfigured to share state with
 # the Cosmos-backed repo when available.
 _bootstrap_billing_repo = BillingRepository(get_settings(), cosmos_db=None)
+_usage_repo: UsageRepository = UsageRepository(get_settings(), cosmos_db=None)
 app.add_middleware(
     TierEnforcementMiddleware,
     settings=get_settings(),
@@ -784,7 +792,7 @@ async def get_finding_remediation(
 @app.post("/findings/{finding_id}/generate-remediation", response_model=RemediationCard)
 async def generate_finding_remediation(
     finding_id: str,
-    _user: TokenPayload = _auth,
+    user: TokenPayload = _auth,
 ) -> RemediationCard:
     """Generate an AI remediation card on-demand for a finding.
 
@@ -792,6 +800,28 @@ async def generate_finding_remediation(
     If a card already exists in Cosmos it is returned immediately.
     """
     repo = get_repo()
+
+    # --- Plan quota: AI remediations per calendar month ---------------
+    tenant_id = get_tenant_id(user)
+    billing_record = (
+        await _billing_repo.get(tenant_id) if _billing_repo is not None else None
+    )
+    plan = get_plan(
+        billing_record.tier if billing_record is not None else SubscriptionTier.FREE,
+    )
+    ai_cap = plan.max_ai_remediations_per_month
+    current_usage = await _usage_repo.get_current(tenant_id)
+    if ai_cap != UNLIMITED and current_usage.ai_remediations >= ai_cap:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "upgrade_required",
+                "current_tier": plan.tier.value.lower(),
+                "limit": "ai_remediations_per_month",
+                "cap": ai_cap,
+                "current": current_usage.ai_remediations,
+            },
+        )
 
     # Return cached card if one exists
     if repo is not None:
@@ -873,6 +903,10 @@ async def generate_finding_remediation(
             db=repo,
         )
         card = await engine.generate(finding)
+        try:
+            await _usage_repo.increment_ai_remediations(tenant_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Usage increment failed for %s: %s", tenant_id, exc)
         return card
     except HTTPException:
         raise
