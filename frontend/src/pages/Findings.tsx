@@ -7,7 +7,7 @@ import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { Button } from "../components/ui/button";
 import { Alert, AlertDescription } from "../components/ui/alert";
-import { Info, Scan } from "lucide-react";
+import { Info, Scan, Link2 } from "lucide-react";
 import type { FindingResult, Severity, FindingType } from "../types";
 
 export function Findings() {
@@ -148,19 +148,33 @@ export function Findings() {
       </div>
 
       {findings.length === 0 && !error ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 text-center">
-          <Scan className="h-12 w-12 text-[hsl(var(--muted-foreground))] mb-4" />
-          <h2 className="text-lg font-semibold">No findings yet</h2>
-          <p className="text-sm text-[hsl(var(--muted-foreground))] mt-1 mb-4">
-            Run your first scan to discover security issues and cost waste.
-          </p>
-          {scanError && (
-            <p className="mb-2 text-sm text-red-600">{scanError}</p>
-          )}
-          <Button onClick={handleRunScan} disabled={scanning}>
-            {scanning ? "Scanning..." : "Run Your First Scan"}
-          </Button>
-        </div>
+        subscriptions.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 text-center">
+            <Link2 className="h-12 w-12 text-[hsl(var(--muted-foreground))] mb-4" />
+            <h2 className="text-lg font-semibold">
+              Link a subscription to start scanning
+            </h2>
+            <p className="mt-1 mb-4 max-w-md text-sm text-[hsl(var(--muted-foreground))]">
+              Connect an Azure subscription on the Settings page before running
+              your first scan.
+            </p>
+            <Button onClick={() => navigate("/settings")}>Go to Settings</Button>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 text-center">
+            <Scan className="h-12 w-12 text-[hsl(var(--muted-foreground))] mb-4" />
+            <h2 className="text-lg font-semibold">No findings yet</h2>
+            <p className="text-sm text-[hsl(var(--muted-foreground))] mt-1 mb-4">
+              Run your first scan to discover security issues and cost waste.
+            </p>
+            {scanError && (
+              <p className="mb-2 text-sm text-red-600">{scanError}</p>
+            )}
+            <Button onClick={handleRunScan} disabled={scanning}>
+              {scanning ? "Scanning..." : "Run Your First Scan"}
+            </Button>
+          </div>
+        )
       ) : (
         <FindingTable findings={filtered} onSelect={setSelected} />
       )}

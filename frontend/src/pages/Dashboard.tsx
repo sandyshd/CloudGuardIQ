@@ -1,19 +1,27 @@
-import { Shield, DollarSign, CheckCircle, Server } from "lucide-react";
+import { Shield, DollarSign, CheckCircle, Server, Link2, Scan } from "lucide-react";
 import { MetricCard } from "../components/dashboard/MetricCard";
 import { SeverityChart } from "../components/dashboard/SeverityChart";
 import { CostChart } from "../components/dashboard/CostChart";
 import { ActivityFeed } from "../components/dashboard/ActivityFeed";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
+import { EmptyState } from "../components/common/EmptyState";
 import { useFindings } from "../hooks/useFindings";
+import { useSubscriptions } from "../hooks/useSubscriptions";
+import { triggerScan } from "../api/scans";
 import { useState } from "react";
 import type { FindingResult } from "../types";
 
 export function Dashboard() {
-  const { findings, loading } = useFindings();
+  const { findings, loading, refresh } = useFindings();
+  const { subscriptions, loading: subsLoading } = useSubscriptions();
   const [selected, setSelected] = useState<FindingResult | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
 
-  if (loading) {
+  const isLoading = loading || subsLoading;
+
+  if (isLoading) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-bold">Dashboard</h1>
@@ -26,6 +34,57 @@ export function Dashboard() {
           <div className="h-64 animate-pulse rounded-lg bg-[hsl(var(--muted))]" />
           <div className="h-64 animate-pulse rounded-lg bg-[hsl(var(--muted))]" />
         </div>
+      </div>
+    );
+  }
+
+  const handleRunScan = async () => {
+    const subId = subscriptions[0]?.subscription_id;
+    if (!subId) return;
+    setScanning(true);
+    setScanError(null);
+    try {
+      await triggerScan({ subscription_id: subId, include_cost: true });
+      await refresh();
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : "Scan failed");
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  if (subscriptions.length === 0) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <EmptyState
+          icon={<Link2 className="h-12 w-12" />}
+          title="Link a subscription to start scanning"
+          message="CloudGuardIQ scans the Azure subscriptions you connect from the Settings page. Once linked, security findings, cost waste, and compliance posture will appear here."
+          primaryLabel="Go to Settings"
+          primaryTo="/settings"
+        />
+      </div>
+    );
+  }
+
+  if (findings.length === 0) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <EmptyState
+          icon={<Scan className="h-12 w-12" />}
+          title="No findings yet"
+          message="Run your first scan to discover security issues, cost waste, and compliance gaps across your linked Azure subscriptions."
+          primaryLabel={scanning ? "Scanning..." : "Run Your First Scan"}
+          primaryOnClick={handleRunScan}
+          primaryDisabled={scanning}
+          secondary={
+            scanError ? (
+              <p className="text-sm text-red-600">{scanError}</p>
+            ) : null
+          }
+        />
       </div>
     );
   }
