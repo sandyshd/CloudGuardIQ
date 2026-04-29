@@ -7,8 +7,16 @@ export async function getFindings(subscriptionId?: string): Promise<FindingResul
   return data;
 }
 
-export async function getFinding(findingId: string): Promise<FindingResult> {
-  const { data } = await apiClient.get<FindingResult>(`/findings/${findingId}`);
+export async function getFinding(
+  findingId: string,
+  subscriptionId?: string,
+): Promise<FindingResult> {
+  // Findings are partitioned by /subscription_id in Cosmos. Passing the
+  // sub here turns the lookup into a fast single-partition read_item.
+  // Without it the backend falls back to a cross-partition scan that
+  // can silently miss the document under load.
+  const params = subscriptionId ? { subscription_id: subscriptionId } : {};
+  const { data } = await apiClient.get<FindingResult>(`/findings/${findingId}`, { params });
   return data;
 }
 

@@ -217,15 +217,26 @@ class CosmosRepository:
                 return FindingResult.model_validate(item)
             except Exception:
                 return None
-        # Cross-partition fallback (tenant-filtered when tenant_id given)
+        # Cross-partition fallback (tenant-filtered when tenant_id given).
+        # The async Cosmos SDK runs cross-partition queries automatically
+        # whenever ``partition_key`` is omitted; the older
+        # ``enable_cross_partition_query`` kwarg was removed in azure-cosmos
+        # 4.x and passing it to the async client raises TypeError, which
+        # the caller's broad ``except Exception`` then swallows -- the exact
+        # silent-404 that AI Fix surfaced on 2026-04-29.
         query, params = _build_finding_lookup_query(
             tenant_id=tenant_id, finding_id=finding_id
         )
-        async for item in self._findings_container().query_items(  # type: ignore[assignment]
-            query=query, parameters=params,
-            enable_cross_partition_query=True,
-        ):
-            return FindingResult.model_validate(item)
+        try:
+            async for item in self._findings_container().query_items(
+                query=query, parameters=params,
+            ):
+                return FindingResult.model_validate(item)
+        except Exception as exc:
+            logger.warning(
+                "Cross-partition finding lookup failed for %s: %s",
+                finding_id, exc,
+            )
         return None
 
     # ------------------------------------------------------------------

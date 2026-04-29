@@ -42,7 +42,7 @@ export function AIFix() {
   const queryId = searchParams.get("finding");
   const findingId = routeId ?? queryId ?? null;
   const navigate = useNavigate();
-  const { subscriptions } = useSubscriptions();
+  const { subscriptions, selected: selectedSub } = useSubscriptions();
 
   const [finding, setFinding] = useState<FindingResult | null>(null);
   const [card, setCard] = useState<RemediationCard | null>(null);
@@ -58,9 +58,9 @@ export function AIFix() {
     setError(null);
     try {
       const [f, c, all] = await Promise.all([
-        getFinding(findingId),
+        getFinding(findingId, selectedSub?.subscription_id),
         getRemediation(findingId).catch(() => null),
-        getFindings().catch(() => [] as FindingResult[]),
+        getFindings(selectedSub?.subscription_id).catch(() => [] as FindingResult[]),
       ]);
       setFinding(f);
       setCard(c);
@@ -70,7 +70,7 @@ export function AIFix() {
     } finally {
       setLoading(false);
     }
-  }, [findingId]);
+  }, [findingId, selectedSub?.subscription_id]);
 
   useEffect(() => {
     load();
@@ -374,4 +374,6 @@ export function AIFix() {
     </div>
   );
 }
+
+
 
