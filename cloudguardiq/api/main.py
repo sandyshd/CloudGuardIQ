@@ -10,7 +10,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
@@ -34,7 +34,8 @@ from cloudguardiq.adapters.rules.storage import (
     StoragePublicAccessRule,
 )
 from cloudguardiq.api import billing as billing_module
-from cloudguardiq.api.auth import TokenPayload, verify_token
+from cloudguardiq.api import subscriptions as subscriptions_module
+from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
 from cloudguardiq.billing.middleware import TierEnforcementMiddleware
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.billing.stripe_service import StripeService
@@ -50,6 +51,7 @@ from cloudguardiq.core.models import (
 )
 from cloudguardiq.pipeline.scan_pipeline import ScanResult
 from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
+from cloudguardiq.subscriptions.repository import SubscriptionsRepository
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,7 @@ _auth = Depends(verify_token)
 # ------------------------------------------------------------------
 _repo: CosmosRepository | None = None
 _billing_repo: BillingRepository | None = None
+_subs_repo: SubscriptionsRepository | None = None
 _tier_middleware: TierEnforcementMiddleware | None = None
 
 
@@ -72,15 +75,36 @@ def get_repo() -> CosmosRepository | None:
     return _repo
 
 
-def _resolve_subscription_id(subscription_id: str | None) -> str:
-    """Return the query-provided subscription id, or fall back to env var.
+async def _validate_owned_subscription(
+    user: TokenPayload, subscription_id: str
+) -> str:
+    """Ensure the JWT tenant owns `subscription_id` (Phase 2).
 
-    The dashboard and findings pages do not pass subscription_id, so we
-    default to the AZURE_SUBSCRIPTION_ID configured for the deployment.
+    In auth-disabled (dev/test) mode the check is a no-op so that local
+    smoke tests and dashboards keep working without registering subs.
+    In production mode the route returns `403 subscription_not_linked`
+    when the tenant has not added the subscription via /subscriptions.
     """
-    if subscription_id:
-        return subscription_id
-    return os.environ.get("AZURE_SUBSCRIPTION_ID", "")
+    settings = get_settings()
+    if settings.auth_disabled:
+        return subscription_id.lower()
+    tenant_id = get_tenant_id(user)
+    repo = subscriptions_module._repository  # noqa: SLF001
+    if repo is None:
+        logger.warning(
+            "Subscriptions repo not configured; skipping ownership check"
+        )
+        return subscription_id.lower()
+    record = await repo.get(tenant_id, subscription_id.lower())
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "subscription_not_linked",
+                "subscription_id": subscription_id,
+            },
+        )
+    return record.subscription_id
 
 
 @asynccontextmanager
@@ -108,6 +132,17 @@ async def lifespan(
         invalidate_cache=(
             _tier_middleware.invalidate if _tier_middleware is not None else None
         ),
+    )
+
+    global _subs_repo  # noqa: PLW0603
+    _subs_repo = SubscriptionsRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
+    subscriptions_module.configure(
+        repository=_subs_repo,
+        billing_repository=_billing_repo,
+        settings=settings,
     )
 
     yield
@@ -148,8 +183,19 @@ billing_module.configure(
     stripe_service=StripeService(get_settings()),
 )
 
+# Bootstrap subscriptions repo (in-memory) so tests that never run lifespan
+# still work. The lifespan hook later swaps in the Cosmos-backed repo.
+_bootstrap_subs_repo = SubscriptionsRepository(get_settings(), cosmos_db=None)
+subscriptions_module.configure(
+    repository=_bootstrap_subs_repo,
+    billing_repository=_bootstrap_billing_repo,
+    settings=get_settings(),
+)
+
 # Billing routes
 app.include_router(billing_module.router)
+# Subscription management routes (Phase 2)
+app.include_router(subscriptions_module.router)
 
 
 # ------------------------------------------------------------------
@@ -514,12 +560,13 @@ async def health() -> dict[str, str]:
 @app.post("/scan/trigger")
 async def trigger_scan(
     request: ScanRequest,
-    _user: TokenPayload = _auth,
+    user: TokenPayload = _auth,
 ) -> dict[str, str]:
     """Trigger an async scan for a subscription.
 
     Enqueues a scan request and returns immediately with a scan_id.
     """
+    await _validate_owned_subscription(user, request.subscription_id)
     scan_id = str(uuid.uuid4())
     logger.info(
         "Scan triggered: %s for sub %s",
@@ -570,9 +617,10 @@ async def get_scan_status(
 @app.post("/scan", response_model=ScanResponse)
 async def scan_subscription(
     request: ScanRequest,
-    _user: TokenPayload = _auth,
+    user: TokenPayload = _auth,
 ) -> ScanResponse:
     """Scan an Azure subscription for security and cost findings."""
+    await _validate_owned_subscription(user, request.subscription_id)
     scan_id = str(uuid.uuid4())
     start = time.perf_counter()
 
@@ -629,14 +677,18 @@ async def scan_subscription(
 async def list_findings(
     subscription_id: str = Query(default=""),
     limit: int = Query(default=50, ge=1, le=200),
-    _user: TokenPayload = _auth,
+    user: TokenPayload = _auth,
 ) -> list[FindingResult]:
     """Return FindingResults for a subscription, sorted by priority_score descending."""
     repo = get_repo()
-    sub_id = _resolve_subscription_id(subscription_id)
+    sub_id = ""
+    if subscription_id:
+        sub_id = await _validate_owned_subscription(user, subscription_id)
+    settings = get_settings()
+    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
     if repo is not None and sub_id:
         try:
-            findings = await repo.get_findings(sub_id, limit=limit)
+            findings = await repo.get_findings(sub_id, tenant_id=tenant_id, limit=limit)
             return sorted(
                 findings,
                 key=lambda f: f.priority_score,
@@ -655,16 +707,21 @@ async def list_findings(
 async def get_finding(
     finding_id: str,
     subscription_id: str = Query(default=""),
-    _user: TokenPayload = _auth,
+    user: TokenPayload = _auth,
 ) -> FindingResult:
     """Get a single FindingResult by finding ID."""
     repo = get_repo()
-    sub_id = _resolve_subscription_id(subscription_id)
+    sub_id: str = ""
+    if subscription_id:
+        sub_id = await _validate_owned_subscription(user, subscription_id)
+    settings = get_settings()
+    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
     if repo is not None:
         try:
             finding = await repo.get_finding(
                 finding_id,
                 subscription_id=sub_id or None,
+                tenant_id=tenant_id,
             )
             if finding is not None:
                 return finding
@@ -729,10 +786,9 @@ async def generate_finding_remediation(
 
     # Load the finding
     finding: FindingResult | None = None
-    sub_id = _resolve_subscription_id(None)
     if repo is not None:
         try:
-            finding = await repo.get_finding(finding_id, subscription_id=sub_id or None)
+            finding = await repo.get_finding(finding_id)
         except Exception as exc:
             logger.warning("Failed to load finding %s: %s", finding_id, exc)
 
@@ -836,19 +892,5 @@ async def get_finding_terraform(
     return _MOCK_TF
 
 
-@app.get("/subscriptions")
-async def list_subscriptions(
-    _user: TokenPayload = _auth,
-) -> list[dict[str, str]]:
-    """List connected subscriptions (configured via AZURE_SUBSCRIPTION_ID)."""
-    sub_id = os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip()
-    if not sub_id:
-        return []
-    return [
-        {
-            "id": sub_id,
-            "display_name": sub_id,
-            "state": "Enabled",
-        },
-    ]
+# /subscriptions endpoints are now served by subscriptions_module.router
 

@@ -193,6 +193,13 @@ resource "azurerm_cosmosdb_sql_container" "billing" {
   database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
   partition_key_paths = ["/tenant_id"]
 }
+resource "azurerm_cosmosdb_sql_container" "subscriptions" {
+  name                = "subscriptions"
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
+  partition_key_paths = ["/tenant_id"]
+}
 
 # ==========================================================================
 # Azure OpenAI
@@ -461,10 +468,7 @@ resource "azurerm_container_app" "api" {
         name  = "CLOUDGUARDIQ_AZURE_CLIENT_ID"
         value = azuread_application.cloudguardiq.client_id
       }
-      env {
-        name  = "AZURE_SUBSCRIPTION_ID"
-        value = data.azurerm_subscription.current.subscription_id
-      }
+
       env {
         name  = "CLOUDGUARDIQ_CORS_ORIGINS"
         value = "https://${azurerm_static_web_app.frontend.default_host_name},http://localhost:3000"
@@ -476,6 +480,14 @@ resource "azurerm_container_app" "api" {
       env {
         name  = "CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING"
         value = azurerm_cosmosdb_sql_container.billing.name
+      }
+      env {
+        name  = "CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS"
+        value = azurerm_cosmosdb_sql_container.subscriptions.name
+      }
+      env {
+        name  = "CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS"
+        value = "10"
       }
       env {
         name  = "CLOUDGUARDIQ_STRIPE_PRICE_FREE"
@@ -614,8 +626,6 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     AZURE_OPENAI_ENDPOINT   = azurerm_cognitive_account.openai.endpoint
     AZURE_OPENAI_DEPLOYMENT = "gpt-5.1"
 
-    # Subscription to scan
-    AZURE_SUBSCRIPTION_ID = data.azurerm_subscription.current.subscription_id
 
     # Service Bus
     SERVICE_BUS_CONNECTION__fullyQualifiedNamespace = "${azurerm_servicebus_namespace.cloudguardiq.name}.servicebus.windows.net"
@@ -626,6 +636,8 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
 
     # Billing
     CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING = azurerm_cosmosdb_sql_container.billing.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS = azurerm_cosmosdb_sql_container.subscriptions.name
+    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS          = "10"
     CLOUDGUARDIQ_STRIPE_PRICE_FREE        = var.stripe_price_free
     CLOUDGUARDIQ_STRIPE_PRICE_PRO         = var.stripe_price_pro
     CLOUDGUARDIQ_STRIPE_PRICE_ENTERPRISE  = var.stripe_price_enterprise

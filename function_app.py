@@ -12,25 +12,16 @@ logger = logging.getLogger(__name__)
 app = func.FunctionApp()
 
 
-async def _get_scan_pipeline():
-    """Build a ScanPipeline from environment configuration."""
+async def _build_scan_pipeline(subscription_id: str, db, async_credential):
+    """Build a ScanPipeline bound to a single Azure subscription."""
     from azure.identity import DefaultAzureCredential as SyncDefaultAzureCredential
-    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
     from azure.servicebus.aio import ServiceBusClient
 
     from cloudguardiq.adapters.azure_adapter import AzureAdapter
-    from cloudguardiq.core.config import get_settings
-    from cloudguardiq.core.database import CosmosRepository
     from cloudguardiq.pipeline.scan_pipeline import ScanPipeline
     from cloudguardiq.policy.engine import PolicyEngine
 
-    settings = get_settings()
     sync_credential = SyncDefaultAzureCredential()
-    async_credential = AsyncDefaultAzureCredential()
-    subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
-
-    db = CosmosRepository(settings)
-    await db.connect()
 
     adapter = AzureAdapter(
         credential=sync_credential,
@@ -38,14 +29,9 @@ async def _get_scan_pipeline():
         db=db,
         async_credential=async_credential,
     )
-    policy_engine = PolicyEngine()
 
-    # AI engine (used by worker, not scan pipeline directly)
-    ai_engine = None
-
-    # Service Bus sender (managed identity)
     sender = None
-    sb_fqns = os.environ.get("SERVICE_BUS_CONNECTION__fullyQualifiedNamespace")  # noqa: SIM112 -- Azure Functions binding requires exact casing
+    sb_fqns = os.environ.get("SERVICE_BUS_CONNECTION__fullyQualifiedNamespace")  # noqa: SIM112
     if sb_fqns:
         sb_client = ServiceBusClient(
             fully_qualified_namespace=sb_fqns,
@@ -55,11 +41,44 @@ async def _get_scan_pipeline():
 
     return ScanPipeline(
         adapter=adapter,
-        policy_engine=policy_engine,
-        ai_engine=ai_engine,
+        policy_engine=PolicyEngine(),
+        ai_engine=None,
         db=db,
         service_bus_sender=sender,
-    ), db, async_credential
+    )
+
+
+async def _list_enabled_subscriptions(db) -> list[tuple[str, str]]:
+    """Return ``(tenant_id, subscription_id)`` tuples for every Enabled record.
+
+    Falls back to an empty list when the subscriptions container cannot be
+    queried (e.g. cosmos misconfigured), which causes the timer to no-op
+    instead of raising.
+    """
+    from cloudguardiq.core.config import get_settings
+    from cloudguardiq.subscriptions.repository import SubscriptionsRepository
+
+    settings = get_settings()
+    repo = SubscriptionsRepository(settings, cosmos_db=db._db if db is not None else None)
+    container = repo._container()  # noqa: SLF001
+    if container is None:
+        logger.warning("Subscriptions container unavailable; timer scan no-op")
+        return []
+
+    pairs: list[tuple[str, str]] = []
+    try:
+        query = (
+            "SELECT c.tenant_id, c.subscription_id "
+            "FROM c WHERE c.state = 'Enabled'"
+        )
+        async for item in container.query_items(query=query):
+            tid = item.get("tenant_id", "")
+            sid = item.get("subscription_id", "")
+            if tid and sid:
+                pairs.append((tid, sid))
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to query subscriptions: %s", exc)
+    return pairs
 
 
 async def _get_ai_worker():
@@ -101,32 +120,49 @@ async def _get_ai_worker():
     run_on_startup=False,
 )
 async def scan_trigger(timer: func.TimerRequest) -> None:
-    """Timer-triggered scan that runs every 6 hours."""
-    subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
-    if not subscription_id:
-        logger.error("AZURE_SUBSCRIPTION_ID not set -- skipping scan")
-        return
+    """Timer-triggered scan that fans out across every registered subscription.
 
-    logger.info("Timer scan triggered for subscription %s", subscription_id)
+    Phase 2: instead of reading a single ``AZURE_SUBSCRIPTION_ID`` env var,
+    we iterate the ``subscriptions`` Cosmos container and run the scan
+    pipeline for every ``(tenant_id, subscription_id)`` pair whose state is
+    ``Enabled``. Failures on one subscription do not affect the others.
+    """
+    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 
-    pipeline = None
-    db = None
-    credential = None
+    from cloudguardiq.core.config import get_settings
+    from cloudguardiq.core.database import CosmosRepository
+
+    settings = get_settings()
+    async_credential = AsyncDefaultAzureCredential()
+    db = CosmosRepository(settings)
+    await db.connect()
+
     try:
-        pipeline, db, credential = await _get_scan_pipeline()
-        result = await pipeline.run(subscription_id)
-        logger.info(
-            "Timer scan completed: scan_id=%s, findings=%d",
-            result.scan_id,
-            result.findings_count,
-        )
-    except Exception as exc:
-        logger.error("Timer scan failed: %s", exc)
+        pairs = await _list_enabled_subscriptions(db)
+        if not pairs:
+            logger.info("No enabled subscriptions registered; timer scan no-op")
+            return
+
+        logger.info("Timer scan covering %d subscription(s)", len(pairs))
+        for tenant_id, subscription_id in pairs:
+            try:
+                pipeline = await _build_scan_pipeline(
+                    subscription_id, db, async_credential,
+                )
+                result = await pipeline.run(subscription_id, tenant_id=tenant_id)
+                logger.info(
+                    "Tenant %s sub %s scan_id=%s findings=%d",
+                    tenant_id, subscription_id,
+                    result.scan_id, result.findings_count,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Scan failed for tenant %s sub %s: %s",
+                    tenant_id, subscription_id, exc,
+                )
     finally:
-        if db is not None:
-            await db.close()
-        if credential is not None:
-            await credential.close()
+        await db.close()
+        await async_credential.close()
 
 
 @app.service_bus_queue_trigger(
@@ -156,7 +192,7 @@ async def ai_worker_trigger(msg: func.ServiceBusMessage) -> None:
                 "AI worker failed to generate card for message %s",
                 msg.message_id,
             )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.error("AI worker error: %s", exc)
     finally:
         if db is not None:

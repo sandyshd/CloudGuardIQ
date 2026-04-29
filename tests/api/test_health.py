@@ -96,24 +96,8 @@ class TestFindingsEndpoints:
         assert "azurerm_storage_account" in response.text
 
 
-class TestSubscriptions:
-    @pytest.mark.asyncio
-    async def test_list_subscriptions(
-        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "00000000-0000-0000-0000-000000000001")
-        response = await client.get("/subscriptions")
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
-        assert data[0]["id"] == "00000000-0000-0000-0000-000000000001"
-        assert data[0]["display_name"] == "00000000-0000-0000-0000-000000000001"
+# TestSubscriptions class removed: legacy AZURE_SUBSCRIPTION_ID-driven
+# /subscriptions endpoint was replaced in Phase 2 with the multi-tenant
+# router (cloudguardiq.api.subscriptions). New behavior is covered by
+# tests/api/test_subscriptions_routes.py.
 
-    @pytest.mark.asyncio
-    async def test_list_subscriptions_empty_when_unconfigured(
-        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.delenv("AZURE_SUBSCRIPTION_ID", raising=False)
-        response = await client.get("/subscriptions")
-        assert response.status_code == 200
-        assert response.json() == []

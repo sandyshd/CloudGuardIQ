@@ -143,9 +143,8 @@ class TestWebhook:
         mock_module.Webhook.construct_event.side_effect = ValueError("bad sig")
         with patch(
             "cloudguardiq.billing.stripe_service._stripe", mock_module,
-        ):
-            with pytest.raises(StripeServiceError):
-                svc.verify_webhook(payload=b"{}", signature="sig")
+        ), pytest.raises(StripeServiceError):
+            svc.verify_webhook(payload=b"{}", signature="sig")
 
     def test_valid_signature_returns_event(self) -> None:
         svc = StripeService(_settings())

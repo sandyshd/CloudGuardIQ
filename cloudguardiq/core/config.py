@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     cosmos_container_remediations: str = "remediations"
     cosmos_container_system: str = "system"
     cosmos_container_billing: str = "billing"
+    cosmos_container_subscriptions: str = "subscriptions"
 
     # Azure OpenAI
     azure_openai_endpoint: str = ""
@@ -63,6 +64,8 @@ class Settings(BaseSettings):
 
     # Tier limits (free tier)
     free_max_subscriptions: int = 1
+    pro_max_subscriptions: int = 10
+    enterprise_max_subscriptions: int = -1  # -1 means unlimited
     free_max_resources_per_scan: int = 50
 
 

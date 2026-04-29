@@ -63,7 +63,7 @@ class ScanPipeline:
         self._db = db
         self._sender = service_bus_sender
 
-    async def run(self, subscription_id: str) -> ScanResult:
+    async def run(self, subscription_id: str, tenant_id: str = "") -> ScanResult:
         """Execute the full scan pipeline.
 
         Args:
@@ -85,8 +85,16 @@ class ScanPipeline:
             logger.error("Adapter scan failed for %s: %s", subscription_id, exc)
             raise
 
+        # Phase 2: stamp tenant on snapshots so isolation holds end-to-end.
+        if tenant_id:
+            for snap in snapshots:
+                snap.tenant_id = tenant_id
+
         # Step 2: Evaluate policies
         findings = self._policy_engine.evaluate(snapshots)
+        if tenant_id:
+            for finding in findings:
+                finding.tenant_id = tenant_id
 
         # Defensive guard: ensure priority_score is computed for all findings
         for finding in findings:

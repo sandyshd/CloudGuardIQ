@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 # Routes that enforce tier limits. Each entry is (method, path_prefix, limit_kind).
 _ENFORCED_ROUTES: list[tuple[str, str, str]] = [
     ("POST", "/scan", "resources_per_scan"),
-    ("POST", "/subscriptions", "subscriptions"),
+    # NOTE: POST /subscriptions tier cap is enforced inside the route
+    # handler (cloudguardiq.api.subscriptions) using the JWT tid claim,
+    # which is more reliable than the middleware's anonymous tenant lookup.
 ]
 
 # Routes that must never be blocked (webhook, health, docs, billing).

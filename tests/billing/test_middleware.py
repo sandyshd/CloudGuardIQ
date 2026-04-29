@@ -103,24 +103,10 @@ async def test_pro_tier_bypasses_limit() -> None:
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
-async def test_subscription_limit_blocked_for_free() -> None:
-    settings = Settings(free_max_subscriptions=1)
-    repo = BillingRepository(settings)
-
-    async def counter(tenant_id: str) -> int:
-        return 1  # already at the cap
-
-    app = _build_app(repo, settings, subscription_counter=counter)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.post(
-            "/subscriptions",
-            json={},
-            headers={"X-Tenant-Id": "tenant-a"},
-        )
-    assert resp.status_code == 402
-    assert resp.json()["limit"] == "subscriptions"
+# test_subscription_limit_blocked_for_free removed: in Phase 2 the
+# /subscriptions cap check moved out of the middleware and into the
+# route handler (cloudguardiq.api.subscriptions). Coverage lives in
+# tests/api/test_subscriptions_routes.py::test_add_enforces_free_cap_of_1.
 
 
 @pytest.mark.asyncio

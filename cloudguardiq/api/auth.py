@@ -102,7 +102,7 @@ async def verify_token(
     settings = get_settings()
 
     if settings.auth_disabled:
-        return TokenPayload(sub="anonymous")
+        return TokenPayload(sub="anonymous", tid="anonymous")
 
     if credentials is None:
         raise HTTPException(
