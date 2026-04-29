@@ -1,4 +1,16 @@
-export type DataTier = "TIER1_NATIVE" | "TIER2_FREE_CSPM" | "TIER3_PAID";
+// Cloud-agnostic data tiers. Wire values are stable (TIER2_FREE_CSPM /
+// TIER3_PAID) for backward compatibility; new code may also use the
+// canonical aliases TIER2_ENRICHED / TIER3_DEEP — they decode to the
+// same value on the backend.
+export type DataTier =
+  | "TIER1_NATIVE"
+  | "TIER2_FREE_CSPM"
+  | "TIER2_ENRICHED"
+  | "TIER3_PAID"
+  | "TIER3_DEEP";
+
+export const TIER2_VALUES: DataTier[] = ["TIER2_FREE_CSPM", "TIER2_ENRICHED"];
+export const TIER3_VALUES: DataTier[] = ["TIER3_PAID", "TIER3_DEEP"];
 export type CloudProvider = "AZURE" | "AWS" | "GCP" | "TERRAFORM";
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFORMATIONAL";
 export type FindingType = "SECURITY" | "FINOPS" | "COMPLIANCE";
