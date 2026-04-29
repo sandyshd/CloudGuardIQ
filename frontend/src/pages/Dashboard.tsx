@@ -6,6 +6,7 @@ import { ActivityFeed } from "../components/dashboard/ActivityFeed";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { EmptyState } from "../components/common/EmptyState";
+import { DefenderAutoBadge } from "../components/common/DefenderAutoBadge";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { triggerScan } from "../api/scans";
@@ -108,7 +109,10 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <DefenderAutoBadge findings={findings} />
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <MetricCard

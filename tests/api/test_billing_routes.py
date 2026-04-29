@@ -181,3 +181,23 @@ async def test_webhook_subscription_deleted(
     assert stored is not None
     assert stored.tier == SubscriptionTier.FREE
     assert stored.stripe_subscription_id == ""
+
+
+@pytest.mark.asyncio
+async def test_plans_endpoint_returns_catalog(client: AsyncClient) -> None:
+    """GET /billing/plans returns the public plan catalog (no auth)."""
+    resp = await client.get("/billing/plans")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "plans" in body
+    tiers = [p["tier"] for p in body["plans"]]
+    assert tiers == [
+        SubscriptionTier.FREE.value,
+        SubscriptionTier.PRO.value,
+        SubscriptionTier.ENTERPRISE.value,
+    ]
+    # Defender must never gate a tier
+    for plan in body["plans"]:
+        joined = " ".join(plan["features"]).lower()
+        assert "defender" not in joined
+    assert body["defender_auto_enrichment"] is True

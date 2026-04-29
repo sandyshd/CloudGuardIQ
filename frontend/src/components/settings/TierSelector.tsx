@@ -18,6 +18,10 @@ interface PlanDef {
   features: string[];
 }
 
+// Pricing axes intentionally cloud-agnostic: subscriptions, resources,
+// scan frequency, AI usage. No vendor capability (Defender, GuardDuty,
+// Security Command Center) is gated behind a paywall — those signals are
+// auto-detected and used to enrich findings on every plan.
 const PLANS: PlanDef[] = [
   {
     tier: "FREE",
@@ -25,22 +29,24 @@ const PLANS: PlanDef[] = [
     price: "$0",
     cadence: "/mo",
     features: [
-      "1 Azure subscription",
-      "Up to 50 resources per scan",
-      "Native Tier 1 scanning",
-      "Email support",
+      "1 cloud subscription / account",
+      "Up to 100 resources per scan",
+      "Daily scans",
+      "5 AI remediation plans / month",
+      "Community support",
     ],
   },
   {
     tier: "PRO",
-    name: "Pro",
+    name: "Starter",
     price: "$49",
     cadence: "/mo",
     features: [
-      "Up to 10 Azure subscriptions",
-      "Unlimited resources per scan",
-      "Defender Free CSPM enrichment",
-      "AI remediation plans",
+      "Up to 3 cloud subscriptions / accounts",
+      "Up to 1,000 resources per scan",
+      "Hourly scans",
+      "100 AI remediation plans / month",
+      "Email support",
     ],
   },
   {
@@ -49,9 +55,11 @@ const PLANS: PlanDef[] = [
     price: "$299",
     cadence: "/mo",
     features: [
-      "Everything in Pro",
-      "Tier 3 Defender paid plans",
-      "Self-healing agents",
+      "Unlimited subscriptions / accounts",
+      "Unlimited resources per scan",
+      "15-minute continuous scans",
+      "Unlimited AI remediation plans",
+      "Self-healing automation",
       "Priority SLA support",
     ],
   },
@@ -69,7 +77,8 @@ export function TierSelector() {
         if (!cancelled) setStatus(s);
       })
       .catch(() => {
-        if (!cancelled) setStatus({ tier: "FREE", stripe_customer_id: "", stripe_subscription_id: "" });
+        if (!cancelled)
+          setStatus({ tier: "FREE", stripe_customer_id: "", stripe_subscription_id: "" });
       });
     return () => {
       cancelled = true;
@@ -158,6 +167,10 @@ export function TierSelector() {
             );
           })}
         </div>
+        <p className="mt-3 text-xs text-[hsl(var(--muted-foreground))]">
+          ✨ All plans auto-detect and use Microsoft Defender for Cloud signals
+          when available — no extra charge, no plan upgrade required.
+        </p>
       </CardContent>
     </Card>
   );

@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     free_max_subscriptions: int = 1
     pro_max_subscriptions: int = 10
     enterprise_max_subscriptions: int = -1  # -1 means unlimited
-    free_max_resources_per_scan: int = 50
+    free_max_resources_per_scan: int = 100
 
 
 @lru_cache

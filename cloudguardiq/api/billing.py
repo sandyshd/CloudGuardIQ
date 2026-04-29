@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 
 from cloudguardiq.api.auth import TokenPayload, verify_token
+from cloudguardiq.billing.plans import PlanLimits, all_plans
 from cloudguardiq.billing.repository import BillingCustomer, BillingRepository
 from cloudguardiq.billing.stripe_service import StripeService, StripeServiceError
 from cloudguardiq.core.enums import SubscriptionTier
@@ -34,6 +35,18 @@ class BillingStatusResponse(BaseModel):
     tier: SubscriptionTier
     stripe_customer_id: str = ""
     stripe_subscription_id: str = ""
+
+
+class PlanCatalogResponse(BaseModel):
+    """Response for ``GET /billing/plans``."""
+
+    plans: list[PlanLimits]
+    defender_auto_enrichment: bool = True
+    defender_note: str = (
+        "Defender for Cloud signals are auto-detected and used to enrich "
+        "findings on every plan at no extra charge. CloudGuardIQ never "
+        "requires Defender to be enabled."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +103,17 @@ def _tenant_id(user: TokenPayload) -> str:
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 _auth = Depends(verify_token)
+
+
+@router.get("/plans", response_model=PlanCatalogResponse)
+async def get_plans() -> PlanCatalogResponse:
+    """Return the public subscription plan catalog.
+
+    This route is intentionally unauthenticated: the catalog is public
+    marketing/pricing data and the Settings page renders it before the
+    user has chosen a plan.
+    """
+    return PlanCatalogResponse(plans=all_plans())
 
 
 @router.get("/status", response_model=BillingStatusResponse)
