@@ -647,11 +647,11 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID intentionally omitted: referencing
     # the function app's own identity here is a self-reference. Resolved
     # at runtime by cloudguardiq.core.identity_resolver.
-    CLOUDGUARDIQ_STRIPE_PRICE_FREE              = var.stripe_price_free
-    CLOUDGUARDIQ_STRIPE_PRICE_PRO               = var.stripe_price_pro
-    CLOUDGUARDIQ_STRIPE_PRICE_ENTERPRISE        = var.stripe_price_enterprise
-    CLOUDGUARDIQ_STRIPE_SUCCESS_URL             = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=success"
-    CLOUDGUARDIQ_STRIPE_CANCEL_URL              = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=cancel"
+    CLOUDGUARDIQ_STRIPE_PRICE_FREE       = var.stripe_price_free
+    CLOUDGUARDIQ_STRIPE_PRICE_PRO        = var.stripe_price_pro
+    CLOUDGUARDIQ_STRIPE_PRICE_ENTERPRISE = var.stripe_price_enterprise
+    CLOUDGUARDIQ_STRIPE_SUCCESS_URL      = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=success"
+    CLOUDGUARDIQ_STRIPE_CANCEL_URL       = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=cancel"
     # Stripe secrets flow through Key Vault references (empty when not configured).
     CLOUDGUARDIQ_STRIPE_API_KEY        = var.stripe_api_key == "" ? "" : "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.stripe_api_key[0].versionless_id})"
     CLOUDGUARDIQ_STRIPE_WEBHOOK_SECRET = var.stripe_webhook_secret == "" ? "" : "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.stripe_webhook_secret[0].versionless_id})"
