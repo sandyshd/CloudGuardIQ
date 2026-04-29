@@ -5,10 +5,11 @@ import { Alert, AlertDescription } from "../ui/alert";
 import { useSubscriptions } from "../../hooks/useSubscriptions";
 import { getBillingStatus, type BillingStatus } from "../../api/billing";
 import { LoadingSpinner } from "../common/LoadingSpinner";
+import type { Subscription } from "../../types";
 
 const TIER_CAPS: Record<string, number> = {
   FREE: 1,
-  PRO: 10,
+  PRO: 3,
   ENTERPRISE: -1,
 };
 
@@ -22,8 +23,41 @@ interface UpgradeRequiredDetail {
   current?: number;
 }
 
+interface ApiErrorShape {
+  response?: { status?: number; data?: { detail?: unknown } };
+  code?: string;
+  message?: string;
+}
+
+function formatApiError(err: unknown, fallback: string): string {
+  const e = err as ApiErrorShape;
+  if (e?.response) {
+    const status = e.response.status;
+    const detail = e.response.data?.detail;
+    if (typeof detail === "string") return `${status}: ${detail}`;
+    if (detail && typeof detail === "object") {
+      try {
+        return `${status}: ${JSON.stringify(detail)}`;
+      } catch {
+        return `Request failed with status ${status}`;
+      }
+    }
+    return `Request failed with status ${status}`;
+  }
+  if (e?.code === "ERR_NETWORK") {
+    return (
+      "Could not reach the CloudGuardIQ API. Check your connection or sign in again, then retry."
+    );
+  }
+  if (e?.code === "ECONNABORTED") {
+    return "Request timed out. Please retry.";
+  }
+  return e?.message ?? fallback;
+}
+
 export function SubscriptionList() {
-  const { subscriptions, loading, add, remove, toggle } = useSubscriptions();
+  const { subscriptions, loading, add, remove, toggle, replace } =
+    useSubscriptions();
   const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +74,13 @@ export function SubscriptionList() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [upgradeMsg, setUpgradeMsg] = useState<string | null>(null);
+
+  // Edit-in-place state: the subscription_id of the row currently being
+  // edited, plus the working copy of its fields.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editId, setEditId] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editSubmitting, setEditSubmitting] = useState(false);
 
   const counter = useMemo(() => {
     const total = subscriptions.length;
@@ -63,10 +104,8 @@ export function SubscriptionList() {
       setNewId("");
       setNewName("");
     } catch (err) {
-      // axios error shape
-      const e = err as {
+      const e = err as ApiErrorShape & {
         response?: { status?: number; data?: { detail?: UpgradeRequiredDetail | string } };
-        message?: string;
       };
       if (e.response?.status === 402) {
         const detail = e.response.data?.detail;
@@ -79,19 +118,24 @@ export function SubscriptionList() {
           setUpgradeMsg("Upgrade required to add more subscriptions.");
         }
       } else {
-        setError(e.message ?? "Failed to add subscription");
+        setError(formatApiError(err, "Failed to add subscription"));
       }
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleRemove = async (id: string) => {
+  const handleRemove = async (id: string, displayName: string) => {
     setError(null);
+    const confirmed = window.confirm(
+      `Remove subscription "${displayName || id}"? This stops scans and ` +
+        "cannot be undone (you can re-link it later).",
+    );
+    if (!confirmed) return;
     try {
       await remove(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to remove subscription");
+      setError(formatApiError(err, "Failed to remove subscription"));
     }
   };
 
@@ -101,7 +145,47 @@ export function SubscriptionList() {
     try {
       await toggle(id, next);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update subscription");
+      setError(formatApiError(err, "Failed to update subscription"));
+    }
+  };
+
+  const startEdit = (sub: Subscription) => {
+    setError(null);
+    setUpgradeMsg(null);
+    setEditingId(sub.subscription_id);
+    setEditId(sub.subscription_id);
+    setEditName(sub.display_name);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditId("");
+    setEditName("");
+  };
+
+  const saveEdit = async (originalId: string) => {
+    setError(null);
+    setUpgradeMsg(null);
+    const trimmedId = editId.trim().toLowerCase();
+    if (!GUID_RE.test(trimmedId)) {
+      setError("Subscription ID must be a valid Azure GUID.");
+      return;
+    }
+    if (
+      trimmedId !== originalId &&
+      subscriptions.some((s) => s.subscription_id === trimmedId)
+    ) {
+      setError("That subscription is already linked.");
+      return;
+    }
+    setEditSubmitting(true);
+    try {
+      await replace(originalId, trimmedId, editName);
+      cancelEdit();
+    } catch (err) {
+      setError(formatApiError(err, "Failed to update subscription"));
+    } finally {
+      setEditSubmitting(false);
     }
   };
 
@@ -161,44 +245,100 @@ export function SubscriptionList() {
         </form>
 
         <div className="space-y-2">
-          {subscriptions.map((sub) => (
-            <div
-              key={sub.subscription_id}
-              className="flex items-center justify-between rounded border p-3"
-            >
-              <div>
-                <div className="font-medium text-sm">{sub.display_name}</div>
-                <div className="text-xs font-mono text-[hsl(var(--muted-foreground))]">
-                  {sub.subscription_id}
+          {subscriptions.map((sub) =>
+            editingId === sub.subscription_id ? (
+              <div
+                key={sub.subscription_id}
+                className="space-y-2 rounded border border-blue-300 bg-blue-50/40 p-3"
+              >
+                <div className="text-sm font-medium">Edit subscription</div>
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                  Fix a wrong subscription ID or rename the link. Changing the ID
+                  re-creates the link with the new GUID.
+                </p>
+                <div className="flex flex-col gap-2 md:flex-row">
+                  <input
+                    type="text"
+                    value={editId}
+                    onChange={(e) => setEditId(e.target.value.trim())}
+                    className="flex-1 rounded border px-2 py-1 text-sm font-mono"
+                    placeholder="00000000-0000-0000-0000-000000000000"
+                    required
+                  />
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="flex-1 rounded border px-2 py-1 text-sm"
+                    placeholder="Display name (optional)"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => saveEdit(sub.subscription_id)}
+                      disabled={editSubmitting}
+                    >
+                      {editSubmitting ? "Saving…" : "Save"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={cancelEdit}
+                      disabled={editSubmitting}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span
-                  className={
-                    sub.state === "Enabled"
-                      ? "text-xs text-emerald-600"
-                      : "text-xs text-amber-600"
-                  }
-                >
-                  {sub.state}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleToggle(sub.subscription_id, sub.state)}
-                >
-                  {sub.state === "Enabled" ? "Disable" : "Enable"}
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => handleRemove(sub.subscription_id)}
-                >
-                  Remove
-                </Button>
+            ) : (
+              <div
+                key={sub.subscription_id}
+                className="flex items-center justify-between rounded border p-3"
+              >
+                <div>
+                  <div className="font-medium text-sm">{sub.display_name}</div>
+                  <div className="text-xs font-mono text-[hsl(var(--muted-foreground))]">
+                    {sub.subscription_id}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={
+                      sub.state === "Enabled"
+                        ? "text-xs text-emerald-600"
+                        : "text-xs text-amber-600"
+                    }
+                  >
+                    {sub.state}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => startEdit(sub)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleToggle(sub.subscription_id, sub.state)}
+                  >
+                    {sub.state === "Enabled" ? "Disable" : "Enable"}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => handleRemove(sub.subscription_id, sub.display_name)}
+                  >
+                    Remove
+                  </Button>
+                </div>
               </div>
-            </div>
-          ))}
+            ),
+          )}
           {subscriptions.length === 0 && (
             <p className="text-sm text-[hsl(var(--muted-foreground))]">
               No subscriptions linked yet. Add one above to start scanning.
