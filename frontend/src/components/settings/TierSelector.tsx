@@ -37,7 +37,7 @@ const PLANS: PlanDef[] = [
     price: "$49",
     cadence: "/mo",
     features: [
-      "Unlimited subscriptions",
+      "Up to 10 Azure subscriptions",
       "Unlimited resources per scan",
       "Defender Free CSPM enrichment",
       "AI remediation plans",

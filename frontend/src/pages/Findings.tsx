@@ -27,7 +27,7 @@ export function Findings() {
     const subId =
       subscriptionFilter !== "ALL"
         ? subscriptionFilter
-        : subscriptions[0]?.id;
+        : subscriptions[0]?.subscription_id;
     if (!subId) {
       navigate("/settings");
       return;
@@ -140,7 +140,7 @@ export function Findings() {
         >
           <option value="ALL">All Subscriptions</option>
           {subscriptions.map((sub) => (
-            <option key={sub.id} value={sub.id}>
+            <option key={sub.subscription_id} value={sub.subscription_id}>
               {sub.display_name}
             </option>
           ))}
