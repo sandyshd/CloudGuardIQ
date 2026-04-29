@@ -17,6 +17,7 @@
 - [Phase 3 — Cross-tenant support (true SaaS onboarding)](#phase-3--cross-tenant-support-true-saas-onboarding)
 - [Phase 4 — Scale & operational hardening](#phase-4--scale--operational-hardening)
 - [Phase 5 — Nice-to-haves (backlog)](#phase-5--nice-to-haves-backlog)
+- [Phase 6 — Multi-cloud (AWS + GCP)](#phase-6--multi-cloud-aws--gcp)
 - [Cross-phase definition of done](#cross-phase-definition-of-done-every-phase)
 - [Suggested sequencing](#suggested-sequencing)
 
@@ -358,6 +359,151 @@ Reader, and start getting findings within 15 minutes.
 
 ---
 
+## Phase 6 — Multi-cloud (AWS + GCP)
+
+**Goal:** customers can link AWS accounts and GCP projects from the same
+Settings page. Cloud-agnostic from `DataTier` down to `ResourceSnapshot`;
+no Azure-specific assumptions in the read path.
+
+> Naming note: this is **orthogonal** to Phase 3 (cross-Entra-tenant
+> Azure). Phase 3 = same provider, different identity provider tenant.
+> Phase 6 = different cloud providers entirely. They can ship in either
+> order; Phase 6 has no dependency on Phase 3.
+
+### 6.1 Provider model
+
+- New enum `cloudguardiq.core.enums.CloudProvider`:
+  - `AZURE = "azure"` (default)
+  - `AWS = "aws"`
+  - `GCP = "gcp"`
+- Add `provider: CloudProvider = AZURE` to `SubscriptionRecord`,
+  `ResourceSnapshot`, `FindingResult`. Backfill existing rows to `azure`
+  via a one-off script (mirror `scripts/backfill_tenant_id.py`).
+- Rename Pydantic field `subscription_id` → `account_id` in the wire
+  payload but keep `subscription_id` as a serialized alias for one
+  release for backward compatibility.
+
+### 6.2 Provider-specific validation
+
+`AddSubscriptionRequest` field validators:
+
+| Provider | Format | Regex |
+|---|---|---|
+| Azure | 36-char GUID | existing `_GUID_RE` |
+| AWS   | 12-digit account id | `^\d{12}$` |
+| GCP   | project id | `^[a-z][a-z0-9-]{4,28}[a-z0-9]$` |
+
+Reject early with `422` and a vendor-specific hint when the format
+doesn't match the chosen provider.
+
+### 6.3 Adapters — implement two more
+
+`AdapterBase` already exists; add:
+
+- `cloudguardiq/adapters/aws_adapter.py`
+  - **Resources:** AWS Resource Explorer (cross-region) or Config
+    aggregator as a fallback.
+  - **Auth:** `sts:AssumeRole` into a customer-provided cross-account
+    role (CloudGuardIQ AWS account is the trusted principal).
+  - **Cost:** Cost Explorer API.
+  - **Tier 2 enrichment:** Security Hub findings.
+  - **Tier 3 enrichment:** GuardDuty / Inspector.
+- `cloudguardiq/adapters/gcp_adapter.py`
+  - **Resources:** Cloud Asset Inventory `searchAllResources`.
+  - **Auth:** Workload Identity Federation pool linked to the
+    CloudGuardIQ MSI (no service-account keys).
+  - **Cost:** BigQuery billing export (or Cloud Billing API for live).
+  - **Tier 2 enrichment:** Security Command Center findings.
+  - **Tier 3 enrichment:** SCC Premium.
+
+Factory `cloudguardiq/adapters/__init__.py::build_adapter(record)`
+routes by `record.provider`.
+
+### 6.4 Provider-aware access probe
+
+Refactor `cloudguardiq/adapters/access_probe.py` into a strategy:
+
+```py
+async def probe_subscription_access(record: SubscriptionRecord) -> AccessProbeResult:
+    match record.provider:
+        case CloudProvider.AZURE: return await _probe_azure(record)
+        case CloudProvider.AWS:   return await _probe_aws(record)   # sts:GetCallerIdentity
+        case CloudProvider.GCP:   return await _probe_gcp(record)   # cloudresourcemanager.projects.get
+```
+
+The route returns `400 access_denied` with a vendor-specific
+`grant_command` (see 6.5) on failure, mirroring the existing Azure
+behaviour.
+
+### 6.5 Onboarding hint per provider
+
+`GET /onboarding/info?provider=azure|aws|gcp` returns:
+
+| Provider | Field set |
+|---|---|
+| Azure | existing: `azure_principal_id`, `az_command_template` |
+| AWS   | `aws_account_id` (CloudGuardIQ's account), `aws_external_id` (per-tenant), CloudFormation `iam_role_template_url`, terraform snippet |
+| GCP   | `workload_identity_pool`, `provider_resource_name`, `gcloud add-iam-policy-binding` template |
+
+### 6.6 Rule registry namespacing
+
+Rules in `cloudguardiq/adapters/rules/` already operate on
+`ResourceSnapshot` (cloud-agnostic by design). Two acceptable shapes:
+
+- **(a) Tag rules** with `supported_providers: set[CloudProvider]` and
+  filter inside `PolicyEngine.evaluate()`.
+- **(b) Folder split** under `rules/{azure,aws,gcp,common}/`.
+
+Default to (a) — less disruptive, lets a rule like
+*"object storage bucket is publicly readable"* match Azure Blob, S3
+*and* GCS once the snapshots are normalized.
+
+### 6.7 Frontend
+
+- `frontend/src/components/settings/SubscriptionList.tsx` gains a
+  provider tabbar (`Azure | AWS | GCP`); each tab has its own field
+  list, validator regex and copy-pasteable grant command from
+  `GET /onboarding/info?provider=...`.
+- `DataTierBadge` and `DefenderAutoBadge` already render
+  vendor-neutral copy (Phase 2.6) — reuse as-is.
+- Findings page filters: provider chip on every row.
+
+### 6.8 Terraform
+
+- New IAM resources outside the main module:
+  - AWS: a published CloudFormation template (StackSet) that creates
+    `CloudGuardIQReader` role with `ReadOnlyAccess` and a trust policy
+    pointing at the CloudGuardIQ AWS account + per-tenant `external_id`.
+  - GCP: a Workload Identity Pool + provider in the CloudGuardIQ host
+    project; customer-side `gcloud` commands surfaced in the UI.
+- New env vars `CLOUDGUARDIQ_AWS_ACCOUNT_ID`,
+  `CLOUDGUARDIQ_GCP_WORKLOAD_IDENTITY_POOL` on Container App and
+  Function App.
+
+### 6.9 Tests
+
+- `tests/adapters/test_aws_adapter.py` (mocked `boto3`).
+- `tests/adapters/test_gcp_adapter.py` (mocked Cloud Asset client).
+- `tests/api/test_subscriptions_routes.py` — add coverage for
+  provider-specific validation and `400 access_denied` payload shape.
+- `tests/api/test_onboarding.py` — each provider returns the
+  correct field set.
+
+### 6.10 Short-term guard (interim ship-blocker)
+
+Until 6.1–6.9 land, the API should **fail fast** when a non-Azure
+identifier is supplied: detect AWS account-id pattern (`^\d{12}$`) and
+GCP project-id pattern, return `400 unsupported_provider` with
+`"AWS / GCP support is on the roadmap (Phase 6); CloudGuardIQ currently
+supports Azure only."`. This avoids the silent-zero-findings trap.
+
+**Exit criteria:** a tenant can link an AWS account *or* a GCP project
+through the Settings UI, the access probe verifies cross-cloud RBAC,
+the scan timer fans out to the correct adapter, and at least one Tier 1
+rule from each provider produces a finding end-to-end.
+
+---
+
 ## Cross-phase definition of done (every phase)
 
 - [ ] Tests written first; coverage >= 80%.
@@ -381,6 +527,7 @@ Reader, and start getting findings within 15 minutes.
 | 3     | High (cross-tenant auth)      | Very high (real SaaS)      | After Phase 2, separate epic   |
 | 4     | Medium (ops)                  | Stability                  | When >50 subs connected        |
 | 5     | Low                           | Incremental                | Rolling backlog                |
+| 6     | High (new clouds)             | Very high (TAM x3)         | Parallel to Phase 3 / 4        |
 
 Ship **Phase 1 + 2 together** to unlock the Settings UI. Treat **Phase 3**
 as its own epic — don't let it block the Settings UI launch.
