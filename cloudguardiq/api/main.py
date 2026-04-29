@@ -557,6 +557,22 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "version": "0.1.0"}
 
 
+@app.get("/config")
+async def get_config() -> dict[str, Any]:
+    """Public client-config endpoint.
+
+    Returns settings the frontend needs to render correctly. ``demo_mode`` is
+    true when the API is running with auth disabled (local/dev) and is
+    therefore serving canned demo findings; the UI should display a banner.
+    """
+    settings = get_settings()
+    return {
+        "demo_mode": bool(settings.auth_disabled),
+        "client_id": settings.azure_client_id or "",
+        "version": settings.app_version,
+    }
+
+
 @app.post("/scan/trigger")
 async def trigger_scan(
     request: ScanRequest,
