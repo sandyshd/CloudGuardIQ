@@ -14,6 +14,7 @@ governance with **AI-generated remediation** powered by GPT-5.1.
 - [Security Rules](#security-rules)
 - [API Endpoints](#api-endpoints)
 - [Authentication](#authentication)
+- [Multi-tenant SaaS](#multi-tenant-saas)
 - [Local Development Setup](#local-development-setup)
 - [Azure Deployment](#azure-deployment)
 - [CI/CD Pipelines](#cicd-pipelines)
@@ -55,7 +56,7 @@ governance with **AI-generated remediation** powered by GPT-5.1.
                        │
 ┌──────────────────────▼───────────────────────────────────────────┐
 │  Azure Cosmos DB (serverless)                                    │
-│  Containers: snapshots │ findings │ remediations │ system        │
+│  Containers: snapshots │ findings │ remediations │ system │ billing │ subscriptions        │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -244,7 +245,13 @@ All endpoints except `/health` require a Bearer JWT from Azure AD.
 | `GET` | `/findings` | List remediation cards (sorted by priority) |
 | `GET` | `/findings/{finding_id}` | Get single remediation card |
 | `GET` | `/findings/{finding_id}/terraform` | Get Terraform fix as plain text |
-| `GET` | `/subscriptions` | List connected Azure subscriptions |
+| `GET` | `/subscriptions` | List the tenant's linked Azure subscriptions |
+| `POST` | `/subscriptions` | Link a subscription (validates GUID + tier cap; `402` on cap exceeded) |
+| `PATCH` | `/subscriptions/{id}` | Rename or enable/disable a subscription |
+| `DELETE` | `/subscriptions/{id}` | Unlink a subscription |
+| `GET` | `/billing/status` | Current tier, Stripe customer, usage |
+| `POST` | `/billing/checkout` | Create a Stripe checkout session |
+| `GET` | `/config` | Public client config (`demo_mode`, `client_id`, `version`) |
 
 ---
 
@@ -291,6 +298,55 @@ stored secrets for Azure credentials.
 
 ---
 
+## Multi-tenant SaaS
+
+CloudGuardIQ is a multi-tenant SaaS — each customer's data is isolated by the
+Azure AD `tid` claim from their JWT, and customers manage their own Azure
+subscriptions from the **Settings → Azure Subscriptions** page rather than
+relying on a deploy-time `AZURE_SUBSCRIPTION_ID` env var.
+
+### Tenant isolation
+
+- Every `ResourceSnapshot`, `FindingResult`, `RemediationCard`, and scan
+  result document carries a `tenant_id` field.
+- Cosmos queries always filter by `tenant_id` from the caller's JWT — no
+  cross-tenant reads are possible even with guessed IDs.
+- The `subscriptions` Cosmos container (PK `/tenant_id`) holds each tenant's
+  linked subscriptions; `/scan`, `/findings`, etc. enforce a 403
+  `subscription_not_linked` error when a tenant requests data for a
+  subscription they have not added.
+
+### Tier caps
+
+| Tier | Max linked subscriptions |
+|------|--------------------------|
+| **FREE** | 1 |
+| **PRO** | 10 (configurable via `CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS`) |
+| **ENTERPRISE** | unlimited |
+
+`POST /subscriptions` returns `402 upgrade_required` when a tenant exceeds
+their tier's cap.
+
+### App-registration audience
+
+The CloudGuardIQ Azure AD app is provisioned with
+`sign_in_audience = AzureADMultipleOrgs`, which lets users from any Entra
+tenant sign in. *Cross-tenant scanning* (using a customer's tenant credential
+to scan **their** Azure resources) is the goal of Phase 3 and is not yet
+shipped — until then, link only subscriptions where the CloudGuardIQ app's
+managed identity has been granted **Reader**.
+
+### Demo mode
+
+When `CLOUDGUARDIQ_AUTH_DISABLED=true` (local/dev), the API serves canned
+demo findings on `/findings` so contributors get a populated UI without an
+Azure subscription. The frontend reads `GET /config` on layout mount and
+displays an amber **"Demo mode"** banner across every page in this case.
+Production deployments leave `AUTH_DISABLED` unset; the dashboard is empty
+until the tenant links a subscription on the Settings page.
+
+---
+
 ## Local Development Setup
 
 ### Prerequisites
@@ -320,7 +376,7 @@ Edit `.env` with your values:
 # Azure AD / Entra ID
 AZURE_CLIENT_ID=<your-app-client-id>
 AZURE_TENANT_ID=<your-tenant-id>
-AZURE_SUBSCRIPTION_ID=<your-subscription-id>
+AZURE_SUBSCRIPTION_ID=<your-subscription-id>   # dev-only: default for `cloudguardiq scan --subscription-id`. Production tenants link subscriptions via the Settings UI.
 
 # Azure Cosmos DB (RBAC via DefaultAzureCredential)
 CLOUDGUARDIQ_COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
@@ -627,13 +683,15 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 |----------|----------|-------------|
 | `AZURE_CLIENT_ID` | Yes | Azure AD app client ID |
 | `AZURE_TENANT_ID` | Yes | Azure AD tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Yes | Subscription to scan |
+| `AZURE_SUBSCRIPTION_ID` | No | **Dev/CLI only.** Production tenants link subscriptions per-tenant in Cosmos via Settings UI. |
+| `CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS` | No | Cosmos container for tenant-managed subscriptions (default: `subscriptions`) |
+| `CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS` | No | Pro-tier subscription cap (default: `10`) |
+| `CLOUDGUARDIQ_AUTH_DISABLED` | No | When `true`, /findings serves canned demo data and the UI shows a demo-mode banner |
 | `CLOUDGUARDIQ_COSMOS_ENDPOINT` | Yes | Cosmos DB account endpoint |
 | `CLOUDGUARDIQ_AZURE_OPENAI_ENDPOINT` | Yes | Azure OpenAI endpoint |
 | `CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT` | No | Model deployment name (default: `gpt-5.1`) |
 | `CLOUDGUARDIQ_AZURE_TENANT_ID` | Yes | Tenant ID for JWT validation |
 | `CLOUDGUARDIQ_AZURE_CLIENT_ID` | Yes | Client ID for JWT audience validation |
-| `CLOUDGUARDIQ_AUTH_DISABLED` | No | Set `true` to disable JWT auth (dev only) |
 | `SERVICE_BUS_CONNECTION__fullyQualifiedNamespace` | No | Service Bus namespace FQDN (managed identity auth) |
 | `KEY_VAULT_URL` | No | Key Vault URI |
 
