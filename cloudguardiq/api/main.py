@@ -698,7 +698,11 @@ async def list_findings(
             logger.warning("Failed to query findings from Cosmos: %s", exc)
             return []
 
-    # Only fall back to demo data when no database is wired at all (local/dev)
+    # No subscription selected: return empty in production. Demo data is only
+    # served in auth-disabled (local/dev) mode so it cannot leak into a
+    # tenant's live dashboard before they have linked a subscription.
+    if not settings.auth_disabled:
+        return []
     demo = _demo_findings()
     return sorted(demo, key=lambda f: f.priority_score, reverse=True)[:limit]
 

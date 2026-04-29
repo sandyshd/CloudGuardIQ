@@ -22,6 +22,20 @@ from cloudguardiq.subscriptions.repository import (  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _enable_demo_mode():
+    """Legacy tests rely on the /findings demo-data fallback.
+    Production mode now returns [] when no subscription_id is supplied,
+    so flip auth_disabled on the cached settings just for these tests.
+    """
+    from cloudguardiq.core.config import get_settings as _gs
+    s = _gs()
+    prev = s.auth_disabled
+    s.auth_disabled = True
+    yield
+    s.auth_disabled = prev
+
+
+@pytest.fixture(autouse=True)
 def _link_test_sub() -> None:
     """Phase 2: pre-register the test subscription on the active repo."""
     repo = _subs_module._repository
