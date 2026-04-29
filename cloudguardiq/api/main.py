@@ -37,13 +37,13 @@ from cloudguardiq.api import billing as billing_module
 from cloudguardiq.api import subscriptions as subscriptions_module
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
 from cloudguardiq.billing.middleware import TierEnforcementMiddleware
-from cloudguardiq.billing.plans import UNLIMITED, get_plan
+from cloudguardiq.billing.quota import check_ai_quota, record_ai_remediation
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.billing.stripe_service import StripeService
 from cloudguardiq.billing.usage import UsageRepository
 from cloudguardiq.core.config import get_settings
 from cloudguardiq.core.database import CosmosRepository
-from cloudguardiq.core.enums import DataTier, FindingType, Severity, SubscriptionTier
+from cloudguardiq.core.enums import DataTier, FindingType, Severity
 from cloudguardiq.core.models import (
     FindingResult,
     RemediationCard,
@@ -803,25 +803,12 @@ async def generate_finding_remediation(
 
     # --- Plan quota: AI remediations per calendar month ---------------
     tenant_id = get_tenant_id(user)
-    billing_record = (
-        await _billing_repo.get(tenant_id) if _billing_repo is not None else None
-    )
-    plan = get_plan(
-        billing_record.tier if billing_record is not None else SubscriptionTier.FREE,
-    )
-    ai_cap = plan.max_ai_remediations_per_month
-    current_usage = await _usage_repo.get_current(tenant_id)
-    if ai_cap != UNLIMITED and current_usage.ai_remediations >= ai_cap:
-        raise HTTPException(
-            status_code=402,
-            detail={
-                "error": "upgrade_required",
-                "current_tier": plan.tier.value.lower(),
-                "limit": "ai_remediations_per_month",
-                "cap": ai_cap,
-                "current": current_usage.ai_remediations,
-            },
+    if _billing_repo is not None:
+        quota = await check_ai_quota(
+            tenant_id, billing_repo=_billing_repo, usage_repo=_usage_repo,
         )
+        if not quota.allowed:
+            raise HTTPException(status_code=402, detail=quota.to_detail())
 
     # Return cached card if one exists
     if repo is not None:
@@ -903,10 +890,7 @@ async def generate_finding_remediation(
             db=repo,
         )
         card = await engine.generate(finding)
-        try:
-            await _usage_repo.increment_ai_remediations(tenant_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Usage increment failed for %s: %s", tenant_id, exc)
+        await record_ai_remediation(tenant_id, usage_repo=_usage_repo)
         return card
     except HTTPException:
         raise

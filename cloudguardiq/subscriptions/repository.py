@@ -162,6 +162,22 @@ class SubscriptionsRepository:
             raise
         return record
 
+
+    async def mark_scanned(
+        self, tenant_id: str, subscription_id: str,
+    ) -> SubscriptionRecord | None:
+        """Stamp ``last_scan_at`` for *(tenant_id, subscription_id)*.
+
+        Returns the updated record, or ``None`` if the subscription is no
+        longer registered. Called from the timer-driven scan trigger to
+        enforce per-tier scan frequency caps.
+        """
+        rec = await self.get(tenant_id, subscription_id)
+        if rec is None:
+            return None
+        rec.last_scan_at = datetime.now(timezone.utc)
+        return await self.upsert(rec)
+
     async def delete(self, tenant_id: str, subscription_id: str) -> bool:
         """Remove a subscription record. Returns ``True`` if it existed."""
         container = self._container()

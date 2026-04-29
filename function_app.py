@@ -48,37 +48,41 @@ async def _build_scan_pipeline(subscription_id: str, db, async_credential):
     )
 
 
-async def _list_enabled_subscriptions(db) -> list[tuple[str, str]]:
-    """Return ``(tenant_id, subscription_id)`` tuples for every Enabled record.
+async def _list_enabled_subscriptions(db):
+    """Return enabled ``SubscriptionRecord`` instances for the timer scan.
 
     Falls back to an empty list when the subscriptions container cannot be
     queried (e.g. cosmos misconfigured), which causes the timer to no-op
-    instead of raising.
+    instead of raising. Records carry ``last_scan_at`` so the trigger can
+    skip tenants whose plan scan-frequency hasn't elapsed yet.
     """
     from cloudguardiq.core.config import get_settings
-    from cloudguardiq.subscriptions.repository import SubscriptionsRepository
+    from cloudguardiq.subscriptions.repository import (
+        SubscriptionRecord,
+        SubscriptionsRepository,
+    )
 
     settings = get_settings()
-    repo = SubscriptionsRepository(settings, cosmos_db=db._db if db is not None else None)
+    repo = SubscriptionsRepository(
+        settings, cosmos_db=db._db if db is not None else None,
+    )
     container = repo._container()  # noqa: SLF001
     if container is None:
         logger.warning("Subscriptions container unavailable; timer scan no-op")
-        return []
+        return [], repo
 
-    pairs: list[tuple[str, str]] = []
+    records: list[SubscriptionRecord] = []
     try:
-        query = (
-            "SELECT c.tenant_id, c.subscription_id "
-            "FROM c WHERE c.state = 'Enabled'"
-        )
-        async for item in container.query_items(query=query):
-            tid = item.get("tenant_id", "")
-            sid = item.get("subscription_id", "")
-            if tid and sid:
-                pairs.append((tid, sid))
+        async for item in container.query_items(
+            query="SELECT * FROM c WHERE c.state = \u0027Enabled\u0027",
+        ):
+            try:
+                records.append(SubscriptionRecord.from_document(item))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Skipping malformed subscription doc: %s", exc)
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to query subscriptions: %s", exc)
-    return pairs
+    return records, repo
 
 
 async def _get_ai_worker():
@@ -90,6 +94,9 @@ async def _get_ai_worker():
     from cloudguardiq.core.config import get_settings
     from cloudguardiq.core.database import CosmosRepository
     from cloudguardiq.pipeline.ai_worker import AIWorker
+
+    from cloudguardiq.billing.repository import BillingRepository
+    from cloudguardiq.billing.usage import UsageRepository
 
     settings = get_settings()
     db = CosmosRepository(settings)
@@ -111,7 +118,20 @@ async def _get_ai_worker():
         db=db,
     )
 
-    return AIWorker(ai_engine=ai_engine, db=db), db, credential
+    cosmos_db = db._db if db is not None else None
+    billing_repo = BillingRepository(settings, cosmos_db=cosmos_db)
+    usage_repo = UsageRepository(settings, cosmos_db=cosmos_db)
+
+    return (
+        AIWorker(
+            ai_engine=ai_engine,
+            db=db,
+            billing_repo=billing_repo,
+            usage_repo=usage_repo,
+        ),
+        db,
+        credential,
+    )
 
 
 @app.timer_trigger(
@@ -122,15 +142,28 @@ async def _get_ai_worker():
 async def scan_trigger(timer: func.TimerRequest) -> None:
     """Timer-triggered scan that fans out across every registered subscription.
 
-    Phase 2: instead of reading a single ``AZURE_SUBSCRIPTION_ID`` env var,
-    we iterate the ``subscriptions`` Cosmos container and run the scan
-    pipeline for every ``(tenant_id, subscription_id)`` pair whose state is
-    ``Enabled``. Failures on one subscription do not affect the others.
+    Phase 2.5: honors per-tenant plan tier limits. For every Enabled
+    ``(tenant_id, subscription_id)`` pair we:
+
+    * Look up the tenant's plan and skip the run if the last scan was
+      within ``plan.scan_frequency_minutes`` -- this enforces the
+      hourly / 15-min / daily tier knobs without requiring a per-tier
+      separate timer schedule.
+    * Run the scan pipeline.
+    * Stamp ``last_scan_at`` on success so the next tick honors the
+      cooldown window.
+
+    Failures on one subscription do not affect the others.
     """
+    from datetime import datetime, timedelta, timezone
+
     from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 
+    from cloudguardiq.billing.plans import get_plan
+    from cloudguardiq.billing.repository import BillingRepository
     from cloudguardiq.core.config import get_settings
     from cloudguardiq.core.database import CosmosRepository
+    from cloudguardiq.core.enums import SubscriptionTier
 
     settings = get_settings()
     async_credential = AsyncDefaultAzureCredential()
@@ -138,28 +171,65 @@ async def scan_trigger(timer: func.TimerRequest) -> None:
     await db.connect()
 
     try:
-        pairs = await _list_enabled_subscriptions(db)
-        if not pairs:
+        records, subs_repo = await _list_enabled_subscriptions(db)
+        if not records:
             logger.info("No enabled subscriptions registered; timer scan no-op")
             return
 
-        logger.info("Timer scan covering %d subscription(s)", len(pairs))
-        for tenant_id, subscription_id in pairs:
+        billing_repo = BillingRepository(
+            settings, cosmos_db=db._db if db is not None else None,
+        )
+
+        now = datetime.now(timezone.utc)
+        skipped = 0
+        scanned = 0
+        logger.info("Timer scan considering %d subscription(s)", len(records))
+        for rec in records:
+            tenant_id = rec.tenant_id
+            subscription_id = rec.subscription_id
+
+            # Plan-driven cooldown check
+            billing = await billing_repo.get(tenant_id)
+            tier = billing.tier if billing is not None else SubscriptionTier.FREE
+            plan = get_plan(tier)
+            cooldown = timedelta(minutes=plan.scan_frequency_minutes)
+            if rec.last_scan_at is not None and (now - rec.last_scan_at) < cooldown:
+                logger.info(
+                    "Skipping tenant=%s sub=%s tier=%s within cooldown (%dm)",
+                    tenant_id, subscription_id, tier.value,
+                    plan.scan_frequency_minutes,
+                )
+                skipped += 1
+                continue
+
             try:
                 pipeline = await _build_scan_pipeline(
                     subscription_id, db, async_credential,
                 )
                 result = await pipeline.run(subscription_id, tenant_id=tenant_id)
                 logger.info(
-                    "Tenant %s sub %s scan_id=%s findings=%d",
-                    tenant_id, subscription_id,
+                    "Tenant %s sub %s tier=%s scan_id=%s findings=%d",
+                    tenant_id, subscription_id, tier.value,
                     result.scan_id, result.findings_count,
                 )
+                scanned += 1
+                # Stamp last_scan_at on success only
+                try:
+                    await subs_repo.mark_scanned(tenant_id, subscription_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to stamp last_scan_at for %s/%s: %s",
+                        tenant_id, subscription_id, exc,
+                    )
             except Exception as exc:  # noqa: BLE001
                 logger.error(
                     "Scan failed for tenant %s sub %s: %s",
                     tenant_id, subscription_id, exc,
                 )
+        logger.info(
+            "Timer scan done: scanned=%d skipped_for_cooldown=%d total=%d",
+            scanned, skipped, len(records),
+        )
     finally:
         await db.close()
         await async_credential.close()
