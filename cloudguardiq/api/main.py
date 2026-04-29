@@ -51,11 +51,20 @@ from cloudguardiq.core.models import (
     ScanRequest,
     ScanResponse,
 )
+from cloudguardiq.core.observability import (
+    bind_context,
+    install_context_filter,
+)
 from cloudguardiq.pipeline.scan_pipeline import ScanResult
 from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
 from cloudguardiq.subscriptions.repository import SubscriptionsRepository
 
 logger = logging.getLogger(__name__)
+
+# Install the request-scoped context filter on the
+# root logger so every log line carries tenant_id / subscription_id /
+# request_id when a request is in flight.
+install_context_filter()
 
 _auth = Depends(verify_token)
 
@@ -218,10 +227,42 @@ async def request_logging_middleware(
     request: Request,
     call_next: Any,
 ) -> Response:
-    """Log method, path, status code, and duration."""
+    """Log method, path, status code, and duration.
+
+    Also binds a request id (echoed in the ``X-Request-Id`` response
+    header so users can quote it in support tickets) and -- when the
+    caller already proved a JWT -- the tenant id, so every downstream
+    log line is searchable by tenant in App Insights.
+    """
+    incoming_id = request.headers.get("x-request-id")
+    request_id = incoming_id or uuid.uuid4().hex[:16]
+    bind_context(request_id=request_id)
+
+    # Best-effort tenant binding. We avoid full JWT verification here
+    # because that costs a JWKS call; the unverified tid claim is good
+    # enough for log enrichment and never used for authz.
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        try:
+            import base64
+            import json
+            parts = auth.split(".", 2)
+            if len(parts) >= 2:
+                pad = "=" * (-len(parts[1]) % 4)
+                payload = json.loads(
+                    base64.urlsafe_b64decode(parts[1] + pad)
+                )
+                tid = payload.get("tid")
+                if isinstance(tid, str) and tid:
+                    bind_context(tenant_id=tid)
+        except Exception:
+            # Malformed token -- log enrichment is best-effort, never fatal.
+            pass
+
     start = time.perf_counter()
     response: Response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
+    response.headers["X-Request-Id"] = request_id
     logger.info(
         "%s %s -> %s (%.1fms)",
         request.method,
@@ -595,6 +636,7 @@ async def trigger_scan(
     Enqueues a scan request and returns immediately with a scan_id.
     """
     await _validate_owned_subscription(user, request.subscription_id)
+    bind_context(subscription_id=request.subscription_id, provider="azure")
     scan_id = str(uuid.uuid4())
     logger.info(
         "Scan triggered: %s for sub %s",
@@ -650,6 +692,14 @@ async def scan_subscription(
     """Scan an Azure subscription for security and cost findings."""
     await _validate_owned_subscription(user, request.subscription_id)
     scan_id = str(uuid.uuid4())
+    # Enrich every log line emitted while this scan runs with the scan
+    # identifiers so a single Application Insights query (`scan_id == X`)
+    # returns the full timeline of the scan.
+    bind_context(
+        subscription_id=request.subscription_id,
+        scan_id=scan_id,
+        provider="azure",
+    )
     start = time.perf_counter()
 
     try:
@@ -712,6 +762,7 @@ async def list_findings(
     sub_id = ""
     if subscription_id:
         sub_id = await _validate_owned_subscription(user, subscription_id)
+        bind_context(subscription_id=sub_id, provider="azure")
     settings = get_settings()
     tenant_id = None if settings.auth_disabled else get_tenant_id(user)
     if repo is not None and sub_id:
