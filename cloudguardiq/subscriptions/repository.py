@@ -27,11 +27,16 @@ class SubscriptionRecord(BaseModel):
     tenant_id: str
     subscription_id: str
     display_name: str = ""
-    state: str = "Enabled"  # "Enabled" | "Disabled"
+    state: str = "Enabled"  # "Enabled" | "Disabled" | "Removed"
     added_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
     last_scan_at: datetime | None = None
+    # When a user clicks Remove the record is soft-deleted (state set to
+    # ``Removed``) and ``removed_at`` is stamped. The daily purge timer
+    # uses this column to hard-delete records older than the retention
+    # window. Re-linking the same GUID before expiry restores the row.
+    removed_at: datetime | None = None
 
     @property
     def doc_id(self) -> str:
@@ -49,6 +54,9 @@ class SubscriptionRecord(BaseModel):
             "added_at": self.added_at.isoformat(),
             "last_scan_at": (
                 self.last_scan_at.isoformat() if self.last_scan_at else None
+            ),
+            "removed_at": (
+                self.removed_at.isoformat() if self.removed_at else None
             ),
         }
 
@@ -68,6 +76,7 @@ class SubscriptionRecord(BaseModel):
 
         added = _parse_dt(doc.get("added_at")) or datetime.now(timezone.utc)
         last_scan = _parse_dt(doc.get("last_scan_at"))
+        removed = _parse_dt(doc.get("removed_at"))
         return cls(
             tenant_id=str(doc.get("tenant_id", "")),
             subscription_id=str(doc.get("subscription_id", "")),
@@ -75,6 +84,7 @@ class SubscriptionRecord(BaseModel):
             state=str(doc.get("state", "Enabled")),
             added_at=added,
             last_scan_at=last_scan,
+            removed_at=removed,
         )
 
 
@@ -100,21 +110,39 @@ class SubscriptionsRepository:
             self._settings.cosmos_container_subscriptions,
         )
 
-    async def list(self, tenant_id: str) -> list[SubscriptionRecord]:
-        """Return all subscriptions linked to *tenant_id*, oldest first."""
+    async def list(
+        self, tenant_id: str, *, include_removed: bool = False,
+    ) -> list[SubscriptionRecord]:
+        """Return all active subscriptions linked to *tenant_id*.
+
+        Soft-deleted (``state == 'Removed'``) records are filtered out
+        unless *include_removed* is ``True`` (used by the purge timer).
+        """
         container = self._container()
         if container is None:
             recs = [
                 rec
                 for (tid, _sid), rec in self._memory.items()
                 if tid == tenant_id
+                and (include_removed or rec.state != "Removed")
             ]
             return sorted(recs, key=lambda r: r.added_at)
 
         items: list[SubscriptionRecord] = []
         try:
+            if include_removed:
+                query = (
+                    "SELECT * FROM c WHERE c.tenant_id = @tid "
+                    "ORDER BY c.added_at ASC"
+                )
+            else:
+                query = (
+                    "SELECT * FROM c WHERE c.tenant_id = @tid "
+                    "AND (NOT IS_DEFINED(c.state) OR c.state != 'Removed') "
+                    "ORDER BY c.added_at ASC"
+                )
             async for item in container.query_items(
-                query="SELECT * FROM c WHERE c.tenant_id = @tid ORDER BY c.added_at ASC",
+                query=query,
                 parameters=[{"name": "@tid", "value": tenant_id}],
                 partition_key=tenant_id,
             ):
@@ -124,7 +152,10 @@ class SubscriptionsRepository:
         return items
 
     async def count(self, tenant_id: str) -> int:
-        """Return the number of subscriptions linked to *tenant_id*."""
+        """Return the number of *active* subscriptions for *tenant_id*.
+
+        Soft-deleted (Removed) records do not count against the tier cap.
+        """
         return len(await self.list(tenant_id))
 
     async def get(
@@ -179,7 +210,30 @@ class SubscriptionsRepository:
         return await self.upsert(rec)
 
     async def delete(self, tenant_id: str, subscription_id: str) -> bool:
-        """Remove a subscription record. Returns ``True`` if it existed."""
+        """Soft-delete a subscription record.
+
+        Sets ``state='Removed'`` and stamps ``removed_at`` so the daily
+        purge timer can later hard-delete it (along with any orphaned
+        findings/snapshots/remediations) once the retention window has
+        elapsed. Re-linking the same GUID before expiry restores the row
+        and reattaches its historical findings.
+        """
+        rec = await self.get(tenant_id, subscription_id)
+        if rec is None or rec.state == "Removed":
+            return False
+        rec.state = "Removed"
+        rec.removed_at = datetime.now(timezone.utc)
+        await self.upsert(rec)
+        return True
+
+    async def hard_delete(
+        self, tenant_id: str, subscription_id: str,
+    ) -> bool:
+        """Permanently delete a subscription record (purge timer only).
+
+        Bypasses the soft-delete state machine; callers are responsible
+        for removing dependent findings/snapshots/remediations first.
+        """
         container = self._container()
         if container is None:
             existed = (tenant_id, subscription_id) in self._memory
@@ -193,7 +247,44 @@ class SubscriptionsRepository:
             return True
         except Exception as exc:  # noqa: BLE001
             logger.debug(
-                "Subscription delete miss %s/%s: %s",
+                "Subscription hard_delete miss %s/%s: %s",
                 tenant_id, subscription_id, exc,
             )
             return False
+
+    async def list_expired_removed(
+        self, retention_days: int,
+    ) -> list[SubscriptionRecord]:
+        """Return tombstoned records older than *retention_days*.
+
+        Used by the purge timer to find subscriptions whose findings can
+        now be hard-deleted. Cross-partition: scans every tenant.
+        """
+        from datetime import timedelta
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        container = self._container()
+        if container is None:
+            return [
+                rec
+                for rec in self._memory.values()
+                if rec.state == "Removed"
+                and rec.removed_at is not None
+                and rec.removed_at < cutoff
+            ]
+        items: list[SubscriptionRecord] = []
+        try:
+            async for item in container.query_items(
+                query=(
+                    "SELECT * FROM c WHERE c.state = 'Removed' "
+                    "AND IS_DEFINED(c.removed_at) "
+                    "AND c.removed_at < @cutoff"
+                ),
+                parameters=[
+                    {"name": "@cutoff", "value": cutoff.isoformat()},
+                ],
+            ):
+                items.append(SubscriptionRecord.from_document(item))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("list_expired_removed failed: %s", exc)
+        return items

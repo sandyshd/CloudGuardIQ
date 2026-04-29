@@ -53,12 +53,19 @@ async def test_repo_count_isolates_tenants(repo: SubscriptionsRepository) -> Non
 
 
 @pytest.mark.asyncio
-async def test_repo_delete(repo: SubscriptionsRepository) -> None:
+async def test_repo_delete_is_soft(repo: SubscriptionsRepository) -> None:
     sid = "11111111-1111-1111-1111-111111111111"
     await repo.upsert(SubscriptionRecord(tenant_id="A", subscription_id=sid))
     assert await repo.delete("A", sid) is True
-    assert await repo.get("A", sid) is None
-    # Idempotent
+    # Soft delete keeps the row but marks it Removed and stamps removed_at
+    rec = await repo.get("A", sid)
+    assert rec is not None
+    assert rec.state == "Removed"
+    assert rec.removed_at is not None
+    # Tier-cap-relevant views must hide it
+    assert await repo.list("A") == []
+    assert await repo.count("A") == 0
+    # Idempotent: second delete on a Removed record returns False
     assert await repo.delete("A", sid) is False
 
 

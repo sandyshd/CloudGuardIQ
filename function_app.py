@@ -251,6 +251,59 @@ async def scan_trigger(timer: func.TimerRequest) -> None:
         await async_credential.close()
 
 
+@app.timer_trigger(
+    schedule="0 30 2 * * *",
+    arg_name="timer",
+    run_on_startup=False,
+)
+async def purge_trigger(timer: func.TimerRequest) -> None:
+    """Daily timer that hard-deletes expired soft-deleted subscriptions.
+
+    When a user clicks Remove, the subscription record is soft-deleted
+    (``state='Removed'``, ``removed_at`` stamped) but its findings,
+    snapshots and remediations are kept for ``subscription_retention_days``
+    so a re-link of the same GUID restores the history. This timer runs
+    once per day and hard-deletes records whose retention has expired.
+    """
+    from cloudguardiq.core.config import get_settings
+    from cloudguardiq.core.database import CosmosRepository
+    from cloudguardiq.subscriptions.repository import SubscriptionsRepository
+
+    settings = get_settings()
+    db = CosmosRepository(settings)
+    await db.connect()
+    try:
+        repo = SubscriptionsRepository(
+            settings, cosmos_db=db._db if db is not None else None,
+        )
+        expired = await repo.list_expired_removed(
+            settings.subscription_retention_days,
+        )
+        if not expired:
+            logger.info("Purge trigger: no expired soft-deleted subscriptions")
+            return
+
+        purged = 0
+        for rec in expired:
+            try:
+                await db.purge_subscription_data(
+                    rec.subscription_id, tenant_id=rec.tenant_id,
+                )
+                await repo.hard_delete(rec.tenant_id, rec.subscription_id)
+                purged += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Purge failed for tenant=%s sub=%s: %s",
+                    rec.tenant_id, rec.subscription_id, exc,
+                )
+        logger.info(
+            "Purge trigger done: purged=%d total_expired=%d",
+            purged, len(expired),
+        )
+    finally:
+        await db.close()
+
+
 @app.service_bus_queue_trigger(
     arg_name="msg",
     queue_name="findings-queue",

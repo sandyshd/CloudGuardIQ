@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     enterprise_max_subscriptions: int = -1  # -1 means unlimited
     free_max_resources_per_scan: int = 100
 
+    # Soft-delete retention for unlinked subscriptions (Phase 2.7).
+    # Findings / snapshots / remediations belonging to a Removed
+    # subscription are kept for this many days so a user who re-links
+    # the same GUID gets their history back; expired records are then
+    # hard-purged by a daily timer trigger.
+    subscription_retention_days: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:

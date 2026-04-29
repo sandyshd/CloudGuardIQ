@@ -128,8 +128,10 @@ export function SubscriptionList() {
   const handleRemove = async (id: string, displayName: string) => {
     setError(null);
     const confirmed = window.confirm(
-      `Remove subscription "${displayName || id}"? This stops scans and ` +
-        "cannot be undone (you can re-link it later).",
+      `Remove subscription "${displayName || id}"?\n\n` +
+        "Stops scans immediately. Existing findings are kept for 30 days " +
+        "so re-linking the same subscription restores your history. After " +
+        "that they are permanently deleted.",
     );
     if (!confirmed) return;
     try {

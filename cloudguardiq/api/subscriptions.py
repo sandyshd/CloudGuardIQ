@@ -184,6 +184,22 @@ async def add_subscription(
     tier = record.tier if record else SubscriptionTier.FREE
     cap = _cap_for_tier(settings, tier)
 
+    # Soft-delete restore: if the GUID was previously Removed, bring it
+    # back so the tenant recovers its historical findings without paying
+    # the tier-cap cost twice.
+    existing = await repo.get(tenant_id, body.subscription_id)
+    if existing is not None and existing.state == "Removed":
+        existing.state = "Enabled"
+        existing.removed_at = None
+        if body.display_name:
+            existing.display_name = body.display_name
+        restored = await repo.upsert(existing)
+        logger.info(
+            "Restored soft-deleted subscription tenant=%s sub=%s",
+            tenant_id, body.subscription_id,
+        )
+        return SubscriptionResponse.from_record(restored)
+
     current = await repo.count(tenant_id)
     if cap >= 0 and current >= cap:
         logger.info(

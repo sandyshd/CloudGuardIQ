@@ -151,3 +151,39 @@ def test_tenant_isolation_other_tenant_cannot_delete() -> None:
     )
     r = client.delete(f"/subscriptions/{sid}")
     assert r.status_code == 404  # not found in tenant-B
+
+
+def test_remove_then_relink_restores_record_and_bypasses_cap() -> None:
+    """Soft-delete + relink restores the original record without consuming
+    a Free-tier cap slot a second time."""
+    _wire(tier=SubscriptionTier.FREE)
+    client = _client()
+    sid = "11111111-1111-1111-1111-111111111111"
+
+    # 1. Add (uses the only Free slot)
+    r = client.post(
+        "/subscriptions",
+        json={"subscription_id": sid, "display_name": "Prod"},
+    )
+    assert r.status_code == 201
+
+    # 2. Remove (soft delete)
+    r = client.delete(f"/subscriptions/{sid}")
+    assert r.status_code == 204
+
+    # 3. Listing hides Removed records
+    r = client.get("/subscriptions")
+    assert r.status_code == 200
+    assert r.json() == []
+
+    # 4. Re-add: must succeed without 402 because the Removed slot is freed,
+    #    and the response should reflect the restored row (state=Enabled).
+    r = client.post(
+        "/subscriptions",
+        json={"subscription_id": sid, "display_name": "Prod restored"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["state"] == "Enabled"
+    assert body["display_name"] == "Prod restored"
+

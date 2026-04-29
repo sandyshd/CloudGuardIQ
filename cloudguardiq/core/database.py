@@ -321,3 +321,114 @@ class CosmosRepository:
         except Exception:
             logger.debug("No capability flags found for %s", sub_id)
             return None
+
+    # ------------------------------------------------------------------
+    # Cascading purge (Phase 2.7 -- soft-delete retention)
+    # ------------------------------------------------------------------
+
+    async def purge_subscription_data(
+        self,
+        subscription_id: str,
+        *,
+        tenant_id: str = "",
+    ) -> dict[str, int]:
+        """Hard-delete every finding/snapshot/remediation for a subscription.
+
+        Called by the daily purge timer once a soft-deleted subscription has
+        passed its retention window. Cross-partition for snapshots and
+        remediations (their PKs are not subscription_id), point-deletes for
+        findings (PK is /subscription_id).
+
+        Returns a counter ``{"findings": N, "snapshots": N, "remediations": N}``
+        for observability. Errors per item are logged and swallowed so a
+        single bad document never aborts the whole purge.
+        """
+        counts = {"findings": 0, "snapshots": 0, "remediations": 0}
+
+        # --- findings: point-delete by id within the subscription partition.
+        finding_ids: list[str] = []
+        try:
+            findings_query = (
+                "SELECT c.id FROM c WHERE c.subscription_id = @sub"
+            )
+            params: list[dict[str, Any]] = [
+                {"name": "@sub", "value": subscription_id},
+            ]
+            if tenant_id:
+                findings_query += " AND c.tenant_id = @tid"
+                params.append({"name": "@tid", "value": tenant_id})
+            async for item in self._findings_container().query_items(
+                query=findings_query,
+                parameters=params,
+                partition_key=subscription_id,
+            ):
+                fid = item.get("id")
+                if isinstance(fid, str):
+                    finding_ids.append(fid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "purge: findings query failed for sub=%s: %s",
+                subscription_id, exc,
+            )
+
+        for fid in finding_ids:
+            try:
+                await self._findings_container().delete_item(
+                    item=fid, partition_key=subscription_id,
+                )
+                counts["findings"] += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("purge: delete finding %s failed: %s", fid, exc)
+
+            # Cascade: remediations are partitioned by /finding_id.
+            try:
+                await self._remediations_container().delete_item(
+                    item=fid, partition_key=fid,
+                )
+                counts["remediations"] += 1
+            except Exception:  # noqa: BLE001
+                # Most findings have no remediation card; treat as best-effort.
+                pass
+
+        # --- snapshots: cross-partition query, then delete per-snapshot.
+        try:
+            snap_query = (
+                "SELECT c.id, c.provider FROM c "
+                "WHERE c.subscription_id = @sub"
+            )
+            snap_params: list[dict[str, Any]] = [
+                {"name": "@sub", "value": subscription_id},
+            ]
+            if tenant_id:
+                snap_query += " AND c.tenant_id = @tid"
+                snap_params.append({"name": "@tid", "value": tenant_id})
+            snap_targets: list[tuple[str, str]] = []
+            async for item in self._snapshots_container().query_items(
+                query=snap_query, parameters=snap_params,
+            ):
+                sid = item.get("id")
+                provider = item.get("provider", "azure")
+                if isinstance(sid, str):
+                    snap_targets.append((sid, str(provider)))
+            for sid, provider in snap_targets:
+                try:
+                    await self._snapshots_container().delete_item(
+                        item=sid, partition_key=provider,
+                    )
+                    counts["snapshots"] += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "purge: delete snapshot %s failed: %s", sid, exc,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "purge: snapshots query failed for sub=%s: %s",
+                subscription_id, exc,
+            )
+
+        logger.info(
+            "Purged data for subscription %s (tenant=%s): %s",
+            subscription_id, tenant_id or "-", counts,
+        )
+        return counts
+
