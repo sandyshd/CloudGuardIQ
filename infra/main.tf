@@ -69,7 +69,7 @@ resource "azurerm_resource_group" "cloudguardiq" {
 resource "azuread_application" "cloudguardiq" {
   display_name = "CloudGuardIQ-${var.environment}"
 
-  sign_in_audience = "AzureADMyOrg"
+  sign_in_audience = "AzureADMultipleOrgs"
 
   web {
     redirect_uris = var.environment == "dev" ? [] : []
