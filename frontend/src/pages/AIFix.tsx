@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Sparkles, Link2 } from "lucide-react";
+import { EmptyState } from "../components/common/EmptyState";
+import { useSubscriptions } from "../hooks/useSubscriptions";
 
 import { LoadingSpinner } from "../components/common/LoadingSpinner";
 import { SeverityBadge } from "../components/common/SeverityBadge";
 import { DataTierBadge } from "../components/common/DataTierBadge";
-import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
+import { Alert, AlertDescription } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -39,6 +42,7 @@ export function AIFix() {
   const queryId = searchParams.get("finding");
   const findingId = routeId ?? queryId ?? null;
   const navigate = useNavigate();
+  const { subscriptions } = useSubscriptions();
 
   const [finding, setFinding] = useState<FindingResult | null>(null);
   const [card, setCard] = useState<RemediationCard | null>(null);
@@ -101,19 +105,30 @@ export function AIFix() {
   }, [finding]);
 
   if (!findingId) {
+    if (subscriptions.length === 0) {
+      return (
+        <div className="space-y-6">
+          <h1 className="text-2xl font-bold">AI Fix</h1>
+          <EmptyState
+            icon={<Link2 className="h-12 w-12" />}
+            title="Link a subscription to start scanning"
+            message="AI Fix generates Terraform and CLI remediation plans for findings produced by a scan. Connect an Azure subscription on the Settings page to begin."
+            primaryLabel="Go to Settings"
+            primaryTo="/settings"
+          />
+        </div>
+      );
+    }
     return (
-      <div className="space-y-4">
+      <div className="space-y-6">
         <h1 className="text-2xl font-bold">AI Fix</h1>
-        <Alert>
-          <AlertTitle>Select a finding</AlertTitle>
-          <AlertDescription>
-            Open a finding from the{" "}
-            <Link to="/findings" className="underline">
-              Findings
-            </Link>{" "}
-            page to view its AI remediation plan.
-          </AlertDescription>
-        </Alert>
+        <EmptyState
+          icon={<Sparkles className="h-12 w-12" />}
+          title="Select a finding"
+          message="Open a finding from the Findings page to view its AI-generated remediation plan, Terraform fix, and CLI commands."
+          primaryLabel="Go to Findings"
+          primaryTo="/findings"
+        />
       </div>
     );
   }
