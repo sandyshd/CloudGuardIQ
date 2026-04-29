@@ -11,11 +11,21 @@ import { Info, Scan, Link2 } from "lucide-react";
 import type { FindingResult, Severity, FindingType } from "../types";
 
 export function Findings() {
-  const [subscriptionFilter, setSubscriptionFilter] = useState<string>("ALL");
-  const { findings, loading, error, refresh } = useFindings(
-    subscriptionFilter !== "ALL" ? subscriptionFilter : undefined
-  );
-  const { subscriptions } = useSubscriptions();
+  // Page-local "All / specific" filter. Defaults to undefined which means
+  // "use the globally selected subscription". Selecting "ALL" or a
+  // specific id from the page-local dropdown overrides the global pick
+  // for this view only.
+  const [subscriptionFilter, setSubscriptionFilter] = useState<string | "ALL" | "">("");
+  const { subscriptions, selected: selectedSub } = useSubscriptions();
+
+  const effectiveSub =
+    subscriptionFilter === "ALL"
+      ? undefined
+      : subscriptionFilter !== ""
+        ? subscriptionFilter
+        : selectedSub?.subscription_id;
+
+  const { findings, loading, error, refresh } = useFindings(effectiveSub);
   const navigate = useNavigate();
   const [selected, setSelected] = useState<FindingResult | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Severity | "ALL">("ALL");
@@ -24,10 +34,7 @@ export function Findings() {
   const [scanError, setScanError] = useState<string | null>(null);
 
   const handleRunScan = async () => {
-    const subId =
-      subscriptionFilter !== "ALL"
-        ? subscriptionFilter
-        : subscriptions[0]?.subscription_id;
+    const subId = effectiveSub ?? selectedSub?.subscription_id;
     if (!subId) {
       navigate("/settings");
       return;
@@ -72,6 +79,10 @@ export function Findings() {
       </div>
     );
   }
+
+  // The dropdown shows "Active subscription" by default (mirrors header
+  // selector), plus an explicit "All Subscriptions" option, plus each sub.
+  const dropdownValue = subscriptionFilter;
 
   return (
     <div className="space-y-4">
@@ -135,13 +146,14 @@ export function Findings() {
         </select>
         <select
           className="rounded border px-3 py-2 text-sm bg-[hsl(var(--background))]"
-          value={subscriptionFilter}
+          value={dropdownValue}
           onChange={(e) => setSubscriptionFilter(e.target.value)}
         >
+          <option value="">Active subscription</option>
           <option value="ALL">All Subscriptions</option>
           {subscriptions.map((sub) => (
             <option key={sub.subscription_id} value={sub.subscription_id}>
-              {sub.display_name}
+              {sub.display_name || sub.subscription_id}
             </option>
           ))}
         </select>

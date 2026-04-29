@@ -14,9 +14,15 @@ import { useState } from "react";
 import type { FindingResult } from "../types";
 
 export function Dashboard() {
-  const { findings, loading, refresh } = useFindings();
-  const { subscriptions, loading: subsLoading } = useSubscriptions();
-  const [selected, setSelected] = useState<FindingResult | null>(null);
+  const {
+    subscriptions,
+    loading: subsLoading,
+    selected: selectedSub,
+  } = useSubscriptions();
+  const { findings, loading, refresh } = useFindings(
+    selectedSub?.subscription_id,
+  );
+  const [selectedFinding, setSelectedFinding] = useState<FindingResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
 
@@ -40,7 +46,7 @@ export function Dashboard() {
   }
 
   const handleRunScan = async () => {
-    const subId = subscriptions[0]?.subscription_id;
+    const subId = selectedSub?.subscription_id;
     if (!subId) return;
     setScanning(true);
     setScanError(null);
@@ -69,6 +75,21 @@ export function Dashboard() {
     );
   }
 
+  if (!selectedSub) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <EmptyState
+          icon={<Link2 className="h-12 w-12" />}
+          title="No active subscription"
+          message="All linked subscriptions are disabled. Re-enable one in Settings to view findings."
+          primaryLabel="Go to Settings"
+          primaryTo="/settings"
+        />
+      </div>
+    );
+  }
+
   if (findings.length === 0) {
     return (
       <div className="space-y-6">
@@ -76,7 +97,7 @@ export function Dashboard() {
         <EmptyState
           icon={<Scan className="h-12 w-12" />}
           title="No findings yet"
-          message="Run your first scan to discover security issues, cost waste, and compliance gaps across your linked Azure subscriptions."
+          message={`Run your first scan on ${selectedSub.display_name} to discover security issues, cost waste, and compliance gaps.`}
           primaryLabel={scanning ? "Scanning..." : "Run Your First Scan"}
           primaryOnClick={handleRunScan}
           primaryDisabled={scanning}
@@ -143,7 +164,7 @@ export function Dashboard() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 overflow-x-auto">
-          <FindingTable findings={top10} onSelect={setSelected} />
+          <FindingTable findings={top10} onSelect={setSelectedFinding} />
         </div>
 
         <div className="space-y-4">
@@ -153,10 +174,10 @@ export function Dashboard() {
         </div>
       </div>
 
-      {selected && (
+      {selectedFinding && (
         <FindingDetailPanel
-          finding={selected}
-          onClose={() => setSelected(null)}
+          finding={selectedFinding}
+          onClose={() => setSelectedFinding(null)}
         />
       )}
     </div>
