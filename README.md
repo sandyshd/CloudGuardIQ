@@ -42,8 +42,8 @@ governance with **AI-generated remediation** powered by GPT-5.1.
 │  ┌──────────────────────────────────────▼─────────────────────┐  │
 │  │  AzureAdapter                                              │  │
 │  │  ├─ NativeScanner (Tier 1 — Resource Graph + 52 rules)     │  │
-│  │  ├─ Defender free  (Tier 2 — secure score enrichment)      │  │
-│  │  └─ Defender paid  (Tier 3 — threat intelligence)          │  │
+│  │  ├─ Vendor CSPM    (Tier 2 — auto-detected, free)          │  │
+│  │  └─ Vendor deep    (Tier 3 — auto-detected, paid plans)    │  │
 │  └────────────────────────────────────────────────────────────┘  │
 └──────────────────────┬───────────────────────────────────────────┘
                        │  Service Bus queue
@@ -60,16 +60,22 @@ governance with **AI-generated remediation** powered by GPT-5.1.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### Tiered Data Source Strategy
+### Tiered Data Source Strategy (cloud-agnostic)
 
-| Tier | Source | Dependency | Data |
-|------|--------|------------|------|
-| **Tier 1 — Native** | Azure Resource Graph + Cost Management | None (always available) | Resource config, cost, 52 policy rules |
-| **Tier 2 — Free CSPM** | Defender for Cloud (free tier) | Optional — graceful degradation | Secure score, recommendations |
-| **Tier 3 — Paid** | Defender for Cloud (paid plans) | Optional — graceful degradation | Threat alerts, advanced analytics |
+`DataTier` describes *signal richness*, not a vendor. The same enum values
+work across Azure, AWS, and GCP; canonical `TIER2_ENRICHED` / `TIER3_DEEP`
+names are aliases of the legacy Azure-specific values so stored data and
+existing rules remain unchanged.
 
-Defender for Cloud is **never** a hard dependency. All Defender API calls are
-wrapped in `try/except` with fallback to empty enrichment.
+| Tier | Canonical name | Azure | AWS | GCP |
+|------|----------------|-------|-----|-----|
+| **T1** | `TIER1_NATIVE` | Resource Graph + Cost Mgmt | Config / Cost Explorer | Asset Inventory / Billing |
+| **T2** | `TIER2_ENRICHED` (alias of `TIER2_FREE_CSPM`) | Defender for Cloud (free CSPM) | Security Hub | Security Command Center |
+| **T3** | `TIER3_DEEP` (alias of `TIER3_PAID`) | Defender for Cloud (paid plans) | GuardDuty / Inspector | SCC Premium |
+
+Vendor security services are **never** a hard dependency. All vendor API
+calls are wrapped in `try/except` with fallback to empty enrichment, and
+CloudGuardIQ auto-detects them on every plan at no extra charge.
 
 ---
 
@@ -176,7 +182,7 @@ Represents a point-in-time capture of an Azure resource.
 | `config` | `dict` | Normalized resource properties |
 | `cost_monthly` | `float` | Monthly cost from Cost Management API |
 | `tags` | `dict` | Resource tags |
-| `data_tier` | `DataTier` | `TIER1_NATIVE`, `TIER2_FREE_CSPM`, `TIER3_PAID` |
+| `data_tier` | `DataTier` | `TIER1_NATIVE`, `TIER2_ENRICHED`/`TIER2_FREE_CSPM`, `TIER3_PAID` |
 | `raw_hash` | `str` | SHA256 of config for drift detection |
 | `captured_at` | `datetime` | Snapshot timestamp |
 
@@ -249,6 +255,7 @@ All endpoints except `/health` require a Bearer JWT from Azure AD.
 | `POST` | `/subscriptions` | Link a subscription (validates GUID + tier cap; `402` on cap exceeded) |
 | `PATCH` | `/subscriptions/{id}` | Rename or enable/disable a subscription |
 | `DELETE` | `/subscriptions/{id}` | Unlink a subscription |
+| `GET` | `/billing/plans` | Public plan catalog (no auth) |
 | `GET` | `/billing/status` | Current tier, Stripe customer, usage |
 | `POST` | `/billing/checkout` | Create a Stripe checkout session |
 | `GET` | `/config` | Public client config (`demo_mode`, `client_id`, `version`) |
@@ -316,16 +323,35 @@ relying on a deploy-time `AZURE_SUBSCRIPTION_ID` env var.
   `subscription_not_linked` error when a tenant requests data for a
   subscription they have not added.
 
-### Tier caps
+### Plan catalog (single source of truth)
 
-| Tier | Max linked subscriptions |
-|------|--------------------------|
-| **FREE** | 1 |
-| **PRO** | 10 (configurable via `CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS`) |
-| **ENTERPRISE** | unlimited |
+Plan limits are scaled on **resources**, **subscriptions**, **AI usage**,
+and **scan frequency** -- the same axes used by category-leading CSPM
+products. No vendor capability (Defender, Security Hub, SCC) is ever
+gated behind a paywall. The catalog lives in
+[`cloudguardiq/billing/plans.py`](cloudguardiq/billing/plans.py) and is
+exposed publicly at `GET /billing/plans`.
 
-`POST /subscriptions` returns `402 upgrade_required` when a tenant exceeds
-their tier's cap.
+| Plan | Price | Subscriptions | Resources / scan | Scan cadence | AI remediations / mo | Self-healing |
+|------|-------|---------------|------------------|--------------|----------------------|--------------|
+| **Free** | $0 | 1 | 100 | Daily | 5 | -- |
+| **Starter** (`PRO` wire value) | $49/mo | 3 | 1,000 | Hourly | 100 | -- |
+| **Enterprise** | $299/mo | unlimited | unlimited | 15 min | unlimited | yes |
+
+Enforcement is wired everywhere a quota-bearing action can occur:
+
+| Path | What's enforced |
+|------|-----------------|
+| `POST /scan` | resources/scan (middleware) |
+| `POST /subscriptions` | subscription cap (route handler) |
+| `POST /findings/{id}/generate-remediation` | AI quota (shared helper) |
+| Service Bus producer (`ScanPipeline._queue_findings`) | top-N by priority within remaining AI quota |
+| Service Bus consumer (`AIWorker.process_message`) | AI quota (defense-in-depth) |
+| Timer trigger (`scan_trigger`) | per-tier scan cooldown via `last_scan_at` |
+
+All over-cap responses return `HTTP 402 upgrade_required` with
+`{ current_tier, limit, cap, current }` so the UI can surface a clear
+upgrade prompt.
 
 ### App-registration audience
 
