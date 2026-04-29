@@ -10,7 +10,7 @@ import { DefenderAutoBadge } from "../components/common/DefenderAutoBadge";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { triggerScan } from "../api/scans";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { FindingResult } from "../types";
 
 export function Dashboard() {
@@ -25,6 +25,11 @@ export function Dashboard() {
   const [selectedFinding, setSelectedFinding] = useState<FindingResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  // Hard-lock against double-fire in addition to the disabled button.
+  // React 18 StrictMode + a fast double-click can otherwise issue two
+  // /scan POSTs back-to-back, the second of which races with persistence
+  // and overwrites the scan_result row.
+  const scanInFlight = useRef(false);
 
   const isLoading = loading || subsLoading;
 
@@ -48,6 +53,8 @@ export function Dashboard() {
   const handleRunScan = async () => {
     const subId = selectedSub?.subscription_id;
     if (!subId) return;
+    if (scanInFlight.current) return;
+    scanInFlight.current = true;
     setScanning(true);
     setScanError(null);
     try {
@@ -57,6 +64,7 @@ export function Dashboard() {
       setScanError(err instanceof Error ? err.message : "Scan failed");
     } finally {
       setScanning(false);
+      scanInFlight.current = false;
     }
   };
 
@@ -183,3 +191,4 @@ export function Dashboard() {
     </div>
   );
 }
+

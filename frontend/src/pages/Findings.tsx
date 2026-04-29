@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
@@ -32,6 +32,7 @@ export function Findings() {
   const [typeFilter, setTypeFilter] = useState<FindingType | "ALL">("ALL");
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const scanInFlight = useRef(false);
 
   const handleRunScan = async () => {
     const subId = effectiveSub ?? selectedSub?.subscription_id;
@@ -39,6 +40,8 @@ export function Findings() {
       navigate("/settings");
       return;
     }
+    if (scanInFlight.current) return;
+    scanInFlight.current = true;
     setScanning(true);
     setScanError(null);
     try {
@@ -49,6 +52,7 @@ export function Findings() {
       setScanError(msg);
     } finally {
       setScanning(false);
+      scanInFlight.current = false;
     }
   };
 
@@ -200,3 +204,4 @@ export function Findings() {
     </div>
   );
 }
+

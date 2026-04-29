@@ -732,6 +732,27 @@ async def scan_subscription(
         snapshots = []
     findings: list[FindingResult] = engine.evaluate(snapshots)
 
+    # Stamp tenant ownership on every snapshot and finding before
+    # persistence. Without this, rows are written with tenant_id="" and
+    # the tenant-isolated GET /findings query returns nothing -- the
+    # exact bug reported on 2026-04-29 where /scan reported 130 findings
+    # but the dashboard re-queried with an empty result.
+    settings_obj = get_settings()
+    tenant_id_for_scan = (
+        "" if settings_obj.auth_disabled else get_tenant_id(user)
+    )
+    for snap in snapshots:
+        if not snap.tenant_id:
+            snap.tenant_id = tenant_id_for_scan
+    for f in findings:
+        if not f.tenant_id:
+            f.tenant_id = tenant_id_for_scan
+        if (
+            f.resource_snapshot is not None
+            and not f.resource_snapshot.tenant_id
+        ):
+            f.resource_snapshot.tenant_id = tenant_id_for_scan
+
     # Compute priority scores
     for f in findings:
         f.compute_priority_score()
