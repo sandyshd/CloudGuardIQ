@@ -79,8 +79,12 @@ def _get_stripe() -> StripeService:
 
 
 def _tenant_id(user: TokenPayload) -> str:
-    """Derive a tenant id from the authenticated principal."""
-    return user.sub or "anonymous"
+    """Derive a tenant id from the authenticated principal.
+
+    Prefers the JWT ``tid`` claim (Azure AD tenant). Falls back to ``sub``
+    for development / dev-mode tokens that lack ``tid``.
+    """
+    return user.tid or user.sub or "anonymous"
 
 
 router = APIRouter(prefix="/billing", tags=["billing"])

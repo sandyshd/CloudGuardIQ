@@ -26,6 +26,7 @@ class ResourceSnapshot(BaseModel):
     model_config = ConfigDict(frozen=False)
 
     id: str = ""
+    tenant_id: str = ""
     provider: CloudProvider = CloudProvider.AZURE
     subscription_id: str
     resource_group: str
@@ -112,6 +113,7 @@ class FindingResult(BaseModel):
     model_config = ConfigDict(frozen=False)
 
     finding_id: str = Field(default_factory=lambda: str(uuid4()))
+    tenant_id: str = ""
     resource_snapshot: ResourceSnapshot | None = None
     rule_id: str
     rule_name: str = ""
@@ -183,6 +185,7 @@ class RemediationCard(BaseModel):
     model_config = ConfigDict(frozen=False)
 
     card_id: str = Field(default_factory=lambda: str(uuid4()))
+    tenant_id: str = ""
     finding_result: FindingResult | None = None
     narrative: str = ""
     terraform_fix: str = ""

@@ -93,6 +93,14 @@ prerequisite for everything else.
 dev; verified manually that two users from two different tenants (or spoofed
 `tid`) see disjoint data.
 
+**Status:** ⚠ Partially complete (2026-04-29). Code & tests landed on
+`development` (375/375 tests pass, `ruff` clean). Pre-existing `mypy`
+findings in unrelated files are out of scope. The
+`_resolve_subscription_id` env fallback removal is **deferred to Phase 2**
+because the frontend does not yet pass `subscription_id` from a global
+selector — removing it now would break Dashboard / Findings reads. Manual
+two-tenant smoke test pending Phase 2 deploy.
+
 ---
 
 ## Phase 2 — User-managed subscriptions (single-tenant)

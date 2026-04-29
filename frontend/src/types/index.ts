@@ -6,6 +6,7 @@ export type RemediationStatus = "PENDING" | "IN_PROGRESS" | "APPLIED" | "FAILED"
 
 export interface ResourceSnapshot {
   id: string;
+  tenant_id: string;
   provider: CloudProvider;
   subscription_id: string;
   resource_group: string;
@@ -22,6 +23,7 @@ export interface ResourceSnapshot {
 
 export interface FindingResult {
   finding_id: string;
+  tenant_id: string;
   resource_snapshot: ResourceSnapshot | null;
   rule_id: string;
   rule_name: string;
@@ -37,6 +39,7 @@ export interface FindingResult {
 
 export interface RemediationCard {
   card_id: string;
+  tenant_id: string;
   finding_result: FindingResult | null;
   narrative: string;
   terraform_fix: string;
