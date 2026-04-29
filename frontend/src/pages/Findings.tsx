@@ -7,7 +7,7 @@ import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { Button } from "../components/ui/button";
 import { Alert, AlertDescription } from "../components/ui/alert";
-import { Info, Scan, Link2 } from "lucide-react";
+import { Scan, Link2 } from "lucide-react";
 import type { FindingResult, Severity, FindingType } from "../types";
 
 export function Findings() {
@@ -62,12 +62,6 @@ export function Findings() {
     return true;
   });
 
-  const allTier1 =
-    findings.length > 0 &&
-    findings.every(
-      (f) => f.resource_snapshot?.data_tier === "TIER1_NATIVE"
-    );
-
   if (loading) {
     return (
       <div className="space-y-4">
@@ -99,26 +93,6 @@ export function Findings() {
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-      )}
-
-      {allTier1 && (
-        <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4">
-          <Info className="h-5 w-5 text-blue-500 mt-0.5 shrink-0" />
-          <div className="text-sm text-blue-800">
-            <p>
-              Enable Defender for Cloud free CSPM to enrich these findings with
-              security scores. Takes 5 minutes, at no cost.
-            </p>
-            <a
-              href="https://learn.microsoft.com/en-us/azure/defender-for-cloud/enable-enhanced-security"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1 inline-flex items-center gap-1 font-medium text-blue-600 hover:underline"
-            >
-              Enable Defender &rarr;
-            </a>
-          </div>
-        </div>
       )}
 
       <div className="flex flex-wrap gap-2">
