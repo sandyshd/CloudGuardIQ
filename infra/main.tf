@@ -490,6 +490,10 @@ resource "azurerm_container_app" "api" {
         value = "10"
       }
       env {
+        name  = "CLOUDGUARDIQ_AZURE_PRINCIPAL_ID"
+        value = azurerm_container_app.api.identity[0].principal_id
+      }
+      env {
         name  = "CLOUDGUARDIQ_STRIPE_PRICE_FREE"
         value = var.stripe_price_free
       }
@@ -639,6 +643,7 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING       = azurerm_cosmosdb_sql_container.billing.name
     CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS = azurerm_cosmosdb_sql_container.subscriptions.name
     CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS          = "10"
+    CLOUDGUARDIQ_AZURE_PRINCIPAL_ID             = azurerm_linux_function_app.cloudguardiq.identity[0].principal_id
     CLOUDGUARDIQ_STRIPE_PRICE_FREE              = var.stripe_price_free
     CLOUDGUARDIQ_STRIPE_PRICE_PRO               = var.stripe_price_pro
     CLOUDGUARDIQ_STRIPE_PRICE_ENTERPRISE        = var.stripe_price_enterprise

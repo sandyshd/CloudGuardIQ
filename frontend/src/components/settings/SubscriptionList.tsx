@@ -4,6 +4,7 @@ import { Button } from "../ui/button";
 import { Alert, AlertDescription } from "../ui/alert";
 import { useSubscriptions } from "../../hooks/useSubscriptions";
 import { getBillingStatus, type BillingStatus } from "../../api/billing";
+import { getOnboardingInfo, type OnboardingInfo } from "../../api/onboarding";
 import { LoadingSpinner } from "../common/LoadingSpinner";
 import type { Subscription } from "../../types";
 
@@ -59,11 +60,19 @@ export function SubscriptionList() {
   const { subscriptions, loading, add, remove, toggle, replace } =
     useSubscriptions();
   const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null);
+  const [onboarding, setOnboarding] = useState<OnboardingInfo | null>(null);
+  const [accessDenied, setAccessDenied] = useState<{
+    message: string;
+    az_command: string;
+  } | null>(null);
   useEffect(() => {
     let cancelled = false;
     getBillingStatus()
       .then((s) => { if (!cancelled) setBillingStatus(s); })
       .catch(() => { if (!cancelled) setBillingStatus(null); });
+    getOnboardingInfo()
+      .then((info) => { if (!cancelled) setOnboarding(info); })
+      .catch(() => { if (!cancelled) setOnboarding(null); });
     return () => { cancelled = true; };
   }, []);
   const tier = billingStatus?.tier ?? "FREE";
@@ -94,6 +103,7 @@ export function SubscriptionList() {
     e.preventDefault();
     setError(null);
     setUpgradeMsg(null);
+    setAccessDenied(null);
     if (!GUID_RE.test(newId)) {
       setError("Subscription ID must be a valid Azure GUID.");
       return;
@@ -116,6 +126,21 @@ export function SubscriptionList() {
           );
         } else {
           setUpgradeMsg("Upgrade required to add more subscriptions.");
+        }
+      } else if (e.response?.status === 400) {
+        const detail = e.response.data?.detail as
+          | { error?: string; message?: string; az_command?: string }
+          | string
+          | undefined;
+        if (typeof detail === "object" && detail?.error === "access_denied") {
+          setAccessDenied({
+            message:
+              detail.message ??
+              "CloudGuardIQ does not have Reader access on this subscription.",
+            az_command: detail.az_command ?? "",
+          });
+        } else {
+          setError(formatApiError(err, "Failed to add subscription"));
         }
       } else {
         setError(formatApiError(err, "Failed to add subscription"));
@@ -216,14 +241,38 @@ export function SubscriptionList() {
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
+        {accessDenied && (
+          <Alert variant="destructive">
+            <AlertDescription>
+              <div className="font-medium">Access denied</div>
+              <p className="mt-1 text-xs">{accessDenied.message}</p>
+              {accessDenied.az_command && (
+                <pre className="mt-2 overflow-x-auto rounded bg-black/80 p-2 text-xs text-emerald-300">{accessDenied.az_command}</pre>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
 
         <form onSubmit={handleAdd} className="space-y-2 rounded border p-3">
           <div className="text-sm font-medium">Link a new Azure subscription</div>
           <p className="text-xs text-[hsl(var(--muted-foreground))]">
-            Grant the CloudGuardIQ multi-tenant app{" "}
+            Grant the CloudGuardIQ managed identity{" "}
             <span className="font-mono">Reader</span> on the subscription, then enter
             its ID below.
           </p>
+          {onboarding && onboarding.azure_principal_id &&
+            !onboarding.azure_principal_id.startsWith("<") && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-blue-600 underline">
+                Show grant command
+              </summary>
+              <pre className="mt-1 overflow-x-auto rounded bg-black/80 p-2 text-emerald-300">{onboarding.az_command_template}</pre>
+              <p className="mt-1 text-[hsl(var(--muted-foreground))]">
+                Replace <span className="font-mono">&lt;your-subscription-id&gt;</span>{" "}
+                with the GUID, run from a shell signed in as a subscription Owner.
+              </p>
+            </details>
+          )}
           <div className="flex flex-col gap-2 md:flex-row">
             <input
               type="text"

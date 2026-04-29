@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     # hard-purged by a daily timer trigger.
     subscription_retention_days: int = 30
 
+    # Object id of the CloudGuardIQ managed identity used by the
+    # Container App / Function App when calling Azure on behalf of a
+    # tenant. Surfaced by GET /onboarding/info so the Settings page can
+    # render a copy-pasteable ``az role assignment create`` command.
+    azure_principal_id: str = ""
+    azure_principal_display_name: str = "CloudGuardIQ"
+
 
 @lru_cache
 def get_settings() -> Settings:

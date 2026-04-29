@@ -13,7 +13,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator
 
+from cloudguardiq.adapters.access_probe import (
+    AccessProbeResult,
+    probe_subscription_access,
+)
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
+from cloudguardiq.api.onboarding import OnboardingInfo
 from cloudguardiq.billing.plans import get_plan
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.core.config import Settings
@@ -92,6 +97,19 @@ _repository: SubscriptionsRepository | None = None
 _billing_repo: BillingRepository | None = None
 _settings: Settings | None = None
 
+# Tests inject a stub probe via subscriptions.set_access_probe(); production
+# leaves it None and uses the default Resource Graph probe.
+from collections.abc import Awaitable, Callable  # noqa: E402
+
+_AccessProbe = Callable[[str], Awaitable[AccessProbeResult]]
+_probe_override: _AccessProbe | None = None
+
+
+def set_access_probe(probe: _AccessProbe | None) -> None:
+    """Install a custom access probe (tests only)."""
+    global _probe_override  # noqa: PLW0603
+    _probe_override = probe
+
 
 def configure(
     *,
@@ -148,6 +166,28 @@ def _cap_for_tier(settings: Settings, tier: SubscriptionTier) -> int:  # noqa: A
 # ---------------------------------------------------------------------------
 
 
+async def _run_access_probe(subscription_id: str) -> AccessProbeResult | None:
+    """Run the access probe (test override or default Resource Graph).
+
+    Returns ``None`` when the probe cannot be executed (no Azure credential
+    available, e.g. local dev without ``az login``); the caller treats
+    ``None`` as a soft-pass so contributors are not blocked offline.
+    """
+    if _probe_override is not None:
+        return await _probe_override(subscription_id)
+    try:
+        from azure.identity import DefaultAzureCredential
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("azure-identity unavailable; skipping probe: %s", exc)
+        return None
+    try:
+        credential = DefaultAzureCredential()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("DefaultAzureCredential init failed: %s", exc)
+        return None
+    return await probe_subscription_access(credential, subscription_id)
+
+
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 _auth = Depends(verify_token)
 
@@ -183,6 +223,42 @@ async def add_subscription(
     record = await billing.get(tenant_id)
     tier = record.tier if record else SubscriptionTier.FREE
     cap = _cap_for_tier(settings, tier)
+
+    # Verify CloudGuardIQ has Reader access on this subscription before
+    # storing it. Without RBAC the scan would silently return 0 findings,
+    # which is a confusing onboarding experience. We return 400 with the
+    # principal id and a copy-pasteable az command so the user can fix
+    # the grant and retry.
+    settings_obj = _get_settings()
+    if not settings_obj.auth_disabled:
+        probe_result = await _run_access_probe(body.subscription_id)
+        if probe_result is not None and not probe_result.ok:
+            info = OnboardingInfo.build()
+            cmd = (
+                "az role assignment create "
+                f"--assignee {info.azure_principal_id} "
+                "--role Reader "
+                f"--scope /subscriptions/{body.subscription_id}"
+            )
+            logger.info(
+                "Access probe denied for tenant=%s sub=%s: %s",
+                tenant_id, body.subscription_id, probe_result.error,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "access_denied",
+                    "message": (
+                        "CloudGuardIQ does not have Reader access on this "
+                        "subscription. Run the command below from a shell "
+                        "signed in as a subscription Owner, then click Add again."
+                    ),
+                    "azure_principal_id": info.azure_principal_id,
+                    "role": "Reader",
+                    "az_command": cmd,
+                    "azure_error": probe_result.error,
+                },
+            )
 
     # Soft-delete restore: if the GUID was previously Removed, bring it
     # back so the tenant recovers its historical findings without paying

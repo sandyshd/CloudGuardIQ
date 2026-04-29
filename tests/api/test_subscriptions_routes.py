@@ -187,3 +187,78 @@ def test_remove_then_relink_restores_record_and_bypasses_cap() -> None:
     assert body["state"] == "Enabled"
     assert body["display_name"] == "Prod restored"
 
+
+def test_add_subscription_blocked_when_access_probe_denies(monkeypatch) -> None:
+    """When CloudGuardIQ has no Reader RBAC, POST /subscriptions returns 400."""
+    from cloudguardiq.adapters.access_probe import AccessProbeResult
+    from cloudguardiq.api import subscriptions as subs_module
+
+    _wire(tier=SubscriptionTier.FREE)
+
+    async def deny(_subscription_id: str) -> AccessProbeResult:
+        return AccessProbeResult(
+            ok=False, resource_count=0,
+            error="AuthorizationFailed: principal does not have access",
+        )
+
+    subs_module.set_access_probe(deny)
+    monkeypatch.setattr(
+        "cloudguardiq.api.subscriptions._get_settings",
+        lambda: type("S", (), {"auth_disabled": False})(),
+    )
+    try:
+        client = _client()
+        r = client.post(
+            "/subscriptions",
+            json={
+                "subscription_id": "11111111-1111-1111-1111-111111111111",
+                "display_name": "Prod",
+            },
+        )
+        assert r.status_code == 400, r.text
+        detail = r.json()["detail"]
+        assert detail["error"] == "access_denied"
+        assert "az role assignment create" in detail["az_command"]
+        assert "11111111-1111-1111-1111-111111111111" in detail["az_command"]
+    finally:
+        subs_module.set_access_probe(None)
+
+
+def test_add_subscription_succeeds_when_access_probe_passes(monkeypatch) -> None:
+    """When the probe returns ok=True the route stores the subscription."""
+    from cloudguardiq.adapters.access_probe import AccessProbeResult
+    from cloudguardiq.api import subscriptions as subs_module
+
+    _wire(tier=SubscriptionTier.FREE)
+
+    async def allow(_subscription_id: str) -> AccessProbeResult:
+        return AccessProbeResult(ok=True, resource_count=42)
+
+    subs_module.set_access_probe(allow)
+    monkeypatch.setattr(
+        "cloudguardiq.api.subscriptions._get_settings",
+        lambda: type("S", (), {"auth_disabled": False})(),
+    )
+    try:
+        client = _client()
+        r = client.post(
+            "/subscriptions",
+            json={
+                "subscription_id": "22222222-2222-2222-2222-222222222222",
+                "display_name": "Staging",
+            },
+        )
+        assert r.status_code == 201, r.text
+    finally:
+        subs_module.set_access_probe(None)
+
+
+def test_onboarding_info_endpoint() -> None:
+    client = _client()
+    r = client.get("/onboarding/info")
+    assert r.status_code == 200
+    body = r.json()
+    assert "azure_principal_id" in body
+    assert body["role"] == "Reader"
+    assert "az role assignment create" in body["az_command_template"]
+

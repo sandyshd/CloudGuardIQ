@@ -204,6 +204,10 @@ subscriptions_module.configure(
 app.include_router(billing_module.router)
 # Subscription management routes (Phase 2)
 app.include_router(subscriptions_module.router)
+# Onboarding info (Phase 2.8 -- surfaces MSI principal id for RBAC grant)
+from cloudguardiq.api import onboarding as onboarding_module  # noqa: E402
+
+app.include_router(onboarding_module.router)
 
 
 # ------------------------------------------------------------------
