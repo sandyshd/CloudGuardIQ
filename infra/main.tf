@@ -534,8 +534,9 @@ resource "azurerm_container_app" "api" {
     # Mirrors the manual Azure Portal CORS settings on the Container App.
     cors {
       allowed_origins           = ["https://${azurerm_static_web_app.frontend.default_host_name}"]
+      allowed_methods           = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
       allowed_headers           = ["*"]
-      max_age_in_seconds        = 0
+      max_age_in_seconds        = 600
       allow_credentials_enabled = false
     }
   }
