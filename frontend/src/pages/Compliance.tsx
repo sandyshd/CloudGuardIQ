@@ -1,15 +1,25 @@
+import { useState } from "react";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
+import { ComplianceKpis } from "../components/compliance/ComplianceKpis";
 import { FrameworkScorecard } from "../components/compliance/FrameworkScorecard";
 import { ControlList } from "../components/compliance/ControlList";
 import { ReportHistory } from "../components/compliance/ReportHistory";
+import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { LoadingSpinner } from "../components/common/LoadingSpinner";
 import { EmptyState } from "../components/common/EmptyState";
 import { Link2, ClipboardCheck } from "lucide-react";
+import type { FindingResult } from "../types";
 
 export function Compliance() {
-  const { subscriptions, selected: selectedSub, loading: subsLoading } = useSubscriptions();
+  const {
+    subscriptions,
+    selected: selectedSub,
+    loading: subsLoading,
+  } = useSubscriptions();
   const { findings, loading } = useFindings(selectedSub?.subscription_id);
+  const [framework, setFramework] = useState<string | null>(null);
+  const [selected, setSelected] = useState<FindingResult | null>(null);
 
   if (loading || subsLoading) return <LoadingSpinner />;
 
@@ -46,12 +56,38 @@ export function Compliance() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Compliance</h1>
-      <div className="grid gap-4 md:grid-cols-2">
-        <FrameworkScorecard findings={findings} />
-        <ReportHistory />
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Compliance</h1>
+        {selectedSub && (
+          <span className="text-sm text-[hsl(var(--muted-foreground))]">
+            {selectedSub.display_name || selectedSub.subscription_id}
+          </span>
+        )}
       </div>
-      <ControlList findings={findings} />
+
+      <ComplianceKpis findings={findings} />
+
+      <FrameworkScorecard
+        findings={findings}
+        selected={framework}
+        onSelect={setFramework}
+      />
+
+      <ControlList
+        findings={findings}
+        framework={framework}
+        onFrameworkChange={setFramework}
+        onSelect={setSelected}
+      />
+
+      <ReportHistory />
+
+      {selected && (
+        <FindingDetailPanel
+          finding={selected}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </div>
   );
 }
