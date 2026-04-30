@@ -40,7 +40,11 @@ from cloudguardiq.api import billing as billing_module
 from cloudguardiq.api import subscriptions as subscriptions_module
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
 from cloudguardiq.billing.middleware import TierEnforcementMiddleware
-from cloudguardiq.billing.pricing import PricingService, configure_pricing_service
+from cloudguardiq.billing.pricing import (
+    PricingService,
+    configure_pricing_service,
+    get_pricing_service,
+)
 from cloudguardiq.billing.quota import (
     check_ai_quota,
     check_scan_frequency_quota,
@@ -661,6 +665,51 @@ async def _persist_scan_results(
 async def health() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok", "version": "0.1.0"}
+
+
+@app.get("/health/pricing")
+async def health_pricing(_user: TokenPayload = _auth) -> dict[str, Any]:
+    """Return Azure Retail Prices cache state.
+
+    Useful operationally to confirm the Retail Prices API integration is
+    populating the cache. The endpoint reports the last refresh timestamp,
+    staleness flag, and every cached (sku, region) -> USD/month entry so an
+    operator can see at a glance whether prices were sourced from Azure or
+    fell back to a bundled default.
+    """
+    import time as _time
+
+    svc = get_pricing_service()
+    entries = [
+        {"sku": sku, "region": region, "price_usd_monthly": price}
+        for (sku, region), price in sorted(svc._cache.items())  # noqa: SLF001
+    ]
+    last_ts = svc._last_refresh_ts  # noqa: SLF001
+    return {
+        "source": "azure_retail_prices",
+        "endpoint": "https://prices.azure.com/api/retail/prices",
+        "last_refresh_ts": int(last_ts) if last_ts else None,
+        "last_refresh_age_seconds": (
+            int(_time.time() - last_ts) if last_ts else None
+        ),
+        "is_stale": svc.is_stale(),
+        "entries_count": len(entries),
+        "entries": entries,
+    }
+
+
+@app.post("/health/pricing/refresh")
+async def health_pricing_refresh(
+    _user: TokenPayload = _auth,
+) -> dict[str, Any]:
+    """Force-refresh the Retail Prices cache (admin / debug helper)."""
+    svc = get_pricing_service()
+    await svc.refresh()
+    return {
+        "status": "refreshed",
+        "entries_count": len(svc._cache),  # noqa: SLF001
+    }
+
 
 
 @app.get("/config")
