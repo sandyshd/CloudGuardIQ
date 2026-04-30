@@ -31,7 +31,9 @@ function formatScanError(err: unknown): string {
         : minutes < 60
           ? `${minutes}m`
           : `${Math.ceil(minutes / 60)}h`;
-    return `Your ${tier} plan allows one scan every ${cap} minute${cap === 1 ? "" : "s"}. Try again in ${wait}, or upgrade for more frequent scans.`;
+    const last = typeof d.last_event_at === "string" ? d.last_event_at : "";
+    const lastSuffix = last ? ` (last scan: ${last})` : "";
+    return `Your ${tier} plan allows one scan every ${cap} minute${cap === 1 ? "" : "s"}. Try again in ${wait}${lastSuffix}, or upgrade for more frequent scans.`;
   }
   if (typeof detail === "string") return detail;
   if (err instanceof Error) return err.message;

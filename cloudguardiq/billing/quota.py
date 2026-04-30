@@ -34,6 +34,7 @@ class QuotaCheck(BaseModel):
     cap: int
     current: int
     retry_after_seconds: int = 0
+    last_event_ts: int = 0
 
     def to_detail(self) -> dict[str, object]:
         """Return a JSON-friendly ``upgrade_required`` payload."""
@@ -46,6 +47,15 @@ class QuotaCheck(BaseModel):
         }
         if self.retry_after_seconds > 0:
             payload["retry_after_seconds"] = self.retry_after_seconds
+        if self.last_event_ts > 0:
+            from datetime import datetime, timezone
+
+            payload["last_event_ts"] = self.last_event_ts
+            payload["last_event_at"] = (
+                datetime.fromtimestamp(self.last_event_ts, tz=timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
         return payload
 
 
@@ -141,6 +151,7 @@ async def check_scan_frequency_quota(
             cap=cap_minutes,
             current=0,
             retry_after_seconds=0,
+            last_event_ts=0,
         )
 
     elapsed = max(0, int(_time.time()) - last_ts)
@@ -154,4 +165,5 @@ async def check_scan_frequency_quota(
         cap=cap_minutes,
         current=elapsed // 60,
         retry_after_seconds=retry_after,
+        last_event_ts=last_ts,
     )
