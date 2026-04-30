@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -39,6 +40,7 @@ from cloudguardiq.api import billing as billing_module
 from cloudguardiq.api import subscriptions as subscriptions_module
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
 from cloudguardiq.billing.middleware import TierEnforcementMiddleware
+from cloudguardiq.billing.pricing import PricingService, configure_pricing_service
 from cloudguardiq.billing.quota import (
     check_ai_quota,
     check_scan_frequency_quota,
@@ -166,6 +168,19 @@ async def lifespan(
         billing_repository=_billing_repo,
         settings=settings,
     )
+
+    # Wire the Azure Retail Prices service. Warmup pulls the last-known
+    # cache from Cosmos so the very first scan after a cold start has
+    # live prices; the refresh runs in the background so startup is not
+    # blocked on a public-internet call.
+    pricing_service = PricingService(repo=_repo)
+    configure_pricing_service(pricing_service)
+    try:
+        await pricing_service.warmup()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Pricing warmup failed: %s", exc)
+    if pricing_service.is_stale():
+        asyncio.create_task(pricing_service.refresh())
 
     yield
 

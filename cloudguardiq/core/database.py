@@ -352,6 +352,37 @@ class CosmosRepository:
             return dict(item)
         return None
 
+    async def save_pricing_cache(
+        self, *, sku: str, region: str, price_usd_monthly: float,
+    ) -> None:
+        """Upsert a single Azure Retail Price into the system container.
+
+        Stored under partition_key ``pricing_cache`` so the Pricing
+        service can scan all entries with one cheap single-partition
+        query at startup.
+        """
+        import time as _time
+
+        doc: dict[str, Any] = {
+            "id": f"pricing:{sku}:{region}",
+            "type": "pricing_cache",
+            "sku": sku,
+            "region": region,
+            "price_usd_monthly": float(price_usd_monthly),
+            "refreshed_ts": int(_time.time()),
+        }
+        await self._system_container().upsert_item(doc)
+
+    async def load_pricing_cache(self) -> list[dict[str, Any]]:
+        """Return every cached Azure Retail Price doc (single partition)."""
+        query = "SELECT * FROM c WHERE c.type = 'pricing_cache'"
+        items: list[dict[str, Any]] = []
+        async for item in self._system_container().query_items(
+            query=query, partition_key="pricing_cache",
+        ):
+            items.append(dict(item))
+        return items
+
     async def get_latest_scan_for_subscription(
         self, subscription_id: str
     ) -> dict[str, Any] | None:
