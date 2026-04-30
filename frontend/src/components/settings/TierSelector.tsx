@@ -18,10 +18,17 @@ interface PlanDef {
   features: string[];
 }
 
-// Pricing axes intentionally cloud-agnostic: subscriptions, resources,
-// scan frequency, AI usage. No vendor capability (Defender, GuardDuty,
-// Security Command Center) is gated behind a paywall — those signals are
-// auto-detected and used to enrich findings on every plan.
+// Plan rank used to choose Upgrade vs Downgrade verb. Higher number == richer
+// plan. Pricing axes are intentionally cloud-agnostic: subscriptions,
+// resources, scan frequency, AI usage. No vendor capability (Defender,
+// GuardDuty, Security Command Center) is gated behind a paywall -- those
+// signals are auto-detected and used to enrich findings on every plan.
+const TIER_RANK: Record<BillingTier, number> = {
+  FREE: 0,
+  PRO: 1,
+  ENTERPRISE: 2,
+};
+
 const PLANS: PlanDef[] = [
   {
     tier: "FREE",
@@ -113,6 +120,12 @@ export function TierSelector() {
         <div className="grid gap-3 md:grid-cols-3">
           {PLANS.map((plan) => {
             const isCurrent = plan.tier === current;
+            const cmp = TIER_RANK[plan.tier] - TIER_RANK[current];
+            const isUpgrade = cmp > 0;
+            // Self-service downgrade is not yet wired up (Stripe Customer
+            // Portal endpoint is pending). Show the verb but keep the button
+            // disabled with an explanatory tooltip until the portal lands.
+            const downgradeReady = false;
             return (
               <div
                 key={plan.tier}
@@ -149,17 +162,26 @@ export function TierSelector() {
                     <Button variant="outline" className="w-full" disabled>
                       Current Plan
                     </Button>
-                  ) : plan.tier === "FREE" ? (
-                    <Button variant="outline" className="w-full" disabled>
-                      Downgrade in portal
-                    </Button>
-                  ) : (
+                  ) : isUpgrade ? (
                     <Button
                       className="w-full"
                       onClick={() => handleUpgrade(plan.tier)}
                       disabled={busyTier !== null}
                     >
                       {busyTier === plan.tier ? "Redirecting…" : "Upgrade"}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      disabled={!downgradeReady}
+                      title={
+                        downgradeReady
+                          ? undefined
+                          : "Self-service downgrade is coming soon. Contact support to change your plan."
+                      }
+                    >
+                      Downgrade
                     </Button>
                   )}
                 </div>
