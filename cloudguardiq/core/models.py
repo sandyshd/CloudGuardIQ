@@ -214,14 +214,22 @@ class FindingResult(BaseModel):
         hash because that would silently collide between unrelated rows.
         """
         snap = self.resource_snapshot
-        if snap is None:
-            return ""
-        resource_key = snap.id or snap.resource_id or snap.resource_name
+        resource_key = ""
+        sub = ""
+        if snap is not None:
+            resource_key = snap.id or snap.resource_id or snap.resource_name
+            sub = snap.subscription_id or ""
+        elif self.snapshot_id:
+            # Older rule call sites pass snapshot_id only (no full snapshot).
+            # Hash the snapshot id alone so re-scans still produce a stable
+            # finding_id; otherwise the auto-resolve sweep flips every prior
+            # finding to RESOLVED on the next scan.
+            resource_key = str(self.snapshot_id)
         if not (self.rule_id and resource_key):
             return ""
         material = "|".join([
             self.tenant_id or "",
-            snap.subscription_id or "",
+            sub,
             self.rule_id,
             resource_key,
         ])

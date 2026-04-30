@@ -193,14 +193,31 @@ class CosmosRepository:
 
         now_iso = _dt.now(_tz.utc).isoformat()
         if existing is not None:
-            # Preserve user-driven lifecycle fields
+            # Preserve user-driven lifecycle fields. We treat the legacy
+            # auto-resolve sweep ('auto:scan') as a SYSTEM action: if the
+            # rule re-detects the same finding now, we must re-open it
+            # rather than keep stamping it RESOLVED. Without this, a
+            # transient mismatch between scans (e.g. a rule that previously
+            # emitted a UUID-keyed finding and now emits a stable id) leaves
+            # the doc stuck in RESOLVED forever.
             preserved_status = existing.get("status")
-            if preserved_status in ("RESOLVED", "SNOOZED", "APPLIED"):
+            preserved_by = existing.get("resolved_by") or ""
+            user_resolved = preserved_status in ("SNOOZED", "APPLIED") or (
+                preserved_status == "RESOLVED" and preserved_by != "auto:scan"
+            )
+            if user_resolved:
                 doc["status"] = preserved_status
                 for f in ("resolved_at", "resolved_by",
                           "snoozed_until", "applied_at"):
                     if existing.get(f) is not None:
                         doc[f] = existing[f]
+            elif preserved_status == "RESOLVED" and preserved_by == "auto:scan":
+                # Re-detected on a fresh scan -- explicitly clear the prior
+                # auto-resolution so the row reappears in the OPEN view.
+                doc["status"] = "OPEN"
+                doc["resolved_at"] = None
+                doc["resolved_by"] = None
+                doc["auto_resolved_scan_id"] = None
             # Re-scan tracking
             doc["first_seen_at"] = existing.get("first_seen_at", now_iso)
             doc["seen_count"] = int(existing.get("seen_count", 0)) + 1

@@ -120,7 +120,7 @@ export function Findings() {
   // long tail of historical RESOLVED docs. Migration to deterministic ids
   // (commit 7c2c945) auto-resolved every legacy UUID-keyed finding, so
   // showing all statuses by default flooded the table with old rows.
-  const [statusFilter, setStatusFilter] = useState<FindingStatus | "ALL">("OPEN");
+  const [statusFilter, setStatusFilter] = useState<FindingStatus | "ALL">("ALL");
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const scanInFlight = useRef(false);
@@ -325,11 +325,11 @@ export function Findings() {
             setStatusFilter(e.target.value as FindingStatus | "ALL")
           }
         >
+          <option value="ALL">All Statuses</option>
           <option value="OPEN">Open</option>
           <option value="RESOLVED">Resolved</option>
           <option value="SNOOZED">Snoozed</option>
           <option value="APPLIED">Applied</option>
-          <option value="ALL">All Statuses</option>
         </select>
         <select
           className="rounded border px-3 py-2 text-sm bg-[hsl(var(--background))]"
@@ -346,14 +346,14 @@ export function Findings() {
         </select>
         {(severityFilter !== "ALL" ||
           typeFilter !== "ALL" ||
-          statusFilter !== "OPEN") && (
+          statusFilter !== "ALL") && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
               setSeverityFilter("ALL");
               setTypeFilter("ALL");
-              setStatusFilter("OPEN");
+              setStatusFilter("ALL");
             }}
           >
             Clear filters
@@ -368,7 +368,7 @@ export function Findings() {
           Common right after the deterministic-id migration: every legacy
           finding got auto-resolved on the first new scan, so the default
           'Open' view is empty even though the API returned rows. */}
-      {filtered.length === 0 && findings.length > 0 && statusFilter === "OPEN" && (
+      {filtered.length === 0 && findings.length > 0 && statusFilter !== "ALL" && (
         <Alert>
           <AlertDescription className="flex items-center justify-between gap-3">
             <span>
@@ -426,6 +426,7 @@ export function Findings() {
     </div>
   );
 }
+
 
 
 
