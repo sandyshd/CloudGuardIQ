@@ -98,3 +98,20 @@ class SubscriptionTier(StrEnum):
     FREE = "FREE"
     PRO = "PRO"
     ENTERPRISE = "ENTERPRISE"
+
+
+class FindingStatus(StrEnum):
+    """Lifecycle state of a :class:`FindingResult`.
+
+    A finding starts as ``OPEN`` when persisted by a scan. The user
+    can move it to ``RESOLVED`` (issue handled outside CloudGuardIQ),
+    ``SNOOZED`` (defer for N days), or ``APPLIED`` (auto-fix issued
+    via the Self-Heal flow). Subsequent scans that re-detect the same
+    underlying issue may flip the row back to ``OPEN``.
+    """
+
+    OPEN = "OPEN"
+    RESOLVED = "RESOLVED"
+    SNOOZED = "SNOOZED"
+    APPLIED = "APPLIED"
+

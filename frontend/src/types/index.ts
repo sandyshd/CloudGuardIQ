@@ -15,6 +15,7 @@ export type CloudProvider = "AZURE" | "AWS" | "GCP" | "TERRAFORM";
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFORMATIONAL";
 export type FindingType = "SECURITY" | "FINOPS" | "COMPLIANCE";
 export type RemediationStatus = "PENDING" | "IN_PROGRESS" | "APPLIED" | "FAILED" | "DISMISSED";
+export type FindingStatus = "OPEN" | "RESOLVED" | "SNOOZED" | "APPLIED";
 
 export interface ResourceSnapshot {
   id: string;
@@ -47,6 +48,11 @@ export interface FindingResult {
   waste_monthly_usd: number;
   priority_score: number;
   detected_at: string;
+  status?: FindingStatus;
+  resolved_at?: string | null;
+  resolved_by?: string;
+  snoozed_until?: string | null;
+  applied_at?: string | null;
 }
 
 export interface RemediationCard {

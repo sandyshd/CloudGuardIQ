@@ -14,6 +14,7 @@ from cloudguardiq.core.enums import (
     CloudProvider,
     DataTier,
     FindingCategory,
+    FindingStatus,
     FindingType,
     RemediationStatus,
     Severity,
@@ -125,6 +126,15 @@ class FindingResult(BaseModel):
     waste_monthly_usd: float = 0.0
     priority_score: float = 0.0
     detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # ------------------------------------------------------------------
+    # Lifecycle (Phase 2.9 -- finding state transitions)
+    # ------------------------------------------------------------------
+    status: FindingStatus = FindingStatus.OPEN
+    resolved_at: datetime | None = None
+    resolved_by: str = ""
+    snoozed_until: datetime | None = None
+    applied_at: datetime | None = None
 
     # ------------------------------------------------------------------
     # Backward-compatible fields / aliases for legacy code

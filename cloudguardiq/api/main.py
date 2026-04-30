@@ -8,11 +8,13 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
 from cloudguardiq.adapters.azure_adapter import AzureAdapter
 from cloudguardiq.adapters.native_scanner import NativeScanner
@@ -43,7 +45,7 @@ from cloudguardiq.billing.stripe_service import StripeService
 from cloudguardiq.billing.usage import UsageRepository
 from cloudguardiq.core.config import get_settings
 from cloudguardiq.core.database import CosmosRepository
-from cloudguardiq.core.enums import DataTier, FindingType, Severity
+from cloudguardiq.core.enums import DataTier, FindingStatus, FindingType, Severity
 from cloudguardiq.core.models import (
     FindingResult,
     RemediationCard,
@@ -838,6 +840,106 @@ async def get_finding(
             return f
 
     raise HTTPException(status_code=404, detail="Finding not found")
+
+
+class FindingActionRequest(BaseModel):
+    """Body for POST /findings/{id}/resolve|snooze|apply.
+
+    The ``subscription_id`` is required so the route can hit the
+    findings container's partition key directly. Without it the
+    handler would fall back to a cross-partition scan.
+    """
+
+    subscription_id: str
+    days: int = 7  # only used by /snooze
+
+
+async def _mutate_finding_status(
+    finding_id: str,
+    body: FindingActionRequest,
+    user: TokenPayload,
+    new_status: FindingStatus,
+    extras: dict[str, Any],
+) -> FindingResult:
+    """Shared body for resolve/snooze/apply -- validates ownership and
+    delegates to the repository's atomic update method."""
+    sub_id = await _validate_owned_subscription(user, body.subscription_id)
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    bind_context(subscription_id=sub_id, provider="azure")
+
+    repo = get_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Persistence layer unavailable",
+        )
+    updated = await repo.update_finding_status(
+        finding_id=finding_id,
+        subscription_id=sub_id,
+        tenant_id=tenant_id,
+        status=new_status.value,
+        extras=extras,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return updated
+
+
+@app.post("/findings/{finding_id}/resolve", response_model=FindingResult)
+async def resolve_finding(
+    finding_id: str,
+    body: FindingActionRequest,
+    user: TokenPayload = _auth,
+) -> FindingResult:
+    """Mark a finding as RESOLVED.
+
+    The user is asserting they have addressed the underlying issue
+    outside of CloudGuardIQ. A subsequent scan that re-detects the same
+    issue will flip the status back to OPEN automatically.
+    """
+    settings = get_settings()
+    actor = "" if settings.auth_disabled else (user.sub or "")
+    return await _mutate_finding_status(
+        finding_id, body, user, FindingStatus.RESOLVED,
+        extras={
+            "resolved_at": datetime.now(timezone.utc),
+            "resolved_by": actor,
+        },
+    )
+
+
+@app.post("/findings/{finding_id}/snooze", response_model=FindingResult)
+async def snooze_finding(
+    finding_id: str,
+    body: FindingActionRequest,
+    user: TokenPayload = _auth,
+) -> FindingResult:
+    """Snooze a finding for ``body.days`` days (default 7)."""
+    days = max(1, min(body.days, 90))
+    return await _mutate_finding_status(
+        finding_id, body, user, FindingStatus.SNOOZED,
+        extras={
+            "snoozed_until": datetime.now(timezone.utc) + timedelta(days=days),
+        },
+    )
+
+
+@app.post("/findings/{finding_id}/apply", response_model=FindingResult)
+async def apply_finding_fix(
+    finding_id: str,
+    body: FindingActionRequest,
+    user: TokenPayload = _auth,
+) -> FindingResult:
+    """Mark a finding as APPLIED (Self-Heal / terraform fix dispatched).
+
+    This route only stamps the lifecycle field; the actual self-healing
+    pipeline is invoked separately by the Self-Heal flow.
+    """
+    return await _mutate_finding_status(
+        finding_id, body, user, FindingStatus.APPLIED,
+        extras={"applied_at": datetime.now(timezone.utc)},
+    )
 
 
 @app.get("/findings/{finding_id}/remediation", response_model=RemediationCard)

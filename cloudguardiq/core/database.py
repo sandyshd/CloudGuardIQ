@@ -168,6 +168,62 @@ class CosmosRepository:
         )
         return finding.finding_id
 
+    async def update_finding_status(
+        self,
+        finding_id: str,
+        subscription_id: str,
+        *,
+        tenant_id: str = "",
+        status: str,
+        extras: dict[str, Any] | None = None,
+    ) -> FindingResult | None:
+        """Mutate a finding's lifecycle status in place.
+
+        Reads the document by partition key, validates tenant ownership
+        (so a guessed finding_id from a different tenant cannot be
+        mutated), merges in ``status`` plus any ``extras`` (resolved_at,
+        snoozed_until, applied_at, resolved_by), and upserts back.
+
+        Returns the updated finding, or ``None`` if it does not exist or
+        belongs to a different tenant.
+        """
+        try:
+            item = await self._findings_container().read_item(
+                item=finding_id, partition_key=subscription_id,
+            )
+        except Exception as exc:
+            logger.info(
+                "update_finding_status: read_item miss for %s in %s: %s",
+                finding_id, subscription_id, exc,
+            )
+            return None
+
+        # Tenant defence-in-depth: guard against guessed finding_ids from
+        # other tenants flipping somebody else's status.
+        if tenant_id and str(item.get("tenant_id", "")) not in ("", tenant_id):
+            logger.warning(
+                "update_finding_status: tenant mismatch finding=%s "
+                "expected=%s actual=%s",
+                finding_id, tenant_id, item.get("tenant_id"),
+            )
+            return None
+
+        item["status"] = status
+        if extras:
+            for k, v in extras.items():
+                # datetime -> ISO string for Cosmos JSON storage.
+                if hasattr(v, "isoformat"):
+                    item[k] = v.isoformat()
+                else:
+                    item[k] = v
+
+        await self._findings_container().upsert_item(item)
+        logger.info(
+            "Updated finding %s status=%s (tenant=%s)",
+            finding_id, status, tenant_id or "-",
+        )
+        return FindingResult.model_validate(item)
+
     async def get_findings(
         self,
         subscription_id: str,

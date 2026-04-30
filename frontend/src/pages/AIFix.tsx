@@ -146,14 +146,14 @@ export function AIFix() {
   const onApply = async () => {
     setAction("applying");
     setActionMessage(null);
-    await applyTerraformFix(finding.finding_id);
+    await applyTerraformFix(finding.finding_id, finding.resource_snapshot?.subscription_id ?? "");
     setAction("idle");
     setActionMessage("Terraform apply requested. Tracking in Self-Heal.");
   };
   const onResolve = async () => {
     setAction("resolving");
     setActionMessage(null);
-    await markFindingResolved(finding.finding_id);
+    await markFindingResolved(finding.finding_id, finding.resource_snapshot?.subscription_id ?? "");
     setAction("idle");
     setActionMessage("Marked as resolved.");
     navigate("/findings");
@@ -161,7 +161,7 @@ export function AIFix() {
   const onSnooze = async () => {
     setAction("snoozing");
     setActionMessage(null);
-    await snoozeFinding(finding.finding_id, 7);
+    await snoozeFinding(finding.finding_id, finding.resource_snapshot?.subscription_id ?? "", 7);
     setAction("idle");
     setActionMessage("Snoozed for 7 days.");
   };
