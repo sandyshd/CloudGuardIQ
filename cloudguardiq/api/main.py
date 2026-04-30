@@ -618,15 +618,32 @@ async def _persist_scan_results(
         except Exception as exc:
             logger.warning("Failed to save snapshot %s: %s", snap.id, exc)
 
-    # Save findings
+    # Save findings (lifecycle-aware: stable id + state preservation)
+    seen_ids: set[str] = set()
+    tenant_for_scan = ""
     for finding in findings:
         try:
-            await repo.save_finding(finding)
+            await repo.save_finding(finding, scan_id=scan_id)
+            seen_ids.add(finding.finding_id)
+            if not tenant_for_scan and finding.tenant_id:
+                tenant_for_scan = finding.tenant_id
         except Exception as exc:
             logger.warning(
                 "Failed to save finding %s: %s",
                 finding.finding_id, exc,
             )
+
+    # Auto-resolve OPEN findings that were not re-detected this scan -- the
+    # underlying issue was either fixed or the resource is gone. Best-effort:
+    # a Cosmos hiccup here must not fail the scan. The previous OPEN rows
+    # stay OPEN if this call fails; the next successful scan will retry.
+    try:
+        await repo.mark_unseen_findings_resolved(
+            subscription_id, seen_ids, scan_id,
+            tenant_id=tenant_for_scan or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Auto-resolve sweep failed for scan %s: %s", scan_id, exc)
 
     # Save scan summary
     critical = sum(

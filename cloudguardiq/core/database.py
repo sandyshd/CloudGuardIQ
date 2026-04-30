@@ -147,8 +147,30 @@ class CosmosRepository:
     # Finding operations  (partition key: /subscription_id)
     # ------------------------------------------------------------------
 
-    async def save_finding(self, finding: FindingResult) -> str:
-        """Persist a FindingResult. Returns the finding_id."""
+    async def save_finding(
+        self, finding: FindingResult, *, scan_id: str = "",
+    ) -> str:
+        """Persist a FindingResult, merging lifecycle state with any prior row.
+
+        Re-scans now write to a deterministic ``finding_id`` (a hash of
+        ``rule_id + resource_id + tenant_id``), so the second scan of the same
+        underlying issue lands on the same Cosmos doc as the first. To avoid
+        clobbering user-driven state, we read the existing doc first and
+        preserve fields that the policy engine has no opinion about:
+
+        * ``status`` is preserved when it is ``RESOLVED``, ``SNOOZED``, or
+          ``APPLIED`` -- the user already triaged this finding and the engine
+          should not silently flip it back to ``OPEN``.
+        * ``resolved_at`` / ``resolved_by`` / ``snoozed_until`` / ``applied_at``
+          carry forward verbatim.
+        * ``first_seen_at`` is pinned to the original detection.
+        * ``seen_count`` is incremented; ``last_seen_at`` and
+          ``last_seen_scan_id`` are stamped with this scan.
+        """
+        import time as _time
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
         doc = finding.model_dump(mode="json")
         sub_id = (
             finding.resource_snapshot.subscription_id
@@ -156,17 +178,113 @@ class CosmosRepository:
             else "unknown"
         )
         doc["id"] = finding.finding_id
-        # Root-level subscription_id for partition key /subscription_id
         doc["subscription_id"] = sub_id
-        # Root-level tenant_id for tenant-scoped queries (Phase 1 isolation)
         doc["tenant_id"] = finding.tenant_id or (
             finding.resource_snapshot.tenant_id if finding.resource_snapshot else ""
         )
+
+        existing: dict[str, Any] | None = None
+        try:
+            existing = await self._findings_container().read_item(
+                item=finding.finding_id, partition_key=sub_id,
+            )
+        except Exception:  # noqa: BLE001
+            existing = None
+
+        now_iso = _dt.now(_tz.utc).isoformat()
+        if existing is not None:
+            # Preserve user-driven lifecycle fields
+            preserved_status = existing.get("status")
+            if preserved_status in ("RESOLVED", "SNOOZED", "APPLIED"):
+                doc["status"] = preserved_status
+                for f in ("resolved_at", "resolved_by",
+                          "snoozed_until", "applied_at"):
+                    if existing.get(f) is not None:
+                        doc[f] = existing[f]
+            # Re-scan tracking
+            doc["first_seen_at"] = existing.get("first_seen_at", now_iso)
+            doc["seen_count"] = int(existing.get("seen_count", 0)) + 1
+        else:
+            doc["first_seen_at"] = doc.get("first_seen_at") or now_iso
+            doc["seen_count"] = 1
+        doc["last_seen_at"] = now_iso
+        if scan_id:
+            doc["last_seen_scan_id"] = scan_id
+        doc["updated_ts"] = int(_time.time())
+
         await self._findings_container().upsert_item(doc)
         logger.info(
-            "Saved finding %s (tenant=%s)", finding.finding_id, doc["tenant_id"] or "-"
+            "Saved finding %s (tenant=%s, status=%s, seen=%d)",
+            finding.finding_id,
+            doc["tenant_id"] or "-",
+            doc.get("status", "OPEN"),
+            doc.get("seen_count", 1),
         )
         return finding.finding_id
+
+    async def mark_unseen_findings_resolved(
+        self,
+        subscription_id: str,
+        seen_finding_ids: set[str],
+        scan_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> int:
+        """Auto-resolve OPEN findings that were not re-detected by *scan_id*.
+
+        Called at the end of ``_persist_scan_results``: any OPEN row in the
+        subscription whose ``id`` is missing from *seen_finding_ids* must
+        correspond to an issue the customer fixed (or a resource that was
+        deleted) since the previous scan. We flip ``status`` to ``RESOLVED``
+        and stamp ``resolved_at`` / ``resolved_by='auto:scan'`` so the row
+        falls out of the active dashboard while still being available for
+        audit. Returns the number of findings auto-resolved.
+        """
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        query = (
+            "SELECT * FROM c WHERE c.subscription_id = @sub "
+            "AND c.status = 'OPEN'"
+        )
+        params: list[dict[str, object]] = [
+            {"name": "@sub", "value": subscription_id},
+        ]
+        candidates: list[dict[str, Any]] = []
+        async for item in self._findings_container().query_items(
+            query=query, parameters=params, partition_key=subscription_id,
+        ):
+            candidates.append(dict(item))
+
+        if tenant_id:
+            candidates = [
+                c for c in candidates
+                if str(c.get("tenant_id", "")) in ("", tenant_id)
+            ]
+
+        now_iso = _dt.now(_tz.utc).isoformat()
+        resolved = 0
+        for item in candidates:
+            fid = item.get("id")
+            if not isinstance(fid, str) or fid in seen_finding_ids:
+                continue
+            item["status"] = "RESOLVED"
+            item["resolved_at"] = now_iso
+            item["resolved_by"] = "auto:scan"
+            item["auto_resolved_scan_id"] = scan_id
+            try:
+                await self._findings_container().upsert_item(item)
+                resolved += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Auto-resolve failed for %s: %s", fid, exc,
+                )
+        if resolved:
+            logger.info(
+                "Auto-resolved %d unseen findings for sub %s (scan=%s)",
+                resolved, subscription_id, scan_id,
+            )
+        return resolved
 
     async def update_finding_status(
         self,

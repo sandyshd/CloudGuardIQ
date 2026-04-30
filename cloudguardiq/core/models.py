@@ -21,6 +21,19 @@ from cloudguardiq.core.enums import (
 )
 
 
+def _looks_like_default_uuid(value: str) -> bool:
+    """Return True when *value* looks like an auto-generated UUID4 string."""
+    if not value or len(value) != 36:
+        return False
+    try:
+        from uuid import UUID
+
+        UUID(value, version=4)
+        return True
+    except (ValueError, AttributeError):
+        return False
+
+
 class ResourceSnapshot(BaseModel):
     """Canonical representation of a cloud resource at a point in time."""
 
@@ -137,6 +150,18 @@ class FindingResult(BaseModel):
     applied_at: datetime | None = None
 
     # ------------------------------------------------------------------
+    # Re-scan tracking -- populated by save_finding lifecycle merge
+    # ------------------------------------------------------------------
+    first_seen_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    last_seen_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    last_seen_scan_id: str = ""
+    seen_count: int = 1
+
+    # ------------------------------------------------------------------
     # Backward-compatible fields / aliases for legacy code
     # ------------------------------------------------------------------
     snapshot_id: Any | None = Field(default=None, exclude=True)
@@ -153,7 +178,20 @@ class FindingResult(BaseModel):
         return self.finding_id
 
     def model_post_init(self, __context: Any) -> None:
-        """Populate rule_name from title and finding_type from category if needed."""
+        """Populate rule_name, finding_type, and a deterministic finding_id.
+
+        The default ``finding_id`` is a fresh UUID, which means consecutive
+        scans of the same resource produce duplicate rows in Cosmos. To make
+        re-scans idempotent (so existing OPEN/SNOOZED/RESOLVED state is
+        preserved across scans), we replace the UUID with a stable hash of
+        ``(tenant_id, subscription_id, rule_id, resource_id)`` whenever the
+        caller did not explicitly supply one.
+
+        Detecting "caller did not supply an id" is done structurally: the
+        Pydantic default factory always produces a UUID4 string of length 36,
+        so any value matching that shape is treated as auto-generated and
+        replaced. Callers that pass a custom id are honoured verbatim.
+        """
         if self.title and not self.rule_name:
             self.rule_name = self.title
         if self.category is not None and self.finding_type == FindingType.SECURITY:
@@ -161,6 +199,33 @@ class FindingResult(BaseModel):
                 self.finding_type = FindingType.FINOPS
             elif self.category == FindingCategory.COMPLIANCE:
                 self.finding_type = FindingType.COMPLIANCE
+
+        if _looks_like_default_uuid(self.finding_id):
+            stable = self._compute_stable_id()
+            if stable:
+                self.finding_id = stable
+
+    def _compute_stable_id(self) -> str:
+        """Return a deterministic id derived from rule + resource + tenant.
+
+        Returns ``""`` (caller keeps its UUID) when there is not enough
+        information to build a stable id -- e.g. legacy callers that build a
+        FindingResult without a ResourceSnapshot. We never produce a partial
+        hash because that would silently collide between unrelated rows.
+        """
+        snap = self.resource_snapshot
+        if snap is None:
+            return ""
+        resource_key = snap.id or snap.resource_id or snap.resource_name
+        if not (self.rule_id and resource_key):
+            return ""
+        material = "|".join([
+            self.tenant_id or "",
+            snap.subscription_id or "",
+            self.rule_id,
+            resource_key,
+        ])
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     def compute_priority_score(
         self,
