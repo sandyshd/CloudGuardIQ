@@ -9,7 +9,7 @@ import { Button } from "../components/ui/button";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Scan, Link2, AlertTriangle, AlertOctagon, Info, ShieldAlert, Activity } from "lucide-react";
 import { cn } from "../lib/utils";
-import type { FindingResult, Severity, FindingType } from "../types";
+import type { FindingResult, Severity, FindingType, FindingStatus } from "../types";
 
 function formatScanError(err: unknown): string {
   // Surface FastAPI's HTTPException detail (object or string) when present,
@@ -52,37 +52,45 @@ const SEVERITY_ORDER: Severity[] = [
   "INFORMATIONAL",
 ];
 
+// Tiles share the Dashboard MetricCard look (white background, neutral
+// border) so the page reads consistently with the rest of the app. Severity
+// is conveyed by the label colour and the icon tint, not the tile fill.
 const SEVERITY_META: Record<
   Severity,
-  { label: string; tone: string; ring: string; icon: typeof AlertOctagon }
+  { label: string; valueClass: string; iconClass: string; ring: string; icon: typeof AlertOctagon }
 > = {
   CRITICAL: {
     label: "Critical",
-    tone: "text-red-700 bg-red-50 border-red-200",
+    valueClass: "text-red-600",
+    iconClass: "text-red-500",
     ring: "ring-red-500",
     icon: AlertOctagon,
   },
   HIGH: {
     label: "High",
-    tone: "text-orange-700 bg-orange-50 border-orange-200",
+    valueClass: "text-orange-600",
+    iconClass: "text-orange-500",
     ring: "ring-orange-500",
     icon: AlertTriangle,
   },
   MEDIUM: {
     label: "Medium",
-    tone: "text-yellow-700 bg-yellow-50 border-yellow-200",
+    valueClass: "text-yellow-600",
+    iconClass: "text-yellow-500",
     ring: "ring-yellow-500",
     icon: ShieldAlert,
   },
   LOW: {
     label: "Low",
-    tone: "text-blue-700 bg-blue-50 border-blue-200",
+    valueClass: "text-blue-600",
+    iconClass: "text-blue-500",
     ring: "ring-blue-500",
     icon: Info,
   },
   INFORMATIONAL: {
     label: "Info",
-    tone: "text-slate-700 bg-slate-50 border-slate-200",
+    valueClass: "text-slate-600",
+    iconClass: "text-slate-500",
     ring: "ring-slate-500",
     icon: Activity,
   },
@@ -108,6 +116,11 @@ export function Findings() {
   const [selected, setSelected] = useState<FindingResult | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Severity | "ALL">("ALL");
   const [typeFilter, setTypeFilter] = useState<FindingType | "ALL">("ALL");
+  // Default to OPEN: most users want to see actionable findings, not the
+  // long tail of historical RESOLVED docs. Migration to deterministic ids
+  // (commit 7c2c945) auto-resolved every legacy UUID-keyed finding, so
+  // showing all statuses by default flooded the table with old rows.
+  const [statusFilter, setStatusFilter] = useState<FindingStatus | "ALL">("OPEN");
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const scanInFlight = useRef(false);
@@ -127,17 +140,20 @@ export function Findings() {
     };
     for (const f of findings) {
       if (typeFilter !== "ALL" && f.finding_type !== typeFilter) continue;
+      if (statusFilter !== "ALL" && (f.status ?? "OPEN") !== statusFilter) continue;
       base[f.severity] = (base[f.severity] ?? 0) + 1;
     }
     return base;
-  }, [findings, typeFilter]);
+  }, [findings, typeFilter, statusFilter]);
 
   const totalCount = useMemo(
     () =>
-      findings.filter(
-        (f) => typeFilter === "ALL" || f.finding_type === typeFilter,
-      ).length,
-    [findings, typeFilter],
+      findings.filter((f) => {
+        if (typeFilter !== "ALL" && f.finding_type !== typeFilter) return false;
+        if (statusFilter !== "ALL" && (f.status ?? "OPEN") !== statusFilter) return false;
+        return true;
+      }).length,
+    [findings, typeFilter, statusFilter],
   );
 
   const handleRunScan = async () => {
@@ -164,6 +180,7 @@ export function Findings() {
   const filtered = findings.filter((f) => {
     if (severityFilter !== "ALL" && f.severity !== severityFilter) return false;
     if (typeFilter !== "ALL" && f.finding_type !== typeFilter) return false;
+    if (statusFilter !== "ALL" && (f.status ?? "OPEN") !== statusFilter) return false;
     return true;
   });
 
@@ -247,23 +264,24 @@ export function Findings() {
               type="button"
               onClick={() => setSeverityFilter(active ? "ALL" : sev)}
               className={cn(
-                "flex flex-col items-start rounded-lg border p-4 text-left cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2",
-                meta.tone,
+                "flex flex-col items-start rounded-lg border bg-[hsl(var(--background))] p-4 text-left cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2",
                 active
-                  ? cn("ring-1 shadow-sm", meta.ring)
-                  : "ring-0",
+                  ? cn("border-blue-500 ring-1 shadow-sm", meta.ring)
+                  : "border-[hsl(var(--border))] ring-0",
               )}
               aria-pressed={active}
               title={`Filter by ${meta.label}`}
             >
               <div className="flex w-full items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wide">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
                   {meta.label}
                 </span>
-                <Icon className="h-4 w-4 opacity-70" />
+                <Icon className={cn("h-4 w-4", meta.iconClass)} />
               </div>
-              <span className="mt-1 text-3xl font-bold">{count}</span>
-              <span className="mt-1 text-xs opacity-70">
+              <span className={cn("mt-1 text-3xl font-bold", meta.valueClass)}>
+                {count}
+              </span>
+              <span className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
                 {totalCount > 0
                   ? `${Math.round((count / totalCount) * 100)}% of total`
                   : "—"}
@@ -302,6 +320,19 @@ export function Findings() {
         </select>
         <select
           className="rounded border px-3 py-2 text-sm bg-[hsl(var(--background))]"
+          value={statusFilter}
+          onChange={(e) =>
+            setStatusFilter(e.target.value as FindingStatus | "ALL")
+          }
+        >
+          <option value="OPEN">Open</option>
+          <option value="RESOLVED">Resolved</option>
+          <option value="SNOOZED">Snoozed</option>
+          <option value="APPLIED">Applied</option>
+          <option value="ALL">All Statuses</option>
+        </select>
+        <select
+          className="rounded border px-3 py-2 text-sm bg-[hsl(var(--background))]"
           value={dropdownValue}
           onChange={(e) => setSubscriptionFilter(e.target.value)}
         >
@@ -313,13 +344,16 @@ export function Findings() {
             </option>
           ))}
         </select>
-        {(severityFilter !== "ALL" || typeFilter !== "ALL") && (
+        {(severityFilter !== "ALL" ||
+          typeFilter !== "ALL" ||
+          statusFilter !== "OPEN") && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
               setSeverityFilter("ALL");
               setTypeFilter("ALL");
+              setStatusFilter("OPEN");
             }}
           >
             Clear filters
@@ -371,4 +405,8 @@ export function Findings() {
     </div>
   );
 }
+
+
+
+
 
