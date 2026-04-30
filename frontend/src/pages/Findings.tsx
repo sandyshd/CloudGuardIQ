@@ -364,6 +364,27 @@ export function Findings() {
         </span>
       </div>
 
+      {/* Banner when the status filter hides everything but data exists.
+          Common right after the deterministic-id migration: every legacy
+          finding got auto-resolved on the first new scan, so the default
+          'Open' view is empty even though the API returned rows. */}
+      {filtered.length === 0 && findings.length > 0 && statusFilter === "OPEN" && (
+        <Alert>
+          <AlertDescription className="flex items-center justify-between gap-3">
+            <span>
+              {findings.length} finding{findings.length === 1 ? "" : "s"} hidden by the
+              "Open" status filter. They may be resolved, snoozed, or applied.
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setStatusFilter("ALL")}
+            >
+              Show all statuses
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
       {findings.length === 0 && !error ? (
         subscriptions.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 text-center">
@@ -405,6 +426,7 @@ export function Findings() {
     </div>
   );
 }
+
 
 
 
