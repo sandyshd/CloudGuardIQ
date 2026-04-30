@@ -126,17 +126,30 @@ class ScanPipeline:
                 deferred_count, tenant_id or "<unknown>",
             )
 
-        # Step 4: Save findings to Cosmos DB
+        # Step 4: Save findings to Cosmos DB (lifecycle-aware merge)
+        seen_ids: set[str] = set()
         if self._db is not None:
             logger.info("Saving %d findings to Cosmos DB", len(findings))
             for finding in findings:
                 try:
-                    await self._db.save_finding(finding)
+                    await self._db.save_finding(finding, scan_id=scan_id)
+                    seen_ids.add(finding.finding_id)
                 except Exception as exc:
                     logger.error(
                         "Failed to save finding %s: %s", finding.finding_id, exc,
                         exc_info=True,
                     )
+            # Auto-resolve OPEN findings that were not re-detected this scan.
+            # Best-effort: a Cosmos hiccup must not fail the timer-driven scan.
+            try:
+                await self._db.mark_unseen_findings_resolved(
+                    subscription_id, seen_ids, scan_id,
+                    tenant_id=tenant_id or None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Auto-resolve sweep failed for scan %s: %s", scan_id, exc,
+                )
         else:
             logger.error("No database connection -- cannot save findings")
 
