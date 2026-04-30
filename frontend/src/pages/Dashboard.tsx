@@ -170,14 +170,16 @@ export function Dashboard() {
         />
       </div>
 
+      <div className="grid gap-4 md:grid-cols-2">
+        <SeverityChart findings={findings} />
+        <CostChart findings={findings} />
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 overflow-x-auto">
           <FindingTable findings={top10} onSelect={setSelectedFinding} />
         </div>
-
-        <div className="space-y-4">
-          <SeverityChart findings={findings} />
-          <CostChart findings={findings} />
+        <div>
           <ActivityFeed findings={findings} />
         </div>
       </div>
@@ -191,4 +193,5 @@ export function Dashboard() {
     </div>
   );
 }
+
 

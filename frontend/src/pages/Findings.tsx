@@ -221,7 +221,7 @@ export function Findings() {
           type="button"
           onClick={() => setSeverityFilter("ALL")}
           className={cn(
-            "flex flex-col items-start rounded-lg border p-4 text-left transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500",
+            "flex flex-col items-start rounded-lg border p-4 text-left cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500",
             severityFilter === "ALL"
               ? "border-blue-500 ring-1 ring-blue-500 shadow-sm bg-[hsl(var(--background))]"
               : "border-[hsl(var(--border))] bg-[hsl(var(--background))]",
@@ -247,7 +247,7 @@ export function Findings() {
               type="button"
               onClick={() => setSeverityFilter(active ? "ALL" : sev)}
               className={cn(
-                "flex flex-col items-start rounded-lg border p-4 text-left transition-shadow hover:shadow-md focus:outline-none focus:ring-2",
+                "flex flex-col items-start rounded-lg border p-4 text-left cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2",
                 meta.tone,
                 active
                   ? cn("ring-1 shadow-sm", meta.ring)
@@ -371,3 +371,4 @@ export function Findings() {
     </div>
   );
 }
+

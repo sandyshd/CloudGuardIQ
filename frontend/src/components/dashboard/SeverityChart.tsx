@@ -1,4 +1,4 @@
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import type { FindingResult } from "../../types";
 
@@ -12,16 +12,27 @@ const COLORS: Record<string, string> = {
 
 const ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL"];
 
+const LABELS: Record<string, string> = {
+  CRITICAL: "Critical",
+  HIGH: "High",
+  MEDIUM: "Medium",
+  LOW: "Low",
+  INFORMATIONAL: "Info",
+};
+
 export function SeverityChart({ findings }: { findings: FindingResult[] }) {
   const counts: Record<string, number> = {};
   findings.forEach((f) => {
     counts[f.severity] = (counts[f.severity] || 0) + 1;
   });
 
-  const data = ORDER.filter((s) => counts[s]).map((name) => ({
-    name,
-    count: counts[name],
+  const data = ORDER.filter((s) => counts[s]).map((sev) => ({
+    name: LABELS[sev] ?? sev,
+    severity: sev,
+    value: counts[sev],
   }));
+
+  const total = data.reduce((s, d) => s + d.value, 0);
 
   return (
     <Card>
@@ -29,18 +40,45 @@ export function SeverityChart({ findings }: { findings: FindingResult[] }) {
         <CardTitle className="text-base">Findings by Severity</CardTitle>
       </CardHeader>
       <CardContent>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={data} layout="vertical" margin={{ left: 10, right: 20 }}>
-            <XAxis type="number" allowDecimals={false} fontSize={12} />
-            <YAxis type="category" dataKey="name" fontSize={12} width={100} />
-            <Tooltip />
-            <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-              {data.map((entry) => (
-                <Cell key={entry.name} fill={COLORS[entry.name] || "#6b7280"} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        {total === 0 ? (
+          <div className="flex h-[260px] items-center justify-center text-sm text-[hsl(var(--muted-foreground))]">
+            No findings
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={260}>
+            <PieChart>
+              <Pie
+                data={data}
+                dataKey="value"
+                nameKey="name"
+                innerRadius={55}
+                outerRadius={90}
+                paddingAngle={2}
+                stroke="hsl(var(--background))"
+                strokeWidth={2}
+              >
+                {data.map((entry) => (
+                  <Cell
+                    key={entry.severity}
+                    fill={COLORS[entry.severity] || "#6b7280"}
+                  />
+                ))}
+              </Pie>
+              <Tooltip
+                formatter={(value: number, _name, ctx) => {
+                  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+                  return [`${value} (${pct}%)`, ctx.payload.name];
+                }}
+              />
+              <Legend
+                verticalAlign="bottom"
+                height={32}
+                iconType="circle"
+                wrapperStyle={{ fontSize: 12 }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        )}
       </CardContent>
     </Card>
   );
