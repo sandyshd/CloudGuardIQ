@@ -352,6 +352,31 @@ class CosmosRepository:
             return dict(item)
         return None
 
+    async def get_latest_scan_for_subscription(
+        self, subscription_id: str
+    ) -> dict[str, Any] | None:
+        """Return the most recent scan_result document for *subscription_id*.
+
+        Used by the plan-tier scan-frequency check to enforce a minimum
+        cooldown between scans (Free=daily, Starter=hourly, Enterprise=15m).
+        Sort uses Cosmos' built-in ``_ts`` (epoch seconds) which is stamped
+        automatically on every upsert -- callers do not need to populate
+        their own timestamp.
+        """
+        query = (
+            "SELECT TOP 1 * FROM c "
+            "WHERE c.subscription_id = @sub AND c.type = 'scan_result' "
+            "ORDER BY c._ts DESC"
+        )
+        params: list[dict[str, object]] = [
+            {"name": "@sub", "value": subscription_id},
+        ]
+        async for item in self._system_container().query_items(
+            query=query, parameters=params, partition_key="scan_result",
+        ):
+            return dict(item)
+        return None
+
     # ------------------------------------------------------------------
     # Capability flags  (system container, type = "capability")
     # ------------------------------------------------------------------

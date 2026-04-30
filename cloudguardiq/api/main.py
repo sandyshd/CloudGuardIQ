@@ -39,7 +39,11 @@ from cloudguardiq.api import billing as billing_module
 from cloudguardiq.api import subscriptions as subscriptions_module
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
 from cloudguardiq.billing.middleware import TierEnforcementMiddleware
-from cloudguardiq.billing.quota import check_ai_quota, record_ai_remediation
+from cloudguardiq.billing.quota import (
+    check_ai_quota,
+    check_scan_frequency_quota,
+    record_ai_remediation,
+)
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.billing.stripe_service import StripeService
 from cloudguardiq.billing.usage import UsageRepository
@@ -547,6 +551,38 @@ def _mock_remediation_card(finding: FindingResult) -> RemediationCard:
 # ------------------------------------------------------------------
 # Persistence helpers
 # ------------------------------------------------------------------
+async def _enforce_scan_frequency(
+    user: TokenPayload, subscription_id: str,
+) -> None:
+    """Raise HTTP 429 if the tenant's plan-tier scan cadence has not elapsed.
+
+    Free=daily, Starter=hourly, Enterprise=15-min. The check is best-effort
+    -- a missing billing repo or a Cosmos query failure must never block a
+    legitimate scan, so callers degrade open. The Retry-After header is
+    set so the frontend can render a precise countdown.
+    """
+    settings = get_settings()
+    if settings.auth_disabled or _billing_repo is None:
+        return
+    tenant_id = get_tenant_id(user)
+    repo = get_repo()
+    quota = await check_scan_frequency_quota(
+        tenant_id,
+        subscription_id,
+        billing_repo=_billing_repo,
+        repo=repo,
+    )
+    if quota.allowed:
+        return
+    detail = quota.to_detail()
+    detail["error"] = "scan_cooldown"
+    raise HTTPException(
+        status_code=429,
+        detail=detail,
+        headers={"Retry-After": str(max(1, quota.retry_after_seconds))},
+    )
+
+
 async def _persist_scan_results(
     repo: CosmosRepository,
     scan_id: str,
@@ -639,6 +675,7 @@ async def trigger_scan(
     """
     await _validate_owned_subscription(user, request.subscription_id)
     bind_context(subscription_id=request.subscription_id, provider="azure")
+    await _enforce_scan_frequency(user, request.subscription_id)
     scan_id = str(uuid.uuid4())
     logger.info(
         "Scan triggered: %s for sub %s",
@@ -693,6 +730,7 @@ async def scan_subscription(
 ) -> ScanResponse:
     """Scan an Azure subscription for security and cost findings."""
     await _validate_owned_subscription(user, request.subscription_id)
+    await _enforce_scan_frequency(user, request.subscription_id)
     scan_id = str(uuid.uuid4())
     # Enrich every log line emitted while this scan runs with the scan
     # identifiers so a single Application Insights query (`scan_id == X`)

@@ -8,8 +8,8 @@ import { EmptyState } from "../components/common/EmptyState";
 import { Link2, DollarSign } from "lucide-react";
 
 export function FinOps() {
-  const { findings, loading } = useFindings();
-  const { subscriptions, loading: subsLoading } = useSubscriptions();
+  const { subscriptions, selected: selectedSub, loading: subsLoading } = useSubscriptions();
+  const { findings, loading } = useFindings(selectedSub?.subscription_id);
 
   if (loading || subsLoading) return <LoadingSpinner />;
 

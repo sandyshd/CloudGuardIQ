@@ -10,6 +10,35 @@ import { Alert, AlertDescription } from "../components/ui/alert";
 import { Scan, Link2 } from "lucide-react";
 import type { FindingResult, Severity, FindingType } from "../types";
 
+function formatScanError(err: unknown): string {
+  // Surface FastAPI's HTTPException detail (object or string) when present,
+  // including the plan-tier scan cooldown payload from /scan.
+  const anyErr = err as {
+    response?: { status?: number; data?: { detail?: unknown } };
+    message?: string;
+  };
+  const status = anyErr?.response?.status;
+  const detail = anyErr?.response?.data?.detail;
+  if (status === 429 && detail && typeof detail === "object") {
+    const d = detail as Record<string, unknown>;
+    const tier = String(d.current_tier ?? "free");
+    const cap = Number(d.cap ?? 0);
+    const retry = Number(d.retry_after_seconds ?? 0);
+    const minutes = Math.ceil(retry / 60);
+    const wait =
+      retry < 60
+        ? `${retry}s`
+        : minutes < 60
+          ? `${minutes}m`
+          : `${Math.ceil(minutes / 60)}h`;
+    return `Your ${tier} plan allows one scan every ${cap} minute${cap === 1 ? "" : "s"}. Try again in ${wait}, or upgrade for more frequent scans.`;
+  }
+  if (typeof detail === "string") return detail;
+  if (err instanceof Error) return err.message;
+  return "Scan failed";
+}
+
+
 export function Findings() {
   // Page-local "All / specific" filter. Defaults to undefined which means
   // "use the globally selected subscription". Selecting "ALL" or a
@@ -48,8 +77,7 @@ export function Findings() {
       await triggerScan({ subscription_id: subId, include_cost: true });
       await refresh();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Scan failed";
-      setScanError(msg);
+      setScanError(formatScanError(err));
     } finally {
       setScanning(false);
       scanInFlight.current = false;
@@ -86,12 +114,25 @@ export function Findings() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Findings</h1>
-        <Button onClick={refresh}>Refresh</Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={handleRunScan}
+            disabled={scanning || subscriptions.length === 0}
+          >
+            {scanning ? "Scanning..." : "Run Scan"}
+          </Button>
+          <Button variant="outline" onClick={refresh}>Refresh</Button>
+        </div>
       </div>
 
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      {scanError && findings.length > 0 && (
+        <Alert variant="destructive">
+          <AlertDescription>{scanError}</AlertDescription>
         </Alert>
       )}
 

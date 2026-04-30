@@ -19,7 +19,6 @@ import {
   applyTerraformFix,
   getFinding,
   getFindings,
-  getRemediation,
   markFindingResolved,
   snoozeFinding,
   generateRemediation,
@@ -51,19 +50,19 @@ export function AIFix() {
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<ActionState>("idle");
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!findingId) return;
     setLoading(true);
     setError(null);
     try {
-      const [f, c, all] = await Promise.all([
+      const [f, all] = await Promise.all([
         getFinding(findingId, selectedSub?.subscription_id),
-        getRemediation(findingId).catch(() => null),
         getFindings(selectedSub?.subscription_id).catch(() => [] as FindingResult[]),
       ]);
       setFinding(f);
-      setCard(c);
       setSimilar(all.filter((x) => x.finding_id !== findingId).slice(0, 3));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load finding");
@@ -75,6 +74,33 @@ export function AIFix() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Auto-generate (or fetch cached) AI remediation as soon as the finding loads.
+  // The backend POST returns the existing card immediately when one is cached,
+  // so this is safe and idempotent.
+  const runGenerate = useCallback(async () => {
+    if (!findingId) return;
+    setGenerating(true);
+    setGenerationError(null);
+    try {
+      const newCard = await generateRemediation(findingId);
+      setCard(newCard);
+    } catch (err) {
+      setGenerationError(
+        err instanceof Error
+          ? err.message
+          : "AI generation failed. Check that Azure OpenAI is configured.",
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }, [findingId]);
+
+  useEffect(() => {
+    if (finding && !card && !generating && !generationError) {
+      runGenerate();
+    }
+  }, [finding, card, generating, generationError, runGenerate]);
 
   const narrativeParagraphs = useMemo(
     () => splitParagraphs(card?.narrative),
@@ -228,31 +254,25 @@ export function AIFix() {
             <CardContent className="space-y-2 text-sm text-blue-950">
               {narrativeParagraphs.length > 0 ? (
                 narrativeParagraphs.map((p, i) => <p key={i}>{p}</p>)
-              ) : (
-                <>
-                <p className="italic text-blue-900/70 mb-2">
-                  Remediation narrative is not available yet.
+              ) : generating ? (
+                <p className="italic text-blue-900/70">
+                  Generating AI remediation… this can take a few seconds.
                 </p>
-                <Button
-                  size="sm"
-                  onClick={async () => {
-                    setAction("applying");
-                    setActionMessage(null);
-                    try {
-                      const newCard = await generateRemediation(finding.finding_id);
-                      setCard(newCard);
-                      setActionMessage("AI remediation generated successfully.");
-                    } catch {
-                      setActionMessage("AI generation failed. Check that Azure OpenAI is configured.");
-                    } finally {
-                      setAction("idle");
-                    }
-                  }}
-                  disabled={action !== "idle"}
-                >
-                  {action === "applying" ? "Generating…" : "Generate AI Remediation"}
-                </Button>
+              ) : generationError ? (
+                <>
+                  <p className="text-blue-900/80 mb-2">{generationError}</p>
+                  <Button
+                    size="sm"
+                    onClick={runGenerate}
+                    disabled={generating}
+                  >
+                    Retry AI Remediation
+                  </Button>
                 </>
+              ) : (
+                <p className="italic text-blue-900/70">
+                  Preparing AI remediation…
+                </p>
               )}
             </CardContent>
           </Card>
