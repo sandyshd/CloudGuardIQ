@@ -458,7 +458,7 @@ class CosmosRepository:
         query = "SELECT * FROM c WHERE c.card_id = @card_id"
         params: list[dict[str, object]] = [{"name": "@card_id", "value": card_id}]
         async for item in self._remediations_container().query_items(
-            query=query, parameters=params, enable_cross_partition_query=True
+            query=query, parameters=params
         ):
             return RemediationCard.model_validate(item)
         return None
