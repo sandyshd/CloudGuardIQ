@@ -1,20 +1,41 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { loginRequest } from "./msalConfig";
 import { Button } from "../components/ui/button";
 import { Shield } from "lucide-react";
+import { getConfig } from "../api/config";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
   const isAuthenticated = useIsAuthenticated();
   const { instance, inProgress } = useMsal();
+  const [demoMode, setDemoMode] = useState<boolean | null>(null);
 
-  if (inProgress !== InteractionStatus.None) {
+  useEffect(() => {
+    let cancelled = false;
+    getConfig()
+      .then((cfg) => {
+        if (!cancelled) setDemoMode(Boolean(cfg.demo_mode));
+      })
+      .catch(() => {
+        if (!cancelled) setDemoMode(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (demoMode === null || inProgress !== InteractionStatus.None) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-[hsl(var(--primary))] border-t-transparent" />
       </div>
     );
+  }
+
+  // In demo mode the backend serves canned data without auth -- skip MSAL.
+  if (demoMode) {
+    return <>{children}</>;
   }
 
   if (!isAuthenticated) {
