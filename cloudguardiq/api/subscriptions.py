@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator
@@ -26,6 +27,10 @@ from cloudguardiq.core.enums import SubscriptionTier
 from cloudguardiq.subscriptions.repository import (
     SubscriptionRecord,
     SubscriptionsRepository,
+)
+from cloudguardiq.tenants.consent_repository import (
+    TenantConsent,
+    TenantConsentRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,6 +98,11 @@ class AddSubscriptionRequest(BaseModel):
 
     subscription_id: str = Field(..., min_length=1, max_length=64)
     display_name: str = ""
+    # Optional: the Azure tenant that owns this subscription. When the
+    # caller does not supply it we default to their JWT ``tid`` claim
+    # (single-tenant onboarding). For Phase 3 cross-tenant flows the
+    # frontend passes the customer's Entra tenant id explicitly.
+    customer_tenant_id: str = ""
 
     @field_validator("subscription_id")
     @classmethod
@@ -124,6 +134,11 @@ class PatchSubscriptionRequest(BaseModel):
 _repository: SubscriptionsRepository | None = None
 _billing_repo: BillingRepository | None = None
 _settings: Settings | None = None
+_consent_repo: TenantConsentRepository | None = None
+# Factory for per-customer-tenant Azure credentials. Wired only when
+# Phase 3 cross-tenant credentials (cert or secret) are configured;
+# ``None`` falls back to the local DefaultAzureCredential.
+_credential_factory: object | None = None
 
 # Tests inject a stub probe via subscriptions.set_access_probe(); production
 # leaves it None and uses the default Resource Graph probe.
@@ -144,12 +159,28 @@ def configure(
     repository: SubscriptionsRepository,
     billing_repository: BillingRepository,
     settings: Settings,
+    consent_repository: TenantConsentRepository | None = None,
+    credential_factory: object | None = None,
 ) -> None:
-    """Wire dependencies from the application startup hook."""
+    """Wire dependencies from the application startup hook.
+
+    *consent_repository* and *credential_factory* are Phase 3 additions
+    used to enforce admin consent and to authenticate against the
+    customer's Entra tenant when probing cross-tenant subscriptions.
+    Both are optional so single-tenant deployments keep working.
+    """
     global _repository, _billing_repo, _settings  # noqa: PLW0603
+    global _consent_repo, _credential_factory  # noqa: PLW0603
     _repository = repository
     _billing_repo = billing_repository
     _settings = settings
+    _consent_repo = consent_repository
+    _credential_factory = credential_factory
+
+
+def _get_consent_repo() -> TenantConsentRepository | None:
+    """Return the configured consent repository or ``None``."""
+    return _consent_repo
 
 
 def _get_repo() -> SubscriptionsRepository:
@@ -194,15 +225,36 @@ def _cap_for_tier(settings: Settings, tier: SubscriptionTier) -> int:  # noqa: A
 # ---------------------------------------------------------------------------
 
 
-async def _run_access_probe(subscription_id: str) -> AccessProbeResult | None:
+async def _run_access_probe(
+    subscription_id: str, *, customer_tenant_id: str = "",
+) -> AccessProbeResult | None:
     """Run the access probe (test override or default Resource Graph).
 
-    Returns ``None`` when the probe cannot be executed (no Azure credential
-    available, e.g. local dev without ``az login``); the caller treats
-    ``None`` as a soft-pass so contributors are not blocked offline.
+    When a *customer_tenant_id* is supplied and the cross-tenant
+    credential factory is wired, the probe authenticates against
+    that customer's Entra tenant -- this is the Phase 3 cross-tenant
+    path. Otherwise it falls back to ``DefaultAzureCredential`` for
+    the operator's own tenant.
+
+    Returns ``None`` when the probe cannot be executed (no Azure
+    credential available, e.g. local dev without ``az login``); the
+    caller treats ``None`` as a soft-pass so contributors are not
+    blocked offline.
     """
     if _probe_override is not None:
         return await _probe_override(subscription_id)
+
+    if customer_tenant_id and _credential_factory is not None:
+        try:
+            credential = _credential_factory.for_tenant(customer_tenant_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Customer credential build failed for tenant=%s: %s",
+                customer_tenant_id, exc,
+            )
+            return None
+        return await probe_subscription_access(credential, subscription_id)
+
     try:
         from azure.identity import DefaultAzureCredential
     except Exception as exc:  # noqa: BLE001
@@ -244,9 +296,33 @@ async def add_subscription(
     when the tenant is at its plan limit.
     """
     tenant_id = get_tenant_id(user)
+    customer_tid = (body.customer_tenant_id or tenant_id).strip().lower()
     repo = _get_repo()
     billing = _get_billing()
     settings = _get_settings()
+
+    # Cross-tenant guard (Phase 3.4): when the customer tenant differs
+    # from the caller's tenant we must have a recorded admin consent
+    # before we can issue an Azure access probe against it. Without
+    # this guard a malicious caller could try to brute-force tenant
+    # ids by triggering access probes through us.
+    if customer_tid != tenant_id.lower() and not settings.auth_disabled:
+        consent_repo = _get_consent_repo()
+        if consent_repo is None or not await consent_repo.has_active_consent(
+            customer_tid,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "consent_required",
+                    "customer_tenant_id": customer_tid,
+                    "message": (
+                        "Admin consent has not been recorded for this "
+                        "customer tenant. Open the consent URL from "
+                        "GET /subscriptions/consent-url first."
+                    ),
+                },
+            )
 
     # Phase 6.10 short-term guard: reject AWS / GCP identifiers with a
     # clear roadmap message. Without this they would fall through to the
@@ -292,7 +368,9 @@ async def add_subscription(
     # the grant and retry.
     settings_obj = _get_settings()
     if not settings_obj.auth_disabled:
-        probe_result = await _run_access_probe(body.subscription_id)
+        probe_result = await _run_access_probe(
+            body.subscription_id, customer_tenant_id=customer_tid,
+        )
         if probe_result is not None and not probe_result.ok:
             info = OnboardingInfo.build()
             cmd = (
@@ -358,6 +436,7 @@ async def add_subscription(
         tenant_id=tenant_id,
         subscription_id=body.subscription_id,
         display_name=body.display_name or body.subscription_id,
+        customer_tenant_id=customer_tid,
     )
     saved = await repo.upsert(rec)
     return SubscriptionResponse.from_record(saved)
@@ -401,3 +480,157 @@ async def delete_subscription(
     existed = await repo.delete(tenant_id, subscription_id.lower())
     if not existed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+# ---------------------------------------------------------------------------
+# Cross-tenant consent flow (Phase 3.3)
+# ---------------------------------------------------------------------------
+
+
+_GUID_TID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+class ConsentUrlResponse(BaseModel):
+    """Response for ``GET /subscriptions/consent-url``."""
+
+    consent_url: str
+    customer_tenant_id: str
+
+
+class ConsentRecordResponse(BaseModel):
+    """Response for ``GET /subscriptions/consent-callback``."""
+
+    customer_tenant_id: str
+    consented_at: str
+    status: str = "recorded"
+
+
+def _build_consent_url(settings: Settings, tenant_id: str) -> str:
+    """Return the Azure AD admin-consent URL for *tenant_id*.
+
+    Microsoft documents the endpoint at
+    ``https://login.microsoftonline.com/{tid}/adminconsent`` -- once the
+    admin clicks Accept, Azure AD redirects back to our configured
+    ``consent_redirect_uri`` with ``tenant`` and ``admin_consent``
+    query parameters which the callback endpoint consumes.
+    """
+    if not settings.azure_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="azure_client_id not configured",
+        )
+    params = urlencode({
+        "client_id": settings.azure_client_id,
+        "redirect_uri": settings.consent_redirect_uri,
+        # Random ``state`` is recommended; the frontend caches it before
+        # opening the popup and verifies it on callback. Server side we
+        # echo whatever the caller supplied so we do not mint a value
+        # the frontend cannot anticipate.
+    })
+    return (
+        f"https://login.microsoftonline.com/{tenant_id}/adminconsent?"
+        f"{params}"
+    )
+
+
+@router.get("/consent-url", response_model=ConsentUrlResponse)
+async def get_consent_url(
+    tenant_id: str,
+    user: TokenPayload = _auth,  # noqa: ARG001 -- auth required
+) -> ConsentUrlResponse:
+    """Return the admin-consent URL for *tenant_id*.
+
+    The frontend opens this URL in a popup so a directory admin in the
+    customer''s Entra tenant can grant consent for the CloudGuardIQ
+    multi-tenant app.
+    """
+    customer_tid = tenant_id.strip().lower()
+    if not _GUID_TID_RE.match(customer_tid):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_tenant_id",
+                "message": "tenant_id must be an Entra tenant GUID.",
+            },
+        )
+    settings = _get_settings()
+    return ConsentUrlResponse(
+        consent_url=_build_consent_url(settings, customer_tid),
+        customer_tenant_id=customer_tid,
+    )
+
+
+@router.get(
+    "/consent-callback", response_model=ConsentRecordResponse,
+)
+async def consent_callback(
+    tenant: str = "",
+    admin_consent: str = "",
+    error: str = "",
+    error_description: str = "",
+    user: TokenPayload = _auth,
+) -> ConsentRecordResponse:
+    """Record a successful admin-consent grant.
+
+    Azure AD redirects the customer admin here with ``tenant`` (their
+    tid) and ``admin_consent=True`` after they click Accept. We persist
+    a :class:`TenantConsent` row keyed by that tid so subsequent
+    ``POST /subscriptions`` calls for that tenant are unblocked.
+
+    Errors from Azure AD (e.g. consent declined) are surfaced as
+    ``400 consent_failed`` with the original ``error_description``.
+    """
+    if error:
+        logger.info(
+            "Consent callback error tenant=%s err=%s desc=%s",
+            tenant, error, error_description,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "consent_failed",
+                "azure_error": error,
+                "azure_error_description": error_description,
+            },
+        )
+    customer_tid = tenant.strip().lower()
+    if not _GUID_TID_RE.match(customer_tid):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_tenant_id",
+                "message": "Azure AD did not return a valid tenant guid.",
+            },
+        )
+    if admin_consent.lower() not in {"true", "1", "yes"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "consent_not_granted",
+                "message": "admin_consent flag was not True.",
+            },
+        )
+
+    consent_repo = _get_consent_repo()
+    if consent_repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Tenant consent repository not configured",
+        )
+
+    consent = TenantConsent(
+        customer_tenant_id=customer_tid,
+        consented_by=user.oid or user.sub or "",
+    )
+    saved = await consent_repo.upsert(consent)
+    logger.info(
+        "Recorded admin consent customer_tid=%s consented_by=%s",
+        customer_tid, saved.consented_by,
+    )
+    return ConsentRecordResponse(
+        customer_tenant_id=saved.customer_tenant_id,
+        consented_at=saved.consented_at.isoformat(),
+    )

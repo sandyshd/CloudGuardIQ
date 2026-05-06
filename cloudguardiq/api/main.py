@@ -39,6 +39,7 @@ from cloudguardiq.adapters.rules.storage import (
 from cloudguardiq.api import billing as billing_module
 from cloudguardiq.api import subscriptions as subscriptions_module
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
+from cloudguardiq.auth.customer_credential import build_default_factory
 from cloudguardiq.billing.middleware import TierEnforcementMiddleware
 from cloudguardiq.billing.pricing import (
     PricingService,
@@ -70,6 +71,7 @@ from cloudguardiq.core.observability import (
 from cloudguardiq.pipeline.scan_pipeline import ScanResult
 from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
 from cloudguardiq.subscriptions.repository import SubscriptionsRepository
+from cloudguardiq.tenants.consent_repository import TenantConsentRepository
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +88,7 @@ _auth = Depends(verify_token)
 _repo: CosmosRepository | None = None
 _billing_repo: BillingRepository | None = None
 _subs_repo: SubscriptionsRepository | None = None
+_consent_repo: TenantConsentRepository | None = None
 _tier_middleware: TierEnforcementMiddleware | None = None
 
 
@@ -162,8 +165,12 @@ async def lifespan(
         ),
     )
 
-    global _subs_repo  # noqa: PLW0603
+    global _subs_repo, _consent_repo  # noqa: PLW0603
     _subs_repo = SubscriptionsRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
+    _consent_repo = TenantConsentRepository(
         settings,
         cosmos_db=_repo._db if _repo is not None else None,
     )
@@ -171,6 +178,8 @@ async def lifespan(
         repository=_subs_repo,
         billing_repository=_billing_repo,
         settings=settings,
+        consent_repository=_consent_repo,
+        credential_factory=build_default_factory(settings),
     )
 
     # Wire the Azure Retail Prices service. Warmup pulls the last-known
@@ -228,10 +237,14 @@ billing_module.configure(
 # Bootstrap subscriptions repo (in-memory) so tests that never run lifespan
 # still work. The lifespan hook later swaps in the Cosmos-backed repo.
 _bootstrap_subs_repo = SubscriptionsRepository(get_settings(), cosmos_db=None)
+_bootstrap_consent_repo = TenantConsentRepository(
+    get_settings(), cosmos_db=None,
+)
 subscriptions_module.configure(
     repository=_bootstrap_subs_repo,
     billing_repository=_bootstrap_billing_repo,
     settings=get_settings(),
+    consent_repository=_bootstrap_consent_repo,
 )
 
 # Billing routes

@@ -26,6 +26,11 @@ class SubscriptionRecord(BaseModel):
 
     tenant_id: str
     subscription_id: str
+    # The Azure tenant that owns this subscription. For self-service in
+    # the operator's own tenant this matches ``tenant_id``; for true
+    # cross-tenant SaaS onboarding (Phase 3) ``customer_tenant_id`` is
+    # the *customer's* Entra tenant whose admin granted consent.
+    customer_tenant_id: str = ""
     display_name: str = ""
     state: str = "Enabled"  # "Enabled" | "Disabled" | "Removed"
     added_at: datetime = Field(
@@ -49,6 +54,7 @@ class SubscriptionRecord(BaseModel):
             "id": self.doc_id,
             "tenant_id": self.tenant_id,
             "subscription_id": self.subscription_id,
+            "customer_tenant_id": self.customer_tenant_id or self.tenant_id,
             "display_name": self.display_name,
             "state": self.state,
             "added_at": self.added_at.isoformat(),
@@ -80,6 +86,7 @@ class SubscriptionRecord(BaseModel):
         return cls(
             tenant_id=str(doc.get("tenant_id", "")),
             subscription_id=str(doc.get("subscription_id", "")),
+            customer_tenant_id=str(doc.get("customer_tenant_id", "") or ""),
             display_name=str(doc.get("display_name", "")),
             state=str(doc.get("state", "Enabled")),
             added_at=added,

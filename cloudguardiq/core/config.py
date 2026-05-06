@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     cosmos_container_system: str = "system"
     cosmos_container_billing: str = "billing"
     cosmos_container_subscriptions: str = "subscriptions"
+    cosmos_container_tenant_consents: str = "tenant_consents"
 
     # Azure OpenAI
     azure_openai_endpoint: str = ""
@@ -49,6 +50,16 @@ class Settings(BaseSettings):
     # Azure AD
     azure_tenant_id: str = ""
     azure_client_id: str = ""
+    # Cross-tenant credentials (Phase 3.2). Either supply a certificate
+    # (preferred) via ``azure_certificate_path`` *or* fall back to the
+    # client secret already provisioned by Phase 2 Terraform.
+    azure_certificate_path: str = ""
+    azure_client_secret: str = ""
+
+    # Frontend redirect URI used by the admin-consent flow. The customer
+    # admin is bounced back here after granting consent so we can record
+    # the tenant and complete the cross-tenant onboarding handshake.
+    consent_redirect_uri: str = "http://localhost:3000/settings?consent=callback"
 
     # Authentication
     auth_disabled: bool = False

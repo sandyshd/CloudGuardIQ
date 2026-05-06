@@ -63,31 +63,65 @@ def _decode_token(
     audience: str,
     tenant_id: str,
 ) -> dict[str, Any]:
-    """Decode and validate a JWT token against Azure AD JWKS."""
-    signing_keys = _get_signing_keys(tenant_id)
+    """Decode and validate a JWT token against Azure AD JWKS.
 
-    # Accept both v1 and v2 issuer formats from Azure AD
-    valid_issuers = [
-        f"https://login.microsoftonline.com/{tenant_id}/v2.0",
-        f"https://sts.windows.net/{tenant_id}/",
-    ]
+    Multi-tenant aware (Phase 3.1): when the unverified ``tid`` claim
+    points at a tenant other than the configured home tenant, the
+    function fetches signing keys for that tenant and validates the
+    issuer against ``login.microsoftonline.com/{tid}``. The caller is
+    responsible for then enforcing whatever consent / allowlist policy
+    applies (typically by checking
+    :class:`TenantConsentRepository`).
+    """
+    try:
+        unverified = jwt.decode(
+            token, options={"verify_signature": False},
+        )
+    except jwt.InvalidTokenError as exc:
+        raise jwt.InvalidTokenError(f"Token not parseable: {exc}") from None
+    token_tid = str(unverified.get("tid") or "").strip()
 
-    for key in signing_keys:
-        for issuer in valid_issuers:
-            try:
-                decoded: dict[str, Any] = jwt.decode(
-                    token,
-                    key.key,
-                    algorithms=["RS256", "HS256"],
-                    audience=audience,
-                    issuer=issuer,
-                )
-                return decoded
-            except jwt.InvalidIssuerError:
-                continue
-            except jwt.InvalidSignatureError:
-                break
+    candidate_tids: list[str] = []
+    if tenant_id:
+        candidate_tids.append(tenant_id)
+    if token_tid and token_tid not in candidate_tids:
+        candidate_tids.append(token_tid)
+    if not candidate_tids:
+        raise jwt.InvalidTokenError("Token missing tid and no home tenant")
 
+    last_error: Exception | None = None
+    for tid in candidate_tids:
+        try:
+            signing_keys = _get_signing_keys(tid)
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            continue
+
+        valid_issuers = [
+            f"https://login.microsoftonline.com/{tid}/v2.0",
+            f"https://sts.windows.net/{tid}/",
+        ]
+
+        for key in signing_keys:
+            for issuer in valid_issuers:
+                try:
+                    decoded: dict[str, Any] = jwt.decode(
+                        token,
+                        key.key,
+                        algorithms=["RS256", "HS256"],
+                        audience=audience,
+                        issuer=issuer,
+                    )
+                    return decoded
+                except jwt.InvalidIssuerError:
+                    continue
+                except jwt.InvalidSignatureError:
+                    break
+                except jwt.InvalidTokenError as exc:
+                    last_error = exc
+
+    if last_error is not None:
+        raise jwt.InvalidTokenError(str(last_error))
     raise jwt.InvalidTokenError("No valid signing key found")
 
 
