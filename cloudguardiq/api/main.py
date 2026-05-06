@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
 from cloudguardiq.adapters.azure_adapter import AzureAdapter
 from cloudguardiq.adapters.native_scanner import NativeScanner
@@ -34,13 +37,25 @@ from cloudguardiq.adapters.rules.storage import (
     StoragePublicAccessRule,
 )
 from cloudguardiq.api import billing as billing_module
-from cloudguardiq.api.auth import TokenPayload, verify_token
+from cloudguardiq.api import subscriptions as subscriptions_module
+from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
 from cloudguardiq.billing.middleware import TierEnforcementMiddleware
+from cloudguardiq.billing.pricing import (
+    PricingService,
+    configure_pricing_service,
+    get_pricing_service,
+)
+from cloudguardiq.billing.quota import (
+    check_ai_quota,
+    check_scan_frequency_quota,
+    record_ai_remediation,
+)
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.billing.stripe_service import StripeService
+from cloudguardiq.billing.usage import UsageRepository
 from cloudguardiq.core.config import get_settings
 from cloudguardiq.core.database import CosmosRepository
-from cloudguardiq.core.enums import DataTier, FindingType, Severity
+from cloudguardiq.core.enums import DataTier, FindingStatus, FindingType, Severity
 from cloudguardiq.core.models import (
     FindingResult,
     RemediationCard,
@@ -48,10 +63,20 @@ from cloudguardiq.core.models import (
     ScanRequest,
     ScanResponse,
 )
+from cloudguardiq.core.observability import (
+    bind_context,
+    install_context_filter,
+)
 from cloudguardiq.pipeline.scan_pipeline import ScanResult
 from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
+from cloudguardiq.subscriptions.repository import SubscriptionsRepository
 
 logger = logging.getLogger(__name__)
+
+# Install the request-scoped context filter on the
+# root logger so every log line carries tenant_id / subscription_id /
+# request_id when a request is in flight.
+install_context_filter()
 
 _auth = Depends(verify_token)
 
@@ -60,6 +85,7 @@ _auth = Depends(verify_token)
 # ------------------------------------------------------------------
 _repo: CosmosRepository | None = None
 _billing_repo: BillingRepository | None = None
+_subs_repo: SubscriptionsRepository | None = None
 _tier_middleware: TierEnforcementMiddleware | None = None
 
 
@@ -72,15 +98,36 @@ def get_repo() -> CosmosRepository | None:
     return _repo
 
 
-def _resolve_subscription_id(subscription_id: str | None) -> str:
-    """Return the query-provided subscription id, or fall back to env var.
+async def _validate_owned_subscription(
+    user: TokenPayload, subscription_id: str
+) -> str:
+    """Ensure the JWT tenant owns `subscription_id` (Phase 2).
 
-    The dashboard and findings pages do not pass subscription_id, so we
-    default to the AZURE_SUBSCRIPTION_ID configured for the deployment.
+    In auth-disabled (dev/test) mode the check is a no-op so that local
+    smoke tests and dashboards keep working without registering subs.
+    In production mode the route returns `403 subscription_not_linked`
+    when the tenant has not added the subscription via /subscriptions.
     """
-    if subscription_id:
-        return subscription_id
-    return os.environ.get("AZURE_SUBSCRIPTION_ID", "")
+    settings = get_settings()
+    if settings.auth_disabled:
+        return subscription_id.lower()
+    tenant_id = get_tenant_id(user)
+    repo = subscriptions_module._repository  # noqa: SLF001
+    if repo is None:
+        logger.warning(
+            "Subscriptions repo not configured; skipping ownership check"
+        )
+        return subscription_id.lower()
+    record = await repo.get(tenant_id, subscription_id.lower())
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "subscription_not_linked",
+                "subscription_id": subscription_id,
+            },
+        )
+    return record.subscription_id
 
 
 @asynccontextmanager
@@ -101,6 +148,11 @@ async def lifespan(
         settings,
         cosmos_db=_repo._db if _repo is not None else None,
     )
+    global _usage_repo  # noqa: PLW0603
+    _usage_repo = UsageRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
     stripe_service = StripeService(settings)
     billing_module.configure(
         repository=_billing_repo,
@@ -109,6 +161,30 @@ async def lifespan(
             _tier_middleware.invalidate if _tier_middleware is not None else None
         ),
     )
+
+    global _subs_repo  # noqa: PLW0603
+    _subs_repo = SubscriptionsRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
+    subscriptions_module.configure(
+        repository=_subs_repo,
+        billing_repository=_billing_repo,
+        settings=settings,
+    )
+
+    # Wire the Azure Retail Prices service. Warmup pulls the last-known
+    # cache from Cosmos so the very first scan after a cold start has
+    # live prices; the refresh runs in the background so startup is not
+    # blocked on a public-internet call.
+    pricing_service = PricingService(repo=_repo)
+    configure_pricing_service(pricing_service)
+    try:
+        await pricing_service.warmup()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Pricing warmup failed: %s", exc)
+    if pricing_service.is_stale():
+        asyncio.create_task(pricing_service.refresh())
 
     yield
 
@@ -136,6 +212,7 @@ app.add_middleware(
 # at lifespan startup the billing router is reconfigured to share state with
 # the Cosmos-backed repo when available.
 _bootstrap_billing_repo = BillingRepository(get_settings(), cosmos_db=None)
+_usage_repo: UsageRepository = UsageRepository(get_settings(), cosmos_db=None)
 app.add_middleware(
     TierEnforcementMiddleware,
     settings=get_settings(),
@@ -148,8 +225,23 @@ billing_module.configure(
     stripe_service=StripeService(get_settings()),
 )
 
+# Bootstrap subscriptions repo (in-memory) so tests that never run lifespan
+# still work. The lifespan hook later swaps in the Cosmos-backed repo.
+_bootstrap_subs_repo = SubscriptionsRepository(get_settings(), cosmos_db=None)
+subscriptions_module.configure(
+    repository=_bootstrap_subs_repo,
+    billing_repository=_bootstrap_billing_repo,
+    settings=get_settings(),
+)
+
 # Billing routes
 app.include_router(billing_module.router)
+# Subscription management routes (Phase 2)
+app.include_router(subscriptions_module.router)
+# Onboarding info (Phase 2.8 -- surfaces MSI principal id for RBAC grant)
+from cloudguardiq.api import onboarding as onboarding_module  # noqa: E402
+
+app.include_router(onboarding_module.router)
 
 
 # ------------------------------------------------------------------
@@ -160,10 +252,42 @@ async def request_logging_middleware(
     request: Request,
     call_next: Any,
 ) -> Response:
-    """Log method, path, status code, and duration."""
+    """Log method, path, status code, and duration.
+
+    Also binds a request id (echoed in the ``X-Request-Id`` response
+    header so users can quote it in support tickets) and -- when the
+    caller already proved a JWT -- the tenant id, so every downstream
+    log line is searchable by tenant in App Insights.
+    """
+    incoming_id = request.headers.get("x-request-id")
+    request_id = incoming_id or uuid.uuid4().hex[:16]
+    bind_context(request_id=request_id)
+
+    # Best-effort tenant binding. We avoid full JWT verification here
+    # because that costs a JWKS call; the unverified tid claim is good
+    # enough for log enrichment and never used for authz.
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        try:
+            import base64
+            import json
+            parts = auth.split(".", 2)
+            if len(parts) >= 2:
+                pad = "=" * (-len(parts[1]) % 4)
+                payload = json.loads(
+                    base64.urlsafe_b64decode(parts[1] + pad)
+                )
+                tid = payload.get("tid")
+                if isinstance(tid, str) and tid:
+                    bind_context(tenant_id=tid)
+        except Exception:
+            # Malformed token -- log enrichment is best-effort, never fatal.
+            pass
+
     start = time.perf_counter()
     response: Response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
+    response.headers["X-Request-Id"] = request_id
     logger.info(
         "%s %s -> %s (%.1fms)",
         request.method,
@@ -446,6 +570,38 @@ def _mock_remediation_card(finding: FindingResult) -> RemediationCard:
 # ------------------------------------------------------------------
 # Persistence helpers
 # ------------------------------------------------------------------
+async def _enforce_scan_frequency(
+    user: TokenPayload, subscription_id: str,
+) -> None:
+    """Raise HTTP 429 if the tenant's plan-tier scan cadence has not elapsed.
+
+    Free=daily, Starter=hourly, Enterprise=15-min. The check is best-effort
+    -- a missing billing repo or a Cosmos query failure must never block a
+    legitimate scan, so callers degrade open. The Retry-After header is
+    set so the frontend can render a precise countdown.
+    """
+    settings = get_settings()
+    if settings.auth_disabled or _billing_repo is None:
+        return
+    tenant_id = get_tenant_id(user)
+    repo = get_repo()
+    quota = await check_scan_frequency_quota(
+        tenant_id,
+        subscription_id,
+        billing_repo=_billing_repo,
+        repo=repo,
+    )
+    if quota.allowed:
+        return
+    detail = quota.to_detail()
+    detail["error"] = "scan_cooldown"
+    raise HTTPException(
+        status_code=429,
+        detail=detail,
+        headers={"Retry-After": str(max(1, quota.retry_after_seconds))},
+    )
+
+
 async def _persist_scan_results(
     repo: CosmosRepository,
     scan_id: str,
@@ -462,15 +618,32 @@ async def _persist_scan_results(
         except Exception as exc:
             logger.warning("Failed to save snapshot %s: %s", snap.id, exc)
 
-    # Save findings
+    # Save findings (lifecycle-aware: stable id + state preservation)
+    seen_ids: set[str] = set()
+    tenant_for_scan = ""
     for finding in findings:
         try:
-            await repo.save_finding(finding)
+            await repo.save_finding(finding, scan_id=scan_id)
+            seen_ids.add(finding.finding_id)
+            if not tenant_for_scan and finding.tenant_id:
+                tenant_for_scan = finding.tenant_id
         except Exception as exc:
             logger.warning(
                 "Failed to save finding %s: %s",
                 finding.finding_id, exc,
             )
+
+    # Auto-resolve OPEN findings that were not re-detected this scan -- the
+    # underlying issue was either fixed or the resource is gone. Best-effort:
+    # a Cosmos hiccup here must not fail the scan. The previous OPEN rows
+    # stay OPEN if this call fails; the next successful scan will retry.
+    try:
+        await repo.mark_unseen_findings_resolved(
+            subscription_id, seen_ids, scan_id,
+            tenant_id=tenant_for_scan or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Auto-resolve sweep failed for scan %s: %s", scan_id, exc)
 
     # Save scan summary
     critical = sum(
@@ -511,15 +684,79 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "version": "0.1.0"}
 
 
+@app.get("/health/pricing")
+async def health_pricing(_user: TokenPayload = _auth) -> dict[str, Any]:
+    """Return Azure Retail Prices cache state.
+
+    Useful operationally to confirm the Retail Prices API integration is
+    populating the cache. The endpoint reports the last refresh timestamp,
+    staleness flag, and every cached (sku, region) -> USD/month entry so an
+    operator can see at a glance whether prices were sourced from Azure or
+    fell back to a bundled default.
+    """
+    import time as _time
+
+    svc = get_pricing_service()
+    entries = [
+        {"sku": sku, "region": region, "price_usd_monthly": price}
+        for (sku, region), price in sorted(svc._cache.items())  # noqa: SLF001
+    ]
+    last_ts = svc._last_refresh_ts  # noqa: SLF001
+    return {
+        "source": "azure_retail_prices",
+        "endpoint": "https://prices.azure.com/api/retail/prices",
+        "last_refresh_ts": int(last_ts) if last_ts else None,
+        "last_refresh_age_seconds": (
+            int(_time.time() - last_ts) if last_ts else None
+        ),
+        "is_stale": svc.is_stale(),
+        "entries_count": len(entries),
+        "entries": entries,
+    }
+
+
+@app.post("/health/pricing/refresh")
+async def health_pricing_refresh(
+    _user: TokenPayload = _auth,
+) -> dict[str, Any]:
+    """Force-refresh the Retail Prices cache (admin / debug helper)."""
+    svc = get_pricing_service()
+    await svc.refresh()
+    return {
+        "status": "refreshed",
+        "entries_count": len(svc._cache),  # noqa: SLF001
+    }
+
+
+
+@app.get("/config")
+async def get_config() -> dict[str, Any]:
+    """Public client-config endpoint.
+
+    Returns settings the frontend needs to render correctly. ``demo_mode`` is
+    true when the API is running with auth disabled (local/dev) and is
+    therefore serving canned demo findings; the UI should display a banner.
+    """
+    settings = get_settings()
+    return {
+        "demo_mode": bool(settings.auth_disabled),
+        "client_id": settings.azure_client_id or "",
+        "version": settings.app_version,
+    }
+
+
 @app.post("/scan/trigger")
 async def trigger_scan(
     request: ScanRequest,
-    _user: TokenPayload = _auth,
+    user: TokenPayload = _auth,
 ) -> dict[str, str]:
     """Trigger an async scan for a subscription.
 
     Enqueues a scan request and returns immediately with a scan_id.
     """
+    await _validate_owned_subscription(user, request.subscription_id)
+    bind_context(subscription_id=request.subscription_id, provider="azure")
+    await _enforce_scan_frequency(user, request.subscription_id)
     scan_id = str(uuid.uuid4())
     logger.info(
         "Scan triggered: %s for sub %s",
@@ -570,10 +807,20 @@ async def get_scan_status(
 @app.post("/scan", response_model=ScanResponse)
 async def scan_subscription(
     request: ScanRequest,
-    _user: TokenPayload = _auth,
+    user: TokenPayload = _auth,
 ) -> ScanResponse:
     """Scan an Azure subscription for security and cost findings."""
+    await _validate_owned_subscription(user, request.subscription_id)
+    await _enforce_scan_frequency(user, request.subscription_id)
     scan_id = str(uuid.uuid4())
+    # Enrich every log line emitted while this scan runs with the scan
+    # identifiers so a single Application Insights query (`scan_id == X`)
+    # returns the full timeline of the scan.
+    bind_context(
+        subscription_id=request.subscription_id,
+        scan_id=scan_id,
+        provider="azure",
+    )
     start = time.perf_counter()
 
     try:
@@ -606,6 +853,27 @@ async def scan_subscription(
         snapshots = []
     findings: list[FindingResult] = engine.evaluate(snapshots)
 
+    # Stamp tenant ownership on every snapshot and finding before
+    # persistence. Without this, rows are written with tenant_id="" and
+    # the tenant-isolated GET /findings query returns nothing -- the
+    # exact bug reported on 2026-04-29 where /scan reported 130 findings
+    # but the dashboard re-queried with an empty result.
+    settings_obj = get_settings()
+    tenant_id_for_scan = (
+        "" if settings_obj.auth_disabled else get_tenant_id(user)
+    )
+    for snap in snapshots:
+        if not snap.tenant_id:
+            snap.tenant_id = tenant_id_for_scan
+    for f in findings:
+        if not f.tenant_id:
+            f.tenant_id = tenant_id_for_scan
+        if (
+            f.resource_snapshot is not None
+            and not f.resource_snapshot.tenant_id
+        ):
+            f.resource_snapshot.tenant_id = tenant_id_for_scan
+
     # Compute priority scores
     for f in findings:
         f.compute_priority_score()
@@ -629,14 +897,19 @@ async def scan_subscription(
 async def list_findings(
     subscription_id: str = Query(default=""),
     limit: int = Query(default=50, ge=1, le=200),
-    _user: TokenPayload = _auth,
+    user: TokenPayload = _auth,
 ) -> list[FindingResult]:
     """Return FindingResults for a subscription, sorted by priority_score descending."""
     repo = get_repo()
-    sub_id = _resolve_subscription_id(subscription_id)
+    sub_id = ""
+    if subscription_id:
+        sub_id = await _validate_owned_subscription(user, subscription_id)
+        bind_context(subscription_id=sub_id, provider="azure")
+    settings = get_settings()
+    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
     if repo is not None and sub_id:
         try:
-            findings = await repo.get_findings(sub_id, limit=limit)
+            findings = await repo.get_findings(sub_id, tenant_id=tenant_id, limit=limit)
             return sorted(
                 findings,
                 key=lambda f: f.priority_score,
@@ -646,7 +919,11 @@ async def list_findings(
             logger.warning("Failed to query findings from Cosmos: %s", exc)
             return []
 
-    # Only fall back to demo data when no database is wired at all (local/dev)
+    # No subscription selected: return empty in production. Demo data is only
+    # served in auth-disabled (local/dev) mode so it cannot leak into a
+    # tenant's live dashboard before they have linked a subscription.
+    if not settings.auth_disabled:
+        return []
     demo = _demo_findings()
     return sorted(demo, key=lambda f: f.priority_score, reverse=True)[:limit]
 
@@ -655,16 +932,21 @@ async def list_findings(
 async def get_finding(
     finding_id: str,
     subscription_id: str = Query(default=""),
-    _user: TokenPayload = _auth,
+    user: TokenPayload = _auth,
 ) -> FindingResult:
     """Get a single FindingResult by finding ID."""
     repo = get_repo()
-    sub_id = _resolve_subscription_id(subscription_id)
+    sub_id: str = ""
+    if subscription_id:
+        sub_id = await _validate_owned_subscription(user, subscription_id)
+    settings = get_settings()
+    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
     if repo is not None:
         try:
             finding = await repo.get_finding(
                 finding_id,
                 subscription_id=sub_id or None,
+                tenant_id=tenant_id,
             )
             if finding is not None:
                 return finding
@@ -677,6 +959,106 @@ async def get_finding(
             return f
 
     raise HTTPException(status_code=404, detail="Finding not found")
+
+
+class FindingActionRequest(BaseModel):
+    """Body for POST /findings/{id}/resolve|snooze|apply.
+
+    The ``subscription_id`` is required so the route can hit the
+    findings container's partition key directly. Without it the
+    handler would fall back to a cross-partition scan.
+    """
+
+    subscription_id: str
+    days: int = 7  # only used by /snooze
+
+
+async def _mutate_finding_status(
+    finding_id: str,
+    body: FindingActionRequest,
+    user: TokenPayload,
+    new_status: FindingStatus,
+    extras: dict[str, Any],
+) -> FindingResult:
+    """Shared body for resolve/snooze/apply -- validates ownership and
+    delegates to the repository's atomic update method."""
+    sub_id = await _validate_owned_subscription(user, body.subscription_id)
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    bind_context(subscription_id=sub_id, provider="azure")
+
+    repo = get_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Persistence layer unavailable",
+        )
+    updated = await repo.update_finding_status(
+        finding_id=finding_id,
+        subscription_id=sub_id,
+        tenant_id=tenant_id,
+        status=new_status.value,
+        extras=extras,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return updated
+
+
+@app.post("/findings/{finding_id}/resolve", response_model=FindingResult)
+async def resolve_finding(
+    finding_id: str,
+    body: FindingActionRequest,
+    user: TokenPayload = _auth,
+) -> FindingResult:
+    """Mark a finding as RESOLVED.
+
+    The user is asserting they have addressed the underlying issue
+    outside of CloudGuardIQ. A subsequent scan that re-detects the same
+    issue will flip the status back to OPEN automatically.
+    """
+    settings = get_settings()
+    actor = "" if settings.auth_disabled else (user.sub or "")
+    return await _mutate_finding_status(
+        finding_id, body, user, FindingStatus.RESOLVED,
+        extras={
+            "resolved_at": datetime.now(timezone.utc),
+            "resolved_by": actor,
+        },
+    )
+
+
+@app.post("/findings/{finding_id}/snooze", response_model=FindingResult)
+async def snooze_finding(
+    finding_id: str,
+    body: FindingActionRequest,
+    user: TokenPayload = _auth,
+) -> FindingResult:
+    """Snooze a finding for ``body.days`` days (default 7)."""
+    days = max(1, min(body.days, 90))
+    return await _mutate_finding_status(
+        finding_id, body, user, FindingStatus.SNOOZED,
+        extras={
+            "snoozed_until": datetime.now(timezone.utc) + timedelta(days=days),
+        },
+    )
+
+
+@app.post("/findings/{finding_id}/apply", response_model=FindingResult)
+async def apply_finding_fix(
+    finding_id: str,
+    body: FindingActionRequest,
+    user: TokenPayload = _auth,
+) -> FindingResult:
+    """Mark a finding as APPLIED (Self-Heal / terraform fix dispatched).
+
+    This route only stamps the lifecycle field; the actual self-healing
+    pipeline is invoked separately by the Self-Heal flow.
+    """
+    return await _mutate_finding_status(
+        finding_id, body, user, FindingStatus.APPLIED,
+        extras={"applied_at": datetime.now(timezone.utc)},
+    )
 
 
 @app.get("/findings/{finding_id}/remediation", response_model=RemediationCard)
@@ -707,7 +1089,7 @@ async def get_finding_remediation(
 @app.post("/findings/{finding_id}/generate-remediation", response_model=RemediationCard)
 async def generate_finding_remediation(
     finding_id: str,
-    _user: TokenPayload = _auth,
+    user: TokenPayload = _auth,
 ) -> RemediationCard:
     """Generate an AI remediation card on-demand for a finding.
 
@@ -715,6 +1097,15 @@ async def generate_finding_remediation(
     If a card already exists in Cosmos it is returned immediately.
     """
     repo = get_repo()
+
+    # --- Plan quota: AI remediations per calendar month ---------------
+    tenant_id = get_tenant_id(user)
+    if _billing_repo is not None:
+        quota = await check_ai_quota(
+            tenant_id, billing_repo=_billing_repo, usage_repo=_usage_repo,
+        )
+        if not quota.allowed:
+            raise HTTPException(status_code=402, detail=quota.to_detail())
 
     # Return cached card if one exists
     if repo is not None:
@@ -729,10 +1120,9 @@ async def generate_finding_remediation(
 
     # Load the finding
     finding: FindingResult | None = None
-    sub_id = _resolve_subscription_id(None)
     if repo is not None:
         try:
-            finding = await repo.get_finding(finding_id, subscription_id=sub_id or None)
+            finding = await repo.get_finding(finding_id)
         except Exception as exc:
             logger.warning("Failed to load finding %s: %s", finding_id, exc)
 
@@ -797,6 +1187,7 @@ async def generate_finding_remediation(
             db=repo,
         )
         card = await engine.generate(finding)
+        await record_ai_remediation(tenant_id, usage_repo=_usage_repo)
         return card
     except HTTPException:
         raise
@@ -836,19 +1227,5 @@ async def get_finding_terraform(
     return _MOCK_TF
 
 
-@app.get("/subscriptions")
-async def list_subscriptions(
-    _user: TokenPayload = _auth,
-) -> list[dict[str, str]]:
-    """List connected subscriptions (configured via AZURE_SUBSCRIPTION_ID)."""
-    sub_id = os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip()
-    if not sub_id:
-        return []
-    return [
-        {
-            "id": sub_id,
-            "display_name": sub_id,
-            "state": "Enabled",
-        },
-    ]
+# /subscriptions endpoints are now served by subscriptions_module.router
 

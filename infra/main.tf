@@ -69,7 +69,7 @@ resource "azurerm_resource_group" "cloudguardiq" {
 resource "azuread_application" "cloudguardiq" {
   display_name = "CloudGuardIQ-${var.environment}"
 
-  sign_in_audience = "AzureADMyOrg"
+  sign_in_audience = "AzureADMultipleOrgs"
 
   web {
     redirect_uris = var.environment == "dev" ? [] : []
@@ -188,6 +188,13 @@ resource "azurerm_cosmosdb_sql_container" "system" {
 
 resource "azurerm_cosmosdb_sql_container" "billing" {
   name                = "billing"
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
+  partition_key_paths = ["/tenant_id"]
+}
+resource "azurerm_cosmosdb_sql_container" "subscriptions" {
+  name                = "subscriptions"
   resource_group_name = azurerm_resource_group.cloudguardiq.name
   account_name        = azurerm_cosmosdb_account.cloudguardiq.name
   database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
@@ -461,10 +468,7 @@ resource "azurerm_container_app" "api" {
         name  = "CLOUDGUARDIQ_AZURE_CLIENT_ID"
         value = azuread_application.cloudguardiq.client_id
       }
-      env {
-        name  = "AZURE_SUBSCRIPTION_ID"
-        value = data.azurerm_subscription.current.subscription_id
-      }
+
       env {
         name  = "CLOUDGUARDIQ_CORS_ORIGINS"
         value = "https://${azurerm_static_web_app.frontend.default_host_name},http://localhost:3000"
@@ -477,6 +481,19 @@ resource "azurerm_container_app" "api" {
         name  = "CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING"
         value = azurerm_cosmosdb_sql_container.billing.name
       }
+      env {
+        name  = "CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS"
+        value = azurerm_cosmosdb_sql_container.subscriptions.name
+      }
+      env {
+        name  = "CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS"
+        value = "10"
+      }
+      # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID is intentionally NOT injected here:
+      # referencing the container app's own identity from inside its own
+      # block creates a self-referential dependency cycle. The app
+      # discovers its principal id at runtime via cloudguardiq.core.
+      # identity_resolver (oid claim of an MSI token).
       env {
         name  = "CLOUDGUARDIQ_STRIPE_PRICE_FREE"
         value = var.stripe_price_free
@@ -522,8 +539,9 @@ resource "azurerm_container_app" "api" {
     # Mirrors the manual Azure Portal CORS settings on the Container App.
     cors {
       allowed_origins           = ["https://${azurerm_static_web_app.frontend.default_host_name}"]
+      allowed_methods           = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
       allowed_headers           = ["*"]
-      max_age_in_seconds        = 0
+      max_age_in_seconds        = 600
       allow_credentials_enabled = false
     }
   }
@@ -614,8 +632,6 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     AZURE_OPENAI_ENDPOINT   = azurerm_cognitive_account.openai.endpoint
     AZURE_OPENAI_DEPLOYMENT = "gpt-5.1"
 
-    # Subscription to scan
-    AZURE_SUBSCRIPTION_ID = data.azurerm_subscription.current.subscription_id
 
     # Service Bus
     SERVICE_BUS_CONNECTION__fullyQualifiedNamespace = "${azurerm_servicebus_namespace.cloudguardiq.name}.servicebus.windows.net"
@@ -625,12 +641,17 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_AZURE_CLIENT_ID = azuread_application.cloudguardiq.client_id
 
     # Billing
-    CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING = azurerm_cosmosdb_sql_container.billing.name
-    CLOUDGUARDIQ_STRIPE_PRICE_FREE        = var.stripe_price_free
-    CLOUDGUARDIQ_STRIPE_PRICE_PRO         = var.stripe_price_pro
-    CLOUDGUARDIQ_STRIPE_PRICE_ENTERPRISE  = var.stripe_price_enterprise
-    CLOUDGUARDIQ_STRIPE_SUCCESS_URL       = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=success"
-    CLOUDGUARDIQ_STRIPE_CANCEL_URL        = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=cancel"
+    CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING       = azurerm_cosmosdb_sql_container.billing.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS = azurerm_cosmosdb_sql_container.subscriptions.name
+    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS          = "10"
+    # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID intentionally omitted: referencing
+    # the function app's own identity here is a self-reference. Resolved
+    # at runtime by cloudguardiq.core.identity_resolver.
+    CLOUDGUARDIQ_STRIPE_PRICE_FREE       = var.stripe_price_free
+    CLOUDGUARDIQ_STRIPE_PRICE_PRO        = var.stripe_price_pro
+    CLOUDGUARDIQ_STRIPE_PRICE_ENTERPRISE = var.stripe_price_enterprise
+    CLOUDGUARDIQ_STRIPE_SUCCESS_URL      = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=success"
+    CLOUDGUARDIQ_STRIPE_CANCEL_URL       = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?billing=cancel"
     # Stripe secrets flow through Key Vault references (empty when not configured).
     CLOUDGUARDIQ_STRIPE_API_KEY        = var.stripe_api_key == "" ? "" : "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.stripe_api_key[0].versionless_id})"
     CLOUDGUARDIQ_STRIPE_WEBHOOK_SECRET = var.stripe_webhook_secret == "" ? "" : "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.stripe_webhook_secret[0].versionless_id})"

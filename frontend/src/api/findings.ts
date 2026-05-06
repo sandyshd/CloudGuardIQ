@@ -7,8 +7,14 @@ export async function getFindings(subscriptionId?: string): Promise<FindingResul
   return data;
 }
 
-export async function getFinding(findingId: string): Promise<FindingResult> {
-  const { data } = await apiClient.get<FindingResult>(`/findings/${findingId}`);
+export async function getFinding(
+  findingId: string,
+  subscriptionId?: string,
+): Promise<FindingResult> {
+  // Findings are partitioned by /subscription_id in Cosmos. Passing the
+  // sub here turns the lookup into a fast single-partition read_item.
+  const params = subscriptionId ? { subscription_id: subscriptionId } : {};
+  const { data } = await apiClient.get<FindingResult>(`/findings/${findingId}`, { params });
   return data;
 }
 
@@ -17,30 +23,38 @@ export async function getRemediation(findingId: string): Promise<RemediationCard
   return data;
 }
 
-export async function markFindingResolved(findingId: string): Promise<void> {
-  // Backend endpoint is not yet implemented. Swallow 404s so the UI can
-  // provide optimistic feedback until the action endpoint ships.
-  try {
-    await apiClient.post(`/findings/${findingId}/resolve`);
-  } catch {
-    /* optimistic */
-  }
+export async function markFindingResolved(
+  findingId: string,
+  subscriptionId: string,
+): Promise<FindingResult> {
+  const { data } = await apiClient.post<FindingResult>(
+    `/findings/${findingId}/resolve`,
+    { subscription_id: subscriptionId },
+  );
+  return data;
 }
 
-export async function snoozeFinding(findingId: string, days = 7): Promise<void> {
-  try {
-    await apiClient.post(`/findings/${findingId}/snooze`, { days });
-  } catch {
-    /* optimistic */
-  }
+export async function snoozeFinding(
+  findingId: string,
+  subscriptionId: string,
+  days = 7,
+): Promise<FindingResult> {
+  const { data } = await apiClient.post<FindingResult>(
+    `/findings/${findingId}/snooze`,
+    { subscription_id: subscriptionId, days },
+  );
+  return data;
 }
 
-export async function applyTerraformFix(findingId: string): Promise<void> {
-  try {
-    await apiClient.post(`/findings/${findingId}/apply`);
-  } catch {
-    /* optimistic */
-  }
+export async function applyTerraformFix(
+  findingId: string,
+  subscriptionId: string,
+): Promise<FindingResult> {
+  const { data } = await apiClient.post<FindingResult>(
+    `/findings/${findingId}/apply`,
+    { subscription_id: subscriptionId },
+  );
+  return data;
 }
 
 export async function generateRemediation(findingId: string): Promise<RemediationCard> {

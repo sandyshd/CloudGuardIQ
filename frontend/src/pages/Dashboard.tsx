@@ -1,19 +1,39 @@
-import { Shield, DollarSign, CheckCircle, Server } from "lucide-react";
+import { Shield, DollarSign, CheckCircle, Server, Link2, Scan } from "lucide-react";
 import { MetricCard } from "../components/dashboard/MetricCard";
 import { SeverityChart } from "../components/dashboard/SeverityChart";
 import { CostChart } from "../components/dashboard/CostChart";
 import { ActivityFeed } from "../components/dashboard/ActivityFeed";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
+import { EmptyState } from "../components/common/EmptyState";
+import { DefenderAutoBadge } from "../components/common/DefenderAutoBadge";
 import { useFindings } from "../hooks/useFindings";
-import { useState } from "react";
+import { useSubscriptions } from "../hooks/useSubscriptions";
+import { triggerScan } from "../api/scans";
+import { useRef, useState } from "react";
 import type { FindingResult } from "../types";
 
 export function Dashboard() {
-  const { findings, loading } = useFindings();
-  const [selected, setSelected] = useState<FindingResult | null>(null);
+  const {
+    subscriptions,
+    loading: subsLoading,
+    selected: selectedSub,
+  } = useSubscriptions();
+  const { findings, loading, refresh } = useFindings(
+    selectedSub?.subscription_id,
+  );
+  const [selectedFinding, setSelectedFinding] = useState<FindingResult | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  // Hard-lock against double-fire in addition to the disabled button.
+  // React 18 StrictMode + a fast double-click can otherwise issue two
+  // /scan POSTs back-to-back, the second of which races with persistence
+  // and overwrites the scan_result row.
+  const scanInFlight = useRef(false);
 
-  if (loading) {
+  const isLoading = loading || subsLoading;
+
+  if (isLoading) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-bold">Dashboard</h1>
@@ -26,6 +46,75 @@ export function Dashboard() {
           <div className="h-64 animate-pulse rounded-lg bg-[hsl(var(--muted))]" />
           <div className="h-64 animate-pulse rounded-lg bg-[hsl(var(--muted))]" />
         </div>
+      </div>
+    );
+  }
+
+  const handleRunScan = async () => {
+    const subId = selectedSub?.subscription_id;
+    if (!subId) return;
+    if (scanInFlight.current) return;
+    scanInFlight.current = true;
+    setScanning(true);
+    setScanError(null);
+    try {
+      await triggerScan({ subscription_id: subId, include_cost: true });
+      await refresh();
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : "Scan failed");
+    } finally {
+      setScanning(false);
+      scanInFlight.current = false;
+    }
+  };
+
+  if (subscriptions.length === 0) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <EmptyState
+          icon={<Link2 className="h-12 w-12" />}
+          title="Link a subscription to start scanning"
+          message="CloudGuardIQ scans the Azure subscriptions you connect from the Settings page. Once linked, security findings, cost waste, and compliance posture will appear here."
+          primaryLabel="Go to Settings"
+          primaryTo="/settings"
+        />
+      </div>
+    );
+  }
+
+  if (!selectedSub) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <EmptyState
+          icon={<Link2 className="h-12 w-12" />}
+          title="No active subscription"
+          message="All linked subscriptions are disabled. Re-enable one in Settings to view findings."
+          primaryLabel="Go to Settings"
+          primaryTo="/settings"
+        />
+      </div>
+    );
+  }
+
+  if (findings.length === 0) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <EmptyState
+          icon={<Scan className="h-12 w-12" />}
+          title="No findings yet"
+          message={`Run your first scan on ${selectedSub.display_name} to discover security issues, cost waste, and compliance gaps.`}
+          primaryLabel={scanning ? "Scanning..." : "Run Your First Scan"}
+          primaryOnClick={handleRunScan}
+          primaryDisabled={scanning}
+          secondary={
+            scanError ? (
+              <p className="text-sm text-red-600">{scanError}</p>
+            ) : null
+          }
+        />
       </div>
     );
   }
@@ -49,7 +138,10 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <DefenderAutoBadge findings={findings} />
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <MetricCard
@@ -78,24 +170,28 @@ export function Dashboard() {
         />
       </div>
 
+      <div className="grid gap-4 md:grid-cols-2">
+        <SeverityChart findings={findings} />
+        <CostChart findings={findings} />
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 overflow-x-auto">
-          <FindingTable findings={top10} onSelect={setSelected} />
+          <FindingTable findings={top10} onSelect={setSelectedFinding} />
         </div>
-
-        <div className="space-y-4">
-          <SeverityChart findings={findings} />
-          <CostChart findings={findings} />
+        <div>
           <ActivityFeed findings={findings} />
         </div>
       </div>
 
-      {selected && (
+      {selectedFinding && (
         <FindingDetailPanel
-          finding={selected}
-          onClose={() => setSelected(null)}
+          finding={selectedFinding}
+          onClose={() => setSelectedFinding(null)}
         />
       )}
     </div>
   );
 }
+
+

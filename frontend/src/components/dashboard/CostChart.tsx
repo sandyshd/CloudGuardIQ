@@ -1,4 +1,4 @@
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import type { FindingResult } from "../../types";
 
@@ -11,6 +11,18 @@ const CATEGORY_MAP: Record<string, string> = {
   networkInterfaces: "NICs",
   snapshots: "Snapshots",
 };
+
+// Distinct, colour-blind-friendly palette for waste categories.
+const PALETTE = [
+  "#f59e0b",
+  "#0ea5e9",
+  "#10b981",
+  "#8b5cf6",
+  "#ef4444",
+  "#ec4899",
+  "#14b8a6",
+  "#f43f5e",
+];
 
 function categorize(resourceType: string): string {
   const short = resourceType.split("/").pop() || resourceType;
@@ -30,9 +42,11 @@ export function CostChart({ findings }: { findings: FindingResult[] }) {
     });
 
   const data = Object.entries(wasteByCategory)
-    .map(([name, waste]) => ({ name, waste: Math.round(waste * 100) / 100 }))
-    .sort((a, b) => b.waste - a.waste)
+    .map(([name, waste]) => ({ name, value: Math.round(waste * 100) / 100 }))
+    .sort((a, b) => b.value - a.value)
     .slice(0, 6);
+
+  const total = data.reduce((s, d) => s + d.value, 0);
 
   return (
     <Card>
@@ -40,14 +54,45 @@ export function CostChart({ findings }: { findings: FindingResult[] }) {
         <CardTitle className="text-base">Waste by Category</CardTitle>
       </CardHeader>
       <CardContent>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={data} layout="vertical" margin={{ left: 10, right: 20 }}>
-            <XAxis type="number" fontSize={12} tickFormatter={(v: number) => `$${v}`} />
-            <YAxis type="category" dataKey="name" fontSize={12} width={90} />
-            <Tooltip formatter={(value: number) => [`$${value}`, "Waste/mo"]} />
-            <Bar dataKey="waste" fill="#f59e0b" radius={[0, 4, 4, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
+        {total === 0 ? (
+          <div className="flex h-[260px] items-center justify-center text-sm text-[hsl(var(--muted-foreground))]">
+            No tracked waste
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={260}>
+            <PieChart>
+              <Pie
+                data={data}
+                dataKey="value"
+                nameKey="name"
+                innerRadius={55}
+                outerRadius={90}
+                paddingAngle={2}
+                stroke="hsl(var(--background))"
+                strokeWidth={2}
+              >
+                {data.map((entry, idx) => (
+                  <Cell
+                    key={entry.name}
+                    fill={PALETTE[idx % PALETTE.length]}
+                  />
+                ))}
+              </Pie>
+              <Tooltip
+                formatter={(value: number, _name, ctx) => {
+                  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+                  return [`$${value} (${pct}%)`, ctx.payload.name];
+                }}
+              />
+              <Legend
+                verticalAlign="bottom"
+                height={32}
+                iconType="circle"
+                wrapperStyle={{ fontSize: 12 }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        )}
       </CardContent>
     </Card>
   );

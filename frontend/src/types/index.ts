@@ -1,11 +1,25 @@
-export type DataTier = "TIER1_NATIVE" | "TIER2_FREE_CSPM" | "TIER3_PAID";
+// Cloud-agnostic data tiers. Wire values are stable (TIER2_FREE_CSPM /
+// TIER3_PAID) for backward compatibility; new code may also use the
+// canonical aliases TIER2_ENRICHED / TIER3_DEEP — they decode to the
+// same value on the backend.
+export type DataTier =
+  | "TIER1_NATIVE"
+  | "TIER2_FREE_CSPM"
+  | "TIER2_ENRICHED"
+  | "TIER3_PAID"
+  | "TIER3_DEEP";
+
+export const TIER2_VALUES: DataTier[] = ["TIER2_FREE_CSPM", "TIER2_ENRICHED"];
+export const TIER3_VALUES: DataTier[] = ["TIER3_PAID", "TIER3_DEEP"];
 export type CloudProvider = "AZURE" | "AWS" | "GCP" | "TERRAFORM";
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFORMATIONAL";
 export type FindingType = "SECURITY" | "FINOPS" | "COMPLIANCE";
 export type RemediationStatus = "PENDING" | "IN_PROGRESS" | "APPLIED" | "FAILED" | "DISMISSED";
+export type FindingStatus = "OPEN" | "RESOLVED" | "SNOOZED" | "APPLIED";
 
 export interface ResourceSnapshot {
   id: string;
+  tenant_id: string;
   provider: CloudProvider;
   subscription_id: string;
   resource_group: string;
@@ -22,6 +36,7 @@ export interface ResourceSnapshot {
 
 export interface FindingResult {
   finding_id: string;
+  tenant_id: string;
   resource_snapshot: ResourceSnapshot | null;
   rule_id: string;
   rule_name: string;
@@ -33,10 +48,16 @@ export interface FindingResult {
   waste_monthly_usd: number;
   priority_score: number;
   detected_at: string;
+  status?: FindingStatus;
+  resolved_at?: string | null;
+  resolved_by?: string;
+  snoozed_until?: string | null;
+  applied_at?: string | null;
 }
 
 export interface RemediationCard {
   card_id: string;
+  tenant_id: string;
   finding_result: FindingResult | null;
   narrative: string;
   terraform_fix: string;
@@ -60,7 +81,7 @@ export interface ScanResponse {
 }
 
 export interface Subscription {
-  id: string;
+  subscription_id: string;
   display_name: string;
   state: string;
 }

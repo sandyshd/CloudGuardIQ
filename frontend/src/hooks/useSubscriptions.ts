@@ -1,24 +1,14 @@
-import { useState, useEffect } from "react";
-import type { Subscription } from "../types";
-import { getSubscriptions } from "../api/subscriptions";
+// Backwards-compatible thin wrapper so existing pages keep working.
+// The real state lives in `auth/SubscriptionContext` so all consumers
+// share a single subscription list and selected-subscription value.
+import { useSubscriptionContext } from "../auth/SubscriptionContext";
 
 export function useSubscriptions() {
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  return useSubscriptionContext();
+}
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await getSubscriptions();
-        setSubscriptions(data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load subscriptions");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  return { subscriptions, loading, error };
+export function useSelectedSubscription() {
+  const { selected, selectedId, setSelectedId, subscriptions } =
+    useSubscriptionContext();
+  return { selected, selectedId, setSelectedId, subscriptions };
 }

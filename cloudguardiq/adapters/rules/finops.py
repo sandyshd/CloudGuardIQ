@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cloudguardiq.adapters.rules.base import PolicyRule
+from cloudguardiq.billing.pricing import get_pricing_service
 from cloudguardiq.core.enums import FindingCategory, FindingType, Severity
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
@@ -118,9 +119,20 @@ class UnassignedPublicIPRule(PolicyRule):
     compliance_frameworks: list[str] = []
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
-        """Return a finding if public IP is not associated with any resource."""
+        """Return a finding if public IP is not associated with any resource.
+
+        Waste estimate is sourced from the Azure Retail Prices cache for
+        the resource's region. If the cache is cold or the SKU is not
+        present we fall back to the bundled US-East list price so this
+        rule never reports ``$0`` waste for a real unassigned IP.
+        """
         assoc = snapshot.config.get("ip_association")
         if assoc is None or assoc == "":
+            price = get_pricing_service().get_price(
+                "public_ip_standard",
+                snapshot.region,
+                default=3.65,
+            )
             return FindingResult(
                 resource_snapshot=snapshot,
                 rule_id=self.rule_id,
@@ -131,8 +143,12 @@ class UnassignedPublicIPRule(PolicyRule):
                     f"Public IP '{snapshot.resource_name}' is reserved but "
                     "not attached to any resource."
                 ),
-                evidence={"ip_association": None},
-                waste_monthly_usd=3.65,
+                evidence={
+                    "ip_association": None,
+                    "price_source": "azure_retail_prices",
+                    "region": snapshot.region,
+                },
+                waste_monthly_usd=round(float(price), 2),
                 compliance_frameworks=list(self.compliance_frameworks),
             )
         return None

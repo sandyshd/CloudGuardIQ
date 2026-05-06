@@ -6,10 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from cloudguardiq.api import subscriptions as subs_module
 from cloudguardiq.core.enums import DataTier, Severity
 from cloudguardiq.core.models import FindingResult, RemediationCard, ResourceSnapshot
 from cloudguardiq.pipeline.ai_worker import AIWorker
 from cloudguardiq.pipeline.scan_pipeline import ScanPipeline, ScanResult
+from cloudguardiq.subscriptions.repository import SubscriptionRecord
 
 # ------------------------------------------------------------------
 # Fixtures
@@ -339,9 +341,13 @@ class TestAPIEndpoints:
         from cloudguardiq.api.main import app
 
         async def _no_auth() -> TokenPayload:
-            return TokenPayload(sub="test-user")
+            return TokenPayload(sub="test-user", tid="test-tenant")
 
         app.dependency_overrides[verify_token] = _no_auth
+        if subs_module._repository is not None:
+            await subs_module._repository.upsert(
+                SubscriptionRecord(tenant_id="test-tenant", subscription_id="sub-test"),
+            )
         try:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -366,9 +372,13 @@ class TestAPIEndpoints:
         from cloudguardiq.api.main import app
 
         async def _no_auth() -> TokenPayload:
-            return TokenPayload(sub="test-user")
+            return TokenPayload(sub="test-user", tid="test-tenant")
 
         app.dependency_overrides[verify_token] = _no_auth
+        if subs_module._repository is not None:
+            await subs_module._repository.upsert(
+                SubscriptionRecord(tenant_id="test-tenant", subscription_id="sub-test"),
+            )
         try:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:

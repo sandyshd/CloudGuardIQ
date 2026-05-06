@@ -9,10 +9,40 @@ from cloudguardiq.api.main import app
 
 
 async def _no_auth() -> TokenPayload:
-    return TokenPayload(sub="test-user")
+    return TokenPayload(sub="test-user", tid="test-tenant")
 
 
 app.dependency_overrides[verify_token] = _no_auth
+import pytest  # noqa: E402
+
+from cloudguardiq.api import subscriptions as _subs_module  # noqa: E402
+from cloudguardiq.subscriptions.repository import (  # noqa: E402
+    SubscriptionRecord as _SubRec,
+)
+
+
+@pytest.fixture(autouse=True)
+def _enable_demo_mode():
+    """Legacy tests rely on the /findings demo-data fallback.
+    Production mode now returns [] when no subscription_id is supplied,
+    so flip auth_disabled on the cached settings just for these tests.
+    """
+    from cloudguardiq.core.config import get_settings as _gs
+    s = _gs()
+    prev = s.auth_disabled
+    s.auth_disabled = True
+    yield
+    s.auth_disabled = prev
+
+
+@pytest.fixture(autouse=True)
+def _link_test_sub() -> None:
+    """Phase 2: pre-register the test subscription on the active repo."""
+    repo = _subs_module._repository
+    if repo is not None:
+        import asyncio
+        asyncio.run(repo.upsert(_SubRec(tenant_id="test-tenant", subscription_id="sub-123")))
+    yield
 
 
 def _client() -> TestClient:

@@ -19,6 +19,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from cloudguardiq.billing.plans import UNLIMITED, get_plan
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.core.config import Settings
 from cloudguardiq.core.enums import SubscriptionTier
@@ -28,7 +29,9 @@ logger = logging.getLogger(__name__)
 # Routes that enforce tier limits. Each entry is (method, path_prefix, limit_kind).
 _ENFORCED_ROUTES: list[tuple[str, str, str]] = [
     ("POST", "/scan", "resources_per_scan"),
-    ("POST", "/subscriptions", "subscriptions"),
+    # NOTE: POST /subscriptions tier cap is enforced inside the route
+    # handler (cloudguardiq.api.subscriptions) using the JWT tid claim,
+    # which is more reliable than the middleware's anonymous tenant lookup.
 ]
 
 # Routes that must never be blocked (webhook, health, docs, billing).
@@ -107,8 +110,20 @@ class TierEnforcementMiddleware(BaseHTTPMiddleware):
                 return kind
         return None
 
-    async def _over_scan_limit(self, request: Request) -> bool:
-        """Return True if the scan request exceeds the per-scan resource cap."""
+    async def _over_scan_limit(
+        self, request: Request, tier: SubscriptionTier,
+    ) -> bool:
+        """Return True if the scan request exceeds *tier*'s resource cap.
+
+        The cap is sourced from the plan catalog. Enterprise (or any plan
+        whose ``max_resources_per_scan`` is :data:`UNLIMITED`) is never
+        rejected. The caller advertises the upcoming scan size via the
+        ``X-Expected-Resource-Count`` header; when absent we err on the
+        side of allowing the request and rely on downstream limits.
+        """
+        cap = get_plan(tier).max_resources_per_scan
+        if cap == UNLIMITED:
+            return False
         declared = request.headers.get("x-expected-resource-count")
         if declared is None:
             return False
@@ -116,18 +131,23 @@ class TierEnforcementMiddleware(BaseHTTPMiddleware):
             count = int(declared)
         except ValueError:
             return False
-        return count > self._settings.free_max_resources_per_scan
+        return count > cap
 
-    async def _over_subscription_limit(self, tenant_id: str) -> bool:
-        """Return True if the tenant already has too many subscriptions."""
+    async def _over_subscription_limit(
+        self, tenant_id: str, tier: SubscriptionTier,
+    ) -> bool:
+        """Return True if *tenant_id* exceeds the *tier* subscription cap."""
         if self._subscription_counter is None:
+            return False
+        cap = get_plan(tier).max_subscriptions
+        if cap == UNLIMITED:
             return False
         try:
             current = await self._subscription_counter(tenant_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Subscription counter failed: %s", exc)
             return False
-        return current >= self._settings.free_max_subscriptions
+        return current >= cap
 
     async def dispatch(  # type: ignore[override]
         self,
@@ -145,16 +165,14 @@ class TierEnforcementMiddleware(BaseHTTPMiddleware):
 
         tenant_id = _anonymous_tenant(request)
         tier = await self._resolve_tier(tenant_id)
-        if tier != SubscriptionTier.FREE:
-            return await call_next(request)
 
         exceeded = False
         limit_name = ""
         if kind == "resources_per_scan":
-            exceeded = await self._over_scan_limit(request)
+            exceeded = await self._over_scan_limit(request, tier)
             limit_name = "resources_per_scan"
         elif kind == "subscriptions":
-            exceeded = await self._over_subscription_limit(tenant_id)
+            exceeded = await self._over_subscription_limit(tenant_id, tier)
             limit_name = "subscriptions"
 
         if exceeded:

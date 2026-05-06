@@ -72,7 +72,7 @@ export function FindingTable({ findings, onSelect }: FindingTableProps) {
               {f.priority_score}
             </TableCell>
             <TableCell>
-              <Badge variant="secondary">PENDING</Badge>
+              <Badge variant="secondary">{f.status ?? "OPEN"}</Badge>
             </TableCell>
             <TableCell>
               <ChevronRight className="h-4 w-4 text-[hsl(var(--muted-foreground))]" />

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Sparkles, Link2 } from "lucide-react";
+import { EmptyState } from "../components/common/EmptyState";
+import { useSubscriptions } from "../hooks/useSubscriptions";
 
 import { LoadingSpinner } from "../components/common/LoadingSpinner";
 import { SeverityBadge } from "../components/common/SeverityBadge";
 import { DataTierBadge } from "../components/common/DataTierBadge";
-import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
+import { Alert, AlertDescription } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -16,7 +19,6 @@ import {
   applyTerraformFix,
   getFinding,
   getFindings,
-  getRemediation,
   markFindingResolved,
   snoozeFinding,
   generateRemediation,
@@ -39,6 +41,7 @@ export function AIFix() {
   const queryId = searchParams.get("finding");
   const findingId = routeId ?? queryId ?? null;
   const navigate = useNavigate();
+  const { subscriptions, selected: selectedSub } = useSubscriptions();
 
   const [finding, setFinding] = useState<FindingResult | null>(null);
   const [card, setCard] = useState<RemediationCard | null>(null);
@@ -47,30 +50,57 @@ export function AIFix() {
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<ActionState>("idle");
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!findingId) return;
     setLoading(true);
     setError(null);
     try {
-      const [f, c, all] = await Promise.all([
-        getFinding(findingId),
-        getRemediation(findingId).catch(() => null),
-        getFindings().catch(() => [] as FindingResult[]),
+      const [f, all] = await Promise.all([
+        getFinding(findingId, selectedSub?.subscription_id),
+        getFindings(selectedSub?.subscription_id).catch(() => [] as FindingResult[]),
       ]);
       setFinding(f);
-      setCard(c);
       setSimilar(all.filter((x) => x.finding_id !== findingId).slice(0, 3));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load finding");
     } finally {
       setLoading(false);
     }
-  }, [findingId]);
+  }, [findingId, selectedSub?.subscription_id]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Auto-generate (or fetch cached) AI remediation as soon as the finding loads.
+  // The backend POST returns the existing card immediately when one is cached,
+  // so this is safe and idempotent.
+  const runGenerate = useCallback(async () => {
+    if (!findingId) return;
+    setGenerating(true);
+    setGenerationError(null);
+    try {
+      const newCard = await generateRemediation(findingId);
+      setCard(newCard);
+    } catch (err) {
+      setGenerationError(
+        err instanceof Error
+          ? err.message
+          : "AI generation failed. Check that Azure OpenAI is configured.",
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }, [findingId]);
+
+  useEffect(() => {
+    if (finding && !card && !generating && !generationError) {
+      runGenerate();
+    }
+  }, [finding, card, generating, generationError, runGenerate]);
 
   const narrativeParagraphs = useMemo(
     () => splitParagraphs(card?.narrative),
@@ -101,19 +131,30 @@ export function AIFix() {
   }, [finding]);
 
   if (!findingId) {
+    if (subscriptions.length === 0) {
+      return (
+        <div className="space-y-6">
+          <h1 className="text-2xl font-bold">AI Fix</h1>
+          <EmptyState
+            icon={<Link2 className="h-12 w-12" />}
+            title="Link a subscription to start scanning"
+            message="AI Fix generates Terraform and CLI remediation plans for findings produced by a scan. Connect an Azure subscription on the Settings page to begin."
+            primaryLabel="Go to Settings"
+            primaryTo="/settings"
+          />
+        </div>
+      );
+    }
     return (
-      <div className="space-y-4">
+      <div className="space-y-6">
         <h1 className="text-2xl font-bold">AI Fix</h1>
-        <Alert>
-          <AlertTitle>Select a finding</AlertTitle>
-          <AlertDescription>
-            Open a finding from the{" "}
-            <Link to="/findings" className="underline">
-              Findings
-            </Link>{" "}
-            page to view its AI remediation plan.
-          </AlertDescription>
-        </Alert>
+        <EmptyState
+          icon={<Sparkles className="h-12 w-12" />}
+          title="Select a finding"
+          message="Open a finding from the Findings page to view its AI-generated remediation plan, Terraform fix, and CLI commands."
+          primaryLabel="Go to Findings"
+          primaryTo="/findings"
+        />
       </div>
     );
   }
@@ -131,14 +172,14 @@ export function AIFix() {
   const onApply = async () => {
     setAction("applying");
     setActionMessage(null);
-    await applyTerraformFix(finding.finding_id);
+    await applyTerraformFix(finding.finding_id, finding.resource_snapshot?.subscription_id ?? "");
     setAction("idle");
     setActionMessage("Terraform apply requested. Tracking in Self-Heal.");
   };
   const onResolve = async () => {
     setAction("resolving");
     setActionMessage(null);
-    await markFindingResolved(finding.finding_id);
+    await markFindingResolved(finding.finding_id, finding.resource_snapshot?.subscription_id ?? "");
     setAction("idle");
     setActionMessage("Marked as resolved.");
     navigate("/findings");
@@ -146,7 +187,7 @@ export function AIFix() {
   const onSnooze = async () => {
     setAction("snoozing");
     setActionMessage(null);
-    await snoozeFinding(finding.finding_id, 7);
+    await snoozeFinding(finding.finding_id, finding.resource_snapshot?.subscription_id ?? "", 7);
     setAction("idle");
     setActionMessage("Snoozed for 7 days.");
   };
@@ -213,31 +254,25 @@ export function AIFix() {
             <CardContent className="space-y-2 text-sm text-blue-950">
               {narrativeParagraphs.length > 0 ? (
                 narrativeParagraphs.map((p, i) => <p key={i}>{p}</p>)
-              ) : (
-                <>
-                <p className="italic text-blue-900/70 mb-2">
-                  Remediation narrative is not available yet.
+              ) : generating ? (
+                <p className="italic text-blue-900/70">
+                  Generating AI remediation… this can take a few seconds.
                 </p>
-                <Button
-                  size="sm"
-                  onClick={async () => {
-                    setAction("applying");
-                    setActionMessage(null);
-                    try {
-                      const newCard = await generateRemediation(finding.finding_id);
-                      setCard(newCard);
-                      setActionMessage("AI remediation generated successfully.");
-                    } catch {
-                      setActionMessage("AI generation failed. Check that Azure OpenAI is configured.");
-                    } finally {
-                      setAction("idle");
-                    }
-                  }}
-                  disabled={action !== "idle"}
-                >
-                  {action === "applying" ? "Generating…" : "Generate AI Remediation"}
-                </Button>
+              ) : generationError ? (
+                <>
+                  <p className="text-blue-900/80 mb-2">{generationError}</p>
+                  <Button
+                    size="sm"
+                    onClick={runGenerate}
+                    disabled={generating}
+                  >
+                    Retry AI Remediation
+                  </Button>
                 </>
+              ) : (
+                <p className="italic text-blue-900/70">
+                  Preparing AI remediation…
+                </p>
               )}
             </CardContent>
           </Card>
@@ -359,4 +394,6 @@ export function AIFix() {
     </div>
   );
 }
+
+
 

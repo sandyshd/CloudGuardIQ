@@ -28,6 +28,22 @@ class TokenPayload(BaseModel):
     sub: str
     aud: str = ""
     iss: str = ""
+    tid: str = ""  # Azure AD tenant id (multi-tenant scoping)
+    oid: str = ""  # Object id (per-user audit log)
+
+
+def get_tenant_id(user: TokenPayload) -> str:
+    """Return the validated tenant id from a token payload.
+
+    Raises HTTPException(401) when ``tid`` is missing. ``oid`` is optional
+    and used only for audit logging.
+    """
+    if not user.tid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Tenant id (tid) missing from token",
+        )
+    return user.tid
 
 
 def _get_signing_keys(tenant_id: str) -> list[Any]:
@@ -86,7 +102,7 @@ async def verify_token(
     settings = get_settings()
 
     if settings.auth_disabled:
-        return TokenPayload(sub="anonymous")
+        return TokenPayload(sub="anonymous", tid="anonymous")
 
     if credentials is None:
         raise HTTPException(
@@ -128,4 +144,6 @@ async def verify_token(
         sub=payload.get("sub", ""),
         aud=payload.get("aud", ""),
         iss=payload.get("iss", ""),
+        tid=payload.get("tid", ""),
+        oid=payload.get("oid", ""),
     )

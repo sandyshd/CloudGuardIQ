@@ -217,7 +217,9 @@ class TestFindingResult:
         )
 
     def test_finding_id_auto(self, finding: FindingResult) -> None:
-        assert len(finding.finding_id) == 36  # UUID string
+        # When a snapshot + rule_id are present, finding_id is now a
+        # deterministic SHA-256 hex digest (64 chars), not a random UUID.
+        assert len(finding.finding_id) == 64
 
     def test_fields(self, finding: FindingResult) -> None:
         assert finding.rule_id == "STOR-001"

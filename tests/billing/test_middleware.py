@@ -42,17 +42,18 @@ def _build_app(
 
 @pytest.mark.asyncio
 async def test_free_tier_blocks_oversized_scan() -> None:
-    settings = Settings(free_max_resources_per_scan=10)
+    settings = Settings()
     repo = BillingRepository(settings)
     app = _build_app(repo, settings)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # FREE plan cap (from plan catalog) is 100 resources/scan; 200 is over.
         resp = await ac.post(
             "/scan",
             json={},
             headers={
                 "X-Tenant-Id": "tenant-a",
-                "X-Expected-Resource-Count": "100",
+                "X-Expected-Resource-Count": "200",
             },
         )
     assert resp.status_code == 402
@@ -64,7 +65,7 @@ async def test_free_tier_blocks_oversized_scan() -> None:
 
 @pytest.mark.asyncio
 async def test_free_tier_allows_small_scan() -> None:
-    settings = Settings(free_max_resources_per_scan=100)
+    settings = Settings()
     repo = BillingRepository(settings)
     app = _build_app(repo, settings)
     transport = ASGITransport(app=app)
@@ -82,11 +83,13 @@ async def test_free_tier_allows_small_scan() -> None:
 
 @pytest.mark.asyncio
 async def test_pro_tier_bypasses_limit() -> None:
-    settings = Settings(free_max_resources_per_scan=10)
+    """Legacy name retained: under the plan catalog ENTERPRISE is the
+    only tier with no resource-per-scan cap; PRO has a finite cap."""
+    settings = Settings()
     repo = BillingRepository(settings)
     await repo.upsert(BillingCustomer(
-        tenant_id="tenant-pro",
-        tier=SubscriptionTier.PRO,
+        tenant_id="tenant-ent",
+        tier=SubscriptionTier.ENTERPRISE,
         stripe_customer_id="cus_1",
     ))
     app = _build_app(repo, settings)
@@ -96,31 +99,17 @@ async def test_pro_tier_bypasses_limit() -> None:
             "/scan",
             json={},
             headers={
-                "X-Tenant-Id": "tenant-pro",
+                "X-Tenant-Id": "tenant-ent",
                 "X-Expected-Resource-Count": "10000",
             },
         )
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
-async def test_subscription_limit_blocked_for_free() -> None:
-    settings = Settings(free_max_subscriptions=1)
-    repo = BillingRepository(settings)
-
-    async def counter(tenant_id: str) -> int:
-        return 1  # already at the cap
-
-    app = _build_app(repo, settings, subscription_counter=counter)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.post(
-            "/subscriptions",
-            json={},
-            headers={"X-Tenant-Id": "tenant-a"},
-        )
-    assert resp.status_code == 402
-    assert resp.json()["limit"] == "subscriptions"
+# test_subscription_limit_blocked_for_free removed: in Phase 2 the
+# /subscriptions cap check moved out of the middleware and into the
+# route handler (cloudguardiq.api.subscriptions). Coverage lives in
+# tests/api/test_subscriptions_routes.py::test_add_enforces_free_cap_of_1.
 
 
 @pytest.mark.asyncio
@@ -170,3 +159,69 @@ async def test_tier_cache_is_used() -> None:
             },
         )
         assert resp2.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_pro_tier_uses_higher_resource_cap() -> None:
+    """PRO plan allows up to 1000 resources per scan (plan catalog)."""
+    settings = Settings()
+    repo = BillingRepository(settings)
+    await repo.upsert(BillingCustomer(
+        tenant_id="tenant-pro", tier=SubscriptionTier.PRO,
+    ))
+    app = _build_app(repo, settings)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # 500 resources is over FREE (100) but under PRO (1000) — must pass.
+        resp = await ac.post(
+            "/scan", json={},
+            headers={
+                "X-Tenant-Id": "tenant-pro",
+                "X-Expected-Resource-Count": "500",
+            },
+        )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_pro_tier_blocks_oversized_scan() -> None:
+    """PRO plan still enforces its own (higher) cap."""
+    settings = Settings()
+    repo = BillingRepository(settings)
+    await repo.upsert(BillingCustomer(
+        tenant_id="tenant-pro", tier=SubscriptionTier.PRO,
+    ))
+    app = _build_app(repo, settings)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post(
+            "/scan", json={},
+            headers={
+                "X-Tenant-Id": "tenant-pro",
+                "X-Expected-Resource-Count": "5000",
+            },
+        )
+    assert resp.status_code == 402
+    body = resp.json()
+    assert body["current_tier"] == "pro"
+
+
+@pytest.mark.asyncio
+async def test_enterprise_tier_unlimited_scan() -> None:
+    """Enterprise has no resource-per-scan cap."""
+    settings = Settings()
+    repo = BillingRepository(settings)
+    await repo.upsert(BillingCustomer(
+        tenant_id="tenant-ent", tier=SubscriptionTier.ENTERPRISE,
+    ))
+    app = _build_app(repo, settings)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post(
+            "/scan", json={},
+            headers={
+                "X-Tenant-Id": "tenant-ent",
+                "X-Expected-Resource-Count": "999999",
+            },
+        )
+    assert resp.status_code == 200

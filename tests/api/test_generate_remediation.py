@@ -95,7 +95,12 @@ class TestGenerateRemediation:
         client: AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        # The handler reads ``settings.azure_openai_endpoint`` first, then
+        # falls back to ``os.environ["AZURE_OPENAI_ENDPOINT"]``. Override
+        # both so the test does not depend on the developer's local .env.
+        from cloudguardiq.core.config import get_settings
         monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+        monkeypatch.setattr(get_settings(), "azure_openai_endpoint", "")
         list_resp = await client.get("/findings")
         finding_id = list_resp.json()[0]["finding_id"]
         resp = await client.post(
