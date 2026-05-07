@@ -379,31 +379,54 @@ to take under 15 minutes from the customer's first click.
 
 #### Pre-flight checklist (operator side, tenant A)
 
-Run these once, before any customer onboards:
+Run these once, before any customer onboards.
 
-- [ ] CloudGuardIQ infra deployed via `terraform apply` from `infra/`.
-      The app registration must have
-      `sign_in_audience = AzureADMultipleOrgs` (already set in
-      [`infra/main.tf`](infra/main.tf)).
-- [ ] **Publisher verification** completed on the app registration.
-      Without it Azure AD will warn customers that the app is
-      unverified, and many tenants block consent on unverified apps.
+**Automated by `terraform apply` (no operator action needed):**
+
+- [x] App registration created with
+      `sign_in_audience = AzureADMultipleOrgs` (multi-tenant).
+- [x] Client secret provisioned and injected into the Container App
+      and Function App as `CLOUDGUARDIQ_AZURE_CLIENT_SECRET`
+      (used by `AzureCustomerCredentialFactory` for cross-tenant calls).
+- [x] Consent callback Reply URL registered on the app registration's
+      `web.redirect_uris`:
+      `https://<frontend-host>/settings?consent=callback`,
+      plus everything in `var.consent_redirect_uris`
+      (default includes `http://localhost:3000/settings?consent=callback`
+      for dev).
+- [x] `CLOUDGUARDIQ_CONSENT_REDIRECT_URI` env var injected into the
+      Container App and Function App and pointed at the same Reply URL,
+      so `GET /subscriptions/consent-url` builds the correct
+      `redirect_uri` automatically.
+- [x] `tenant_consents` Cosmos container created
+      (PK `/customer_tenant_id`).
+
+**Manual one-time setup (cannot be automated by Terraform):**
+
+- [ ] **Publisher verification** completed on the app registration via
+      Microsoft Partner Center. Without it Azure AD warns customers
+      the app is unverified, and many tenants block consent outright.
       See <https://learn.microsoft.com/azure/active-directory/develop/publisher-verification-overview>.
-- [ ] A **client credential** is configured for cross-tenant calls:
-      either a certificate (`CLOUDGUARDIQ_AZURE_CERTIFICATE_PATH`,
-      preferred) or a secret
-      (`CLOUDGUARDIQ_AZURE_CLIENT_SECRET`, provisioned by Terraform).
-      Without one of these the cross-tenant access probe falls back to
-      `DefaultAzureCredential`, which only works for tenant **A**.
-- [ ] The **redirect URI** that the consent popup returns to is
-      registered as a Reply URL on the app registration. Default:
-      `http://localhost:3000/settings?consent=callback` for dev,
-      `https://<your-frontend-host>/settings?consent=callback` for
-      production. Set it via
-      `CLOUDGUARDIQ_CONSENT_REDIRECT_URI`.
-- [ ] The `tenant_consents` Cosmos container exists (added by the
-      Phase 3 Terraform — verify with
-      `az cosmosdb sql container show -a <acct> -d cloudguardiq -n tenant_consents`).
+- [ ] **Home-tenant admin consent** granted once on tenant **A** for
+      the API permissions declared on the app registration. From a
+      shell signed in to a Global Admin of tenant **A**:
+
+      ```bash
+      az ad app permission admin-consent --id <cgiq-client-id>
+      ```
+
+      (The client id is exposed by the Terraform output
+      `azure_ad_client_id`.)
+
+**Optional:**
+
+- [ ] Replace the client secret with a certificate by setting
+      `CLOUDGUARDIQ_AZURE_CERTIFICATE_PATH` (preferred for production).
+      `AzureCustomerCredentialFactory` picks the certificate first when
+      both are present.
+- [ ] Add custom production hostnames (e.g. `app.example.com`) to
+      `consent_redirect_uris` in `terraform.tfvars` so admin-consent
+      callbacks for those hosts are also accepted.
 
 #### Step 1 — Customer admin grants tenant-wide consent
 
@@ -449,7 +472,7 @@ CloudGuardIQ writes a record to the `tenant_consents` Cosmos container:
 | `400 invalid_tenant_id` | `tenant_id` is not a GUID | Re-run Step 1 with the correct Entra tenant id. |
 | `400 consent_failed` with `azure_error=access_denied` | Admin clicked Cancel | Re-run Step 1; admin clicks Accept. |
 | Azure AD shows “This app is unverified” | Publisher verification missing | Complete pre-flight checklist. |
-| Popup blocked / `redirect_uri_mismatch` | Reply URL not registered | Add the URL to the app registration's Reply URLs. |
+| Popup blocked / `redirect_uri_mismatch` | Custom frontend host not in `var.consent_redirect_uris` | Add the host to `consent_redirect_uris` in `terraform.tfvars` and re-apply. The default SWA host is registered automatically. |
 
 #### Step 2 — Assign Reader on the target subscription(s)
 
@@ -969,6 +992,7 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 | `openai_capacity` | `number` | `10` | TPM capacity (thousands) |
 | `api_container_image` | `string` | hello-world image | Docker image for backend |
 | `frontend_redirect_uris` | `list(string)` | `["http://localhost:3000"]` | Additional auth redirect URIs |
+| `consent_redirect_uris` | `list(string)` | `["http://localhost:3000/settings?consent=callback"]` | Extra Reply URLs for the Azure AD admin-consent callback (cross-tenant onboarding) |
 
 ---
 
