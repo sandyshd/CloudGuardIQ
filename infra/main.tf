@@ -659,11 +659,11 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_AZURE_CLIENT_ID = azuread_application.cloudguardiq.client_id
 
     # Billing
-    CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING       = azurerm_cosmosdb_sql_container.billing.name
-    CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS = azurerm_cosmosdb_sql_container.subscriptions.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING         = azurerm_cosmosdb_sql_container.billing.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS   = azurerm_cosmosdb_sql_container.subscriptions.name
     CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS = azurerm_cosmosdb_sql_container.tenant_consents.name
-    CLOUDGUARDIQ_AZURE_CLIENT_SECRET             = azuread_application_password.cloudguardiq.value
-    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS          = "10"
+    CLOUDGUARDIQ_AZURE_CLIENT_SECRET              = azuread_application_password.cloudguardiq.value
+    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS            = "10"
     # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID intentionally omitted: referencing
     # the function app's own identity here is a self-reference. Resolved
     # at runtime by cloudguardiq.core.identity_resolver.
