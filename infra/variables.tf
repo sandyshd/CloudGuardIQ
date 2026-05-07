@@ -93,3 +93,9 @@ variable "stripe_webhook_secret" {
   default     = ""
   sensitive   = true
 }
+
+variable "consent_redirect_uris" {
+  description = "Additional Reply URLs for the Azure AD admin-consent callback (e.g. localhost for dev)."
+  type        = list(string)
+  default     = ["http://localhost:3000/settings?consent=callback"]
+}

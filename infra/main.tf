@@ -72,7 +72,13 @@ resource "azuread_application" "cloudguardiq" {
   sign_in_audience = "AzureADMultipleOrgs"
 
   web {
-    redirect_uris = var.environment == "dev" ? [] : []
+    # Phase 3.3: Azure AD redirects the customer admin here after
+    # they grant tenant-wide admin consent. The path is consumed by
+    # GET /subscriptions/consent-callback in the FastAPI backend.
+    redirect_uris = concat(
+      ["https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"],
+      var.consent_redirect_uris,
+    )
 
     implicit_grant {
       access_token_issuance_enabled = false
@@ -504,6 +510,10 @@ resource "azurerm_container_app" "api" {
         value = azuread_application_password.cloudguardiq.value
       }
       env {
+        name  = "CLOUDGUARDIQ_CONSENT_REDIRECT_URI"
+        value = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
+      }
+      env {
         name  = "CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS"
         value = "10"
       }
@@ -663,6 +673,7 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS   = azurerm_cosmosdb_sql_container.subscriptions.name
     CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS = azurerm_cosmosdb_sql_container.tenant_consents.name
     CLOUDGUARDIQ_AZURE_CLIENT_SECRET              = azuread_application_password.cloudguardiq.value
+    CLOUDGUARDIQ_CONSENT_REDIRECT_URI             = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
     CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS            = "10"
     # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID intentionally omitted: referencing
     # the function app's own identity here is a self-reference. Resolved
