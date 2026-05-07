@@ -363,46 +363,220 @@ after granting admin consent. See the next section for the flow.
 
 ### Connecting subscriptions from another Entra tenant
 
-When a customer in tenant **B** wants to onboard a subscription owned by
-tenant **B** to a CloudGuardIQ instance running in tenant **A**, the
-directory admin in tenant **B** must follow three steps:
+CloudGuardIQ runs as a multi-tenant Azure AD app. Customers in a
+*different* Entra tenant (call it tenant **B**) can self-onboard their
+Azure subscriptions to a CloudGuardIQ deployment running in your tenant
+(tenant **A**) by following the steps below. The whole flow is designed
+to take under 15 minutes from the customer's first click.
 
-1. **Grant admin consent.** From the Settings page, click *Connect another
-   tenant*. The frontend calls `GET /subscriptions/consent-url?tenant_id=<B>`
-   and opens the returned URL in a popup:
+#### Roles required
 
-   ```
-   https://login.microsoftonline.com/<B>/adminconsent?client_id=<cgiq-client-id>&redirect_uri=<consent_redirect_uri>
-   ```
+| Role | Where | Used for |
+|------|-------|----------|
+| **Global Administrator** *(or Privileged Role Admin)* | Tenant **B** | Granting tenant-wide admin consent on the multi-tenant app. |
+| **Owner / User Access Administrator** | Each subscription in tenant **B** that will be linked | Assigning the `Reader` role to the CloudGuardIQ service principal. |
+| Any signed-in user | Tenant **A** (the CloudGuardIQ frontend) | Driving the onboarding wizard and submitting `POST /subscriptions`. |
 
-   A directory admin signs in and clicks **Accept**. Azure AD redirects to
-   `GET /subscriptions/consent-callback?tenant=<B>&admin_consent=True`,
-   which records a `tenant_consents` document keyed by `<B>`.
+#### Pre-flight checklist (operator side, tenant A)
 
-2. **Assign Reader to the CloudGuardIQ service principal.** Inside the
-   customer's tenant, grant the **Reader** role on the target subscription
-   to the CloudGuardIQ enterprise application that just appeared after
-   consent (`az role assignment create --assignee <cgiq-app-objectid>
-   --role Reader --scope /subscriptions/<sub-guid>`). The Settings UI
-   surfaces the exact command via `GET /onboarding/info`.
+Run these once, before any customer onboards:
 
-3. **Add the subscription.** Submit `POST /subscriptions` with both
-   `subscription_id` and `customer_tenant_id=<B>`. The backend:
-   * Verifies that an active `tenant_consents` record exists for `<B>`
-     (otherwise returns `400 consent_required`).
-   * Builds a per-customer-tenant credential
-     (`ClientCertificateCredential` or `ClientSecretCredential`,
-     see `cloudguardiq/auth/customer_credential.py`).
-   * Probes Resource Graph through that credential; on RBAC failure
-     returns `400 access_denied` with the `az role assignment` hint.
-   * On success persists a `subscriptions` record with
-     `customer_tenant_id=<B>`.
+- [ ] CloudGuardIQ infra deployed via `terraform apply` from `infra/`.
+      The app registration must have
+      `sign_in_audience = AzureADMultipleOrgs` (already set in
+      [`infra/main.tf`](infra/main.tf)).
+- [ ] **Publisher verification** completed on the app registration.
+      Without it Azure AD will warn customers that the app is
+      unverified, and many tenants block consent on unverified apps.
+      See <https://learn.microsoft.com/azure/active-directory/develop/publisher-verification-overview>.
+- [ ] A **client credential** is configured for cross-tenant calls:
+      either a certificate (`CLOUDGUARDIQ_AZURE_CERTIFICATE_PATH`,
+      preferred) or a secret
+      (`CLOUDGUARDIQ_AZURE_CLIENT_SECRET`, provisioned by Terraform).
+      Without one of these the cross-tenant access probe falls back to
+      `DefaultAzureCredential`, which only works for tenant **A**.
+- [ ] The **redirect URI** that the consent popup returns to is
+      registered as a Reply URL on the app registration. Default:
+      `http://localhost:3000/settings?consent=callback` for dev,
+      `https://<your-frontend-host>/settings?consent=callback` for
+      production. Set it via
+      `CLOUDGUARDIQ_CONSENT_REDIRECT_URI`.
+- [ ] The `tenant_consents` Cosmos container exists (added by the
+      Phase 3 Terraform — verify with
+      `az cosmosdb sql container show -a <acct> -d cloudguardiq -n tenant_consents`).
 
-The timer-driven scheduler (`function_app.py::scan_trigger`) reads
-`customer_tenant_id` off each subscription record and authenticates
-against that tenant for every scan. If consent is later revoked the
-subscription is auto-disabled on the next 401/403 so we stop hammering
-ARM — the customer can re-link after restoring consent.
+#### Step 1 — Customer admin grants tenant-wide consent
+
+Tenant **B**'s directory admin opens the CloudGuardIQ Settings page
+and clicks **Connect another tenant**. The frontend calls:
+
+```http
+GET /subscriptions/consent-url?tenant_id=<TenantB-guid>
+```
+
+and opens the returned URL in a popup:
+
+```
+https://login.microsoftonline.com/<TenantB-guid>/adminconsent
+  ?client_id=<cgiq-client-id>
+  &redirect_uri=<consent_redirect_uri>
+```
+
+The admin signs in (in tenant **B**) and clicks **Accept**. Azure AD
+creates an **enterprise application** for CloudGuardIQ inside tenant
+**B** and redirects the browser to:
+
+```http
+GET /subscriptions/consent-callback?tenant=<TenantB-guid>&admin_consent=True
+```
+
+CloudGuardIQ writes a record to the `tenant_consents` Cosmos container:
+
+```json
+{
+  "id": "<TenantB-guid>",
+  "customer_tenant_id": "<TenantB-guid>",
+  "consented_by": "<admin-oid>",
+  "consented_at": "2026-05-07T12:34:56+00:00",
+  "revoked_at": null
+}
+```
+
+**Failure cases:**
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `400 invalid_tenant_id` | `tenant_id` is not a GUID | Re-run Step 1 with the correct Entra tenant id. |
+| `400 consent_failed` with `azure_error=access_denied` | Admin clicked Cancel | Re-run Step 1; admin clicks Accept. |
+| Azure AD shows “This app is unverified” | Publisher verification missing | Complete pre-flight checklist. |
+| Popup blocked / `redirect_uri_mismatch` | Reply URL not registered | Add the URL to the app registration's Reply URLs. |
+
+#### Step 2 — Assign Reader on the target subscription(s)
+
+Inside tenant **B**, a subscription **Owner** grants the CloudGuardIQ
+enterprise application the `Reader` role. The Settings UI surfaces the
+exact command via `GET /onboarding/info`. From a shell signed in to
+tenant **B**:
+
+```bash
+# One-time: discover the object id of the cgiq enterprise app inside tenant B
+CGIQ_OBJECT_ID=$(az ad sp show --id <cgiq-client-id> --query id -o tsv)
+
+# Grant Reader on each subscription the customer wants to scan
+az role assignment create \
+  --assignee $CGIQ_OBJECT_ID \
+  --role Reader \
+  --scope /subscriptions/<sub-guid>
+```
+
+> **Why Reader and not Contributor?** CloudGuardIQ never writes to
+> customer subscriptions. Reader is the principle-of-least-privilege
+> role for posture and cost scans. AI-suggested remediations are
+> rendered as IaC diffs / `az cli` snippets the customer applies
+> themselves.
+
+Allow up to **5 minutes** for the role assignment to propagate before
+Step 3.
+
+#### Step 3 — Link the subscription(s) in CloudGuardIQ
+
+From the CloudGuardIQ Settings page, the customer (or operator on their
+behalf) submits:
+
+```http
+POST /subscriptions
+Content-Type: application/json
+
+{
+  "subscription_id": "<sub-guid>",
+  "customer_tenant_id": "<TenantB-guid>",
+  "display_name": "Acme Prod East"
+}
+```
+
+The backend pipeline runs in this order:
+
+1. **Consent guard** — looks up `tenant_consents` for `<TenantB-guid>`.
+   Returns `400 consent_required` if no active record. (Step 1 missing.)
+2. **Tier-cap check** — returns `402 upgrade_required` if the caller's
+   plan is at its `max_subscriptions` limit.
+3. **Cross-tenant access probe** — builds a `ClientCertificateCredential`
+   (or `ClientSecretCredential`) against
+   `login.microsoftonline.com/<TenantB-guid>` via
+   [`cloudguardiq/auth/customer_credential.py`](cloudguardiq/auth/customer_credential.py)
+   and queries Resource Graph for the subscription. On 401/403 returns
+   `400 access_denied` with a copy-pasteable
+   `az role assignment create` command. (Step 2 missing or not
+   propagated.)
+4. **Persist** — writes a `subscriptions` record with
+   `customer_tenant_id=<TenantB-guid>`. Returns `201`.
+
+Verify with `GET /subscriptions` — the new entry should appear with
+`state="Enabled"`.
+
+#### Step 4 — First scan
+
+The timer-driven scheduler
+([`function_app.py::scan_trigger`](function_app.py)) runs every six
+hours by default. For each enabled subscription it:
+
+* Reads `customer_tenant_id` off the record.
+* Builds a per-tenant credential via
+  `build_default_factory(settings).for_tenant(customer_tenant_id)`.
+* Runs the standard `ScanPipeline` (Resource Graph → PolicyEngine →
+  optional Defender enrichment → AI worker queue).
+* Stamps `last_scan_at` on success.
+
+To scan immediately instead of waiting for the next tick, run:
+
+```bash
+curl -X POST "<api>/scan/trigger?subscription_id=<sub-guid>" \
+  -H "Authorization: Bearer <token>"
+```
+
+Findings appear in the dashboard within a minute, tagged with the
+linking tenant (`tenant_id`) so multi-customer operators can filter by
+customer.
+
+#### Revocation and re-linking
+
+If the customer admin removes the CloudGuardIQ enterprise application
+in tenant **B** (or revokes the Reader role), the next scan tick will
+log a 401/403 from Azure AD and **auto-disable** the subscription:
+
+```
+WARNING Disabled subscription tenant=<A> sub=<sub-guid> due to auth failure (consent likely revoked)
+```
+
+The record is *not* deleted. After consent and Reader are restored, a
+`PATCH /subscriptions/<sub-guid>` with `{"state": "Enabled"}` reactivates
+scanning and re-attaches the historical findings.
+
+To revoke consent server-side (e.g. customer churn), call
+`TenantConsentRepository.revoke(<TenantB-guid>)` — subsequent
+`POST /subscriptions` calls for that tenant will be rejected with
+`400 consent_required` until consent is granted again.
+
+#### End-to-end smoke test (single command)
+
+With `CLOUDGUARDIQ_AUTH_DISABLED=true` (dev only) the consent flow can
+be exercised without a real customer admin:
+
+```powershell
+$base = "http://localhost:8000"
+$tid  = "22222222-2222-2222-2222-222222222222"
+$sub  = "33333333-3333-3333-3333-333333333333"
+
+# Step 1: simulate Azure AD callback after admin consent
+curl "$base/subscriptions/consent-callback?tenant=$tid&admin_consent=True"
+
+# Step 3: link the subscription as if the customer just clicked Add
+curl -X POST "$base/subscriptions" -H 'Content-Type: application/json' `
+  -d "{\"subscription_id\":\"$sub\",\"customer_tenant_id\":\"$tid\"}"
+
+# Verify
+curl "$base/subscriptions"
+```
 
 **Note for production:** Microsoft requires *publisher verification* for
 non-verified multi-tenant apps before Azure AD will show consent prompts
@@ -765,6 +939,10 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 | `CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT` | No | Model deployment name (default: `gpt-5.1`) |
 | `CLOUDGUARDIQ_AZURE_TENANT_ID` | Yes | Tenant ID for JWT validation |
 | `CLOUDGUARDIQ_AZURE_CLIENT_ID` | Yes | Client ID for JWT audience validation |
+| `CLOUDGUARDIQ_AZURE_CLIENT_SECRET` | Cross-tenant only | Client secret used by `CustomerCredentialFactory` to authenticate against customer tenants. Provisioned by Terraform. Prefer a certificate where possible. |
+| `CLOUDGUARDIQ_AZURE_CERTIFICATE_PATH` | Cross-tenant only | Path to a PFX/PEM certificate for `ClientCertificateCredential`. Takes precedence over the client secret when both are set. |
+| `CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS` | No | Cosmos container for cross-tenant admin-consent records (default: `tenant_consents`) |
+| `CLOUDGUARDIQ_CONSENT_REDIRECT_URI` | Cross-tenant only | Reply URL the Azure AD admin-consent popup returns to (must match an app-registration Reply URL) |
 | `SERVICE_BUS_CONNECTION__fullyQualifiedNamespace` | No | Service Bus namespace FQDN (managed identity auth) |
 | `KEY_VAULT_URL` | No | Key Vault URI |
 
