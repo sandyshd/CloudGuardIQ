@@ -514,6 +514,10 @@ resource "azurerm_container_app" "api" {
         value = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
       }
       env {
+        name  = "CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI"
+        value = var.onboarding_template_uri
+      }
+      env {
         name  = "CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS"
         value = "10"
       }
@@ -674,6 +678,7 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS = azurerm_cosmosdb_sql_container.tenant_consents.name
     CLOUDGUARDIQ_AZURE_CLIENT_SECRET              = azuread_application_password.cloudguardiq.value
     CLOUDGUARDIQ_CONSENT_REDIRECT_URI             = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
+    CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI          = var.onboarding_template_uri
     CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS            = "10"
     # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID intentionally omitted: referencing
     # the function app's own identity here is a self-reference. Resolved

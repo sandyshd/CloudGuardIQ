@@ -59,7 +59,12 @@ class Settings(BaseSettings):
     # Frontend redirect URI used by the admin-consent flow. The customer
     # admin is bounced back here after granting consent so we can record
     # the tenant and complete the cross-tenant onboarding handshake.
-    consent_redirect_uri: str = "http://localhost:3000/settings?consent=callback"
+    consent_redirect_uri: str = "http://localhost:3000/settings?consent=callback"
+    # Public HTTPS URL hosting the CloudGuardIQ Reader ARM template. Used
+    # to build the Azure Portal "Deploy to Azure" link returned by
+    # GET /subscriptions/onboarding-template. Empty string disables the
+    # one-click flow (the manual `az role assignment` command still works).
+    onboarding_template_uri: str = ""
 
     # Authentication
     auth_disabled: bool = False

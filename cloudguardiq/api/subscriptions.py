@@ -634,3 +634,235 @@ async def consent_callback(
         customer_tenant_id=saved.customer_tenant_id,
         consented_at=saved.consented_at.isoformat(),
     )
+
+
+# ---------------------------------------------------------------------------
+# One-click onboarding (Phase 3.9 - simpler flow)
+# ---------------------------------------------------------------------------
+
+
+class DiscoveredSubscription(BaseModel):
+    """A subscription returned by GET /subscriptions/discover."""
+
+    subscription_id: str
+    display_name: str = ""
+    state: str = "Enabled"
+    already_linked: bool = False
+
+
+class DiscoverResponse(BaseModel):
+    """Response payload for GET /subscriptions/discover."""
+
+    customer_tenant_id: str
+    subscriptions: list[DiscoveredSubscription]
+
+
+class OnboardingTemplateResponse(BaseModel):
+    """Response payload for GET /subscriptions/onboarding-template."""
+
+    customer_tenant_id: str
+    azure_principal_id: str
+    template_uri: str
+    deploy_url: str
+    scope: str  # 'subscription' or 'managementGroup'
+
+
+def _build_deploy_url(template_uri: str, scope: str) -> str:
+    """Return an Azure Portal Deploy-to-Azure URL for the given scope.
+
+    The portal accepts a ``#create/Microsoft.Template/uri/<encoded>``
+    fragment which opens the Custom Deployment blade pre-filled with
+    the template at *template_uri*. ``scope`` chooses the host blade:
+
+    * ``subscription`` -> deploy at the currently-selected subscription
+    * ``managementGroup`` -> deploy at a management group (recommended for
+      the tenant root MG so all current and future subs are covered)
+    """
+    from urllib.parse import quote
+    encoded = quote(template_uri, safe="")
+    if scope == "managementGroup":
+        return (
+            f"https://portal.azure.com/#blade/Microsoft_Azure_Resources/"
+            f"DeployToAzureMgBlade/uri/{encoded}"
+        )
+    return f"https://portal.azure.com/#create/Microsoft.Template/uri/{encoded}"
+
+
+async def _list_customer_subscriptions(credential: Any) -> list[DiscoveredSubscription]:
+    """Enumerate Azure subscriptions visible to *credential*.
+
+    Runs the synchronous Azure SDK call in a thread pool so the FastAPI
+    event loop is not blocked. Returns an empty list when the SDK is
+    not installed (dev environments without azure-mgmt-resource).
+    """
+    import asyncio
+
+    def _list_sync() -> list[DiscoveredSubscription]:
+        from azure.mgmt.subscription import SubscriptionClient
+        client = SubscriptionClient(credential)
+        out: list[DiscoveredSubscription] = []
+        for sub in client.subscriptions.list():
+            sub_id = (getattr(sub, "subscription_id", "") or "").lower()
+            if not sub_id:
+                continue
+            out.append(DiscoveredSubscription(
+                subscription_id=sub_id,
+                display_name=getattr(sub, "display_name", "") or sub_id,
+                state=str(getattr(sub, "state", "Enabled") or "Enabled"),
+            ))
+        return out
+
+    return await asyncio.get_running_loop().run_in_executor(None, _list_sync)
+
+
+@router.get("/discover", response_model=DiscoverResponse)
+async def discover_subscriptions(
+    tenant_id: str = "",
+    user: TokenPayload = _auth,
+) -> DiscoverResponse:
+    """List Azure subscriptions visible to CloudGuardIQ in *tenant_id*.
+
+    Replaces the manual GUID-typing step in the simpler onboarding flow.
+    Requires:
+
+    1. Recorded admin consent for the customer tenant (see
+       ``GET /subscriptions/consent-url``).
+    2. Reader role granted to CloudGuardIQ at subscription or
+       management-group scope (see
+       ``GET /subscriptions/onboarding-template`` for the one-click
+       Deploy-to-Azure button).
+
+    Returns ``400 reader_role_required`` when consent exists but no
+    Reader role assignment is found yet -- the response includes the
+    deploy URL so the frontend can surface it inline.
+    """
+    caller_tid = get_tenant_id(user)
+    customer_tid = (tenant_id or caller_tid).strip().lower()
+    settings = _get_settings()
+
+    if customer_tid != caller_tid.lower() and not settings.auth_disabled:
+        consent_repo = _get_consent_repo()
+        if consent_repo is None or not await consent_repo.has_active_consent(
+            customer_tid,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "consent_required",
+                    "customer_tenant_id": customer_tid,
+                    "message": (
+                        "Open the consent URL from "
+                        "GET /subscriptions/consent-url first."
+                    ),
+                },
+            )
+
+    if _credential_factory is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cross-tenant credential factory not configured.",
+        )
+    try:
+        credential = _credential_factory.for_tenant(customer_tid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Credential build failed tenant=%s: %s", customer_tid, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to build customer-tenant credential.",
+        ) from exc
+
+    try:
+        discovered = await _list_customer_subscriptions(credential)
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc)
+        # 401/403/AuthorizationFailed all collapse to the same UX:
+        # consent worked but Reader is missing -> show deploy button.
+        rbac_tokens = (
+            "AuthorizationFailed", "403", "401", "Forbidden", "Unauthorized",
+        )
+        if any(tok in msg for tok in rbac_tokens):
+            logger.info(
+                "Discover blocked by RBAC tenant=%s: %s", customer_tid, msg,
+            )
+            info = OnboardingInfo.build()
+            template_uri = settings.onboarding_template_uri
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "reader_role_required",
+                    "customer_tenant_id": customer_tid,
+                    "azure_principal_id": info.azure_principal_id,
+                    "template_uri": template_uri,
+                    "deploy_url": (
+                        _build_deploy_url(template_uri, "managementGroup")
+                        if template_uri else ""
+                    ),
+                    "message": (
+                        "CloudGuardIQ has consent but no Reader role in this "
+                        "tenant. Click the Deploy-to-Azure button to grant "
+                        "Reader at the tenant root management group, then "
+                        "retry discovery."
+                    ),
+                },
+            ) from exc
+        logger.exception("Discover failed tenant=%s", customer_tid)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Azure subscription enumeration failed: {msg}",
+        ) from exc
+
+    # Annotate already-linked subscriptions so the UI can disable them.
+    repo = _get_repo()
+    existing = {r.subscription_id for r in await repo.list(caller_tid)}
+    for sub in discovered:
+        if sub.subscription_id in existing:
+            sub.already_linked = True
+
+    logger.info(
+        "Discovered subs tenant=%s count=%d", customer_tid, len(discovered),
+    )
+    return DiscoverResponse(
+        customer_tenant_id=customer_tid,
+        subscriptions=discovered,
+    )
+
+
+@router.get("/onboarding-template", response_model=OnboardingTemplateResponse)
+async def get_onboarding_template(
+    tenant_id: str = "",
+    scope: str = "managementGroup",
+    user: TokenPayload = _auth,
+) -> OnboardingTemplateResponse:
+    """Return the Deploy-to-Azure URL that grants Reader to CloudGuardIQ.
+
+    *scope* is ``subscription`` or ``managementGroup``. Pick
+    ``managementGroup`` to cover all current and future subs in one
+    deployment; pick ``subscription`` to scope the grant tightly.
+    """
+    if scope not in ("subscription", "managementGroup"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="scope must be 'subscription' or 'managementGroup'.",
+        )
+    caller_tid = get_tenant_id(user)
+    customer_tid = (tenant_id or caller_tid).strip().lower()
+    settings = _get_settings()
+    template_uri = settings.onboarding_template_uri
+    if not template_uri:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "onboarding_template_uri is not configured; "
+                "set CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI on the API."
+            ),
+        )
+    info = OnboardingInfo.build()
+    return OnboardingTemplateResponse(
+        customer_tenant_id=customer_tid,
+        azure_principal_id=info.azure_principal_id,
+        template_uri=template_uri,
+        deploy_url=_build_deploy_url(template_uri, scope),
+        scope=scope,
+    )

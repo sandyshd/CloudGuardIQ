@@ -14,6 +14,7 @@ dependencies = [
     "azure-cosmos>=4.7.0",
     "azure-identity>=1.16.0",
     "azure-mgmt-resource>=23.0.0",
+    "azure-mgmt-subscription>=3.1.1",
     "azure-mgmt-costmanagement>=4.0.0",
     "azure-mgmt-security>=6.0.0",
     "azure-mgmt-monitor>=6.0.0",
