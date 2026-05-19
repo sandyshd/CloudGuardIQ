@@ -448,13 +448,13 @@ Clicking **Start onboarding wizard** walks the operator (or the customer
 themselves) through four steps, each backed by one of the
 `/subscriptions/*` endpoints above:
 
-| # | Step | UI action | API call |
-|---|------|-----------|----------|
-| 1 | Tenant | Paste the customer's Entra tenant GUID. | — |
-| 2 | Admin consent | Wizard renders the admin-consent URL in a read-only field with a **Copy** button so the operator can email it to the customer admin. Two actions: **Open consent in this tab** (same-tab redirect — for self-serve customers driving the wizard themselves; wizard state is persisted in `sessionStorage` under `cguardiq.connectWizard` so it resumes after the bounce) or **I've sent the link — continue** (async flow — operator advances to step 3 without redirecting; consent will be picked up automatically the moment the customer admin clicks Accept). | `GET /subscriptions/consent-url` |
-| 2b | Callback | Azure AD redirects back to `/settings?consent=callback&tenant=<tid>&admin_consent=True`. [`pages/Settings.tsx`](frontend/src/pages/Settings.tsx) auto-records the consent, scrubs the URL, and re-opens the wizard at step 3. | `GET /subscriptions/consent-callback` |
-| 3 | Reader role | Renders a big **Deploy to Azure** button pointing at the Reader-role ARM template, plus a collapsible `az role assignment create` fallback. | `GET /subscriptions/onboarding-template` |
-| 4 | Discover & connect | Lists every visible subscription as a checkbox table (already-linked rows are disabled). On `400 reader_role_required` the wizard surfaces the Deploy button inline for retry. **Connect N subscriptions** loops `POST /subscriptions` with `customer_tenant_id` set. | `GET /subscriptions/discover` then `POST /subscriptions` per pick |
+| # | Step | Actor | UI action | API call |
+|---|------|-------|-----------|----------|
+| 1 | Tenant | **Operator** | Paste the customer's Entra tenant GUID into the wizard. | — |
+| 2 | Admin consent | **Operator** copies / emails the URL; **Customer Global Administrator** clicks Accept | Wizard renders the admin-consent URL in a read-only field with a **Copy** button so the operator can email it to the customer admin. Two actions: **Open consent in this tab** (same-tab redirect — for self-serve customers driving the wizard themselves; wizard state is persisted in `sessionStorage` under `cguardiq.connectWizard` so it resumes after the bounce) or **I've sent the link — continue** (async flow — operator advances to step 3 without redirecting; consent is picked up automatically the moment the customer admin clicks Accept). | `GET /subscriptions/consent-url` |
+| 2b | Callback | **Customer admin's browser** (automatic) | Azure AD redirects back to `/settings?consent=callback&tenant=<tid>&admin_consent=True`. [`pages/Settings.tsx`](frontend/src/pages/Settings.tsx) auto-records the consent, scrubs the URL, and re-opens the wizard at step 3 if the operator is the one who clicked. | `GET /subscriptions/consent-callback` |
+| 3 | Reader role | **Operator** copies / emails the URL; **Customer subscription Owner** clicks Deploy | Renders a **Deploy to Azure** button plus a read-only field with the same URL and a **Copy** button (mirrors step 2 so the operator can email it). Collapsible `az role assignment create` fallback is also shown. | `GET /subscriptions/onboarding-template` |
+| 4 | Discover & connect | **Operator** | Lists every visible subscription as a checkbox table (already-linked rows are disabled). On `400 reader_role_required` the wizard surfaces the Deploy button inline for retry. **Connect N subscriptions** loops `POST /subscriptions` with `customer_tenant_id` set. | `GET /subscriptions/discover` then `POST /subscriptions` per pick |
 
 **Who clicks what:**
 

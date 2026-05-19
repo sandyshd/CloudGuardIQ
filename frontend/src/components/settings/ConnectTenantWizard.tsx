@@ -82,6 +82,7 @@ export function ConnectTenantWizard({
     useState<OnboardingTemplateResponse | null>(null);
   const [consentUrl, setConsentUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [deployCopied, setDeployCopied] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredSubscription[]>([]);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [connectResults, setConnectResults] = useState<
@@ -163,6 +164,20 @@ export function ConnectTenantWizard({
     } catch {
       // Clipboard API can be blocked by permissions; fall back to a
       // manual-select hint instead of failing silently.
+      setError(
+        "Clipboard blocked. Select the URL above and copy it manually (Ctrl+C).",
+      );
+    }
+  };
+
+  const handleCopyDeployUrl = async () => {
+    const url = template?.deploy_url;
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setDeployCopied(true);
+      setTimeout(() => setDeployCopied(false), 2000);
+    } catch {
       setError(
         "Clipboard blocked. Select the URL above and copy it manually (Ctrl+C).",
       );
@@ -404,14 +419,49 @@ export function ConnectTenantWizard({
             </p>
             {busy && <LoadingSpinner />}
             {template && template.deploy_url && (
-              <a
-                href={template.deploy_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-              >
-                Deploy to Azure
-              </a>
+              <div className="space-y-2">
+                <a
+                  href={template.deploy_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                >
+                  Deploy to Azure
+                </a>
+                <label
+                  htmlFor="cguardiq-deploy-url"
+                  className="block text-xs font-medium text-[hsl(var(--muted-foreground))]"
+                >
+                  Or copy &amp; email this URL to the customer subscription
+                  Owner
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="cguardiq-deploy-url"
+                    type="text"
+                    value={template.deploy_url}
+                    readOnly
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    className="flex-1 rounded border px-2 py-1 text-xs font-mono"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyDeployUrl}
+                  >
+                    {deployCopied ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                  Sample email body:{" "}
+                  <em>
+                    "Please open this link signed in to tenant {tenantId}
+                    and click Review + create to assign Reader to the
+                    CloudGuardIQ service principal."
+                  </em>
+                </p>
+              </div>
             )}
             {onboarding && (
               <details className="text-xs">
