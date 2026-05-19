@@ -13,6 +13,7 @@ interface PendingConsentCallback {
   admin_consent: string;
   error: string;
   error_description: string;
+  state: string;
 }
 
 function readPendingConsentCallback(): PendingConsentCallback | null {
@@ -26,6 +27,7 @@ function readPendingConsentCallback(): PendingConsentCallback | null {
       admin_consent: parsed.admin_consent ?? "",
       error: parsed.error ?? "",
       error_description: parsed.error_description ?? "",
+      state: parsed.state ?? "",
     };
   } catch {
     return null;
@@ -39,7 +41,6 @@ interface ConsentBanner {
 
 export function Settings() {
   const [banner, setBanner] = useState<ConsentBanner | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -60,15 +61,17 @@ export function Settings() {
     const errorDescription = hasUrlCallback
       ? (params.get("error_description") ?? undefined)
       : (pending?.error_description || undefined);
+    const stateParam = hasUrlCallback
+      ? (params.get("state") ?? undefined)
+      : (pending?.state || undefined);
 
-    // Strip the callback params from the visible URL immediately so a refresh
-    // does not re-trigger this handler.
     if (hasUrlCallback) {
       params.delete(CONSENT_PARAM);
       params.delete("tenant");
       params.delete("admin_consent");
       params.delete("error");
       params.delete("error_description");
+      params.delete("state");
       const cleaned = url.pathname + (params.toString() ? `?${params}` : "");
       window.history.replaceState({}, "", cleaned);
     }
@@ -78,36 +81,24 @@ export function Settings() {
         kind: "error",
         message: `Admin consent failed: ${errorDescription ?? errorParam}`,
       });
-      try {
-        sessionStorage.removeItem("cguardiq.connectWizard");
-      } catch {
-        /* ignore */
-      }
       return;
     }
 
     let cancelled = false;
     void (async () => {
       try {
-        await recordConsentCallback(tenant, adminConsent, errorParam, errorDescription);
+        await recordConsentCallback(
+          tenant,
+          adminConsent,
+          errorParam,
+          errorDescription,
+          stateParam,
+        );
         if (cancelled) return;
-        // Resume the wizard at the Reader-role step.
-        try {
-          sessionStorage.setItem(
-            "cguardiq.connectWizard",
-            JSON.stringify({ tenantId: tenant.toLowerCase(), step: "reader" }),
-          );
-        } catch {
-          /* ignore */
-        }
         setBanner({
           kind: "info",
-          message:
-            "Admin consent recorded. Continue the wizard to grant Reader access on the subscriptions you want to monitor.",
+          message: "Admin consent recorded successfully.",
         });
-        // Force SubscriptionList to re-mount so its mount effect re-reads the
-        // freshly-primed sessionStorage and re-opens the wizard at step 3.
-        setRefreshKey((k) => k + 1);
       } catch (err) {
         if (cancelled) return;
         const msg =
@@ -115,6 +106,7 @@ export function Settings() {
         setBanner({ kind: "error", message: msg });
       }
     })();
+
     return () => {
       cancelled = true;
     };
@@ -132,7 +124,7 @@ export function Settings() {
         <TierSelector />
         <NotificationSettings />
       </div>
-      <SubscriptionList key={refreshKey} />
+      <SubscriptionList />
     </div>
   );
 }

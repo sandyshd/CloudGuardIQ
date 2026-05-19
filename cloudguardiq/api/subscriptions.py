@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -36,6 +38,10 @@ from cloudguardiq.subscriptions.repository import (
 from cloudguardiq.tenants.consent_repository import (
     TenantConsent,
     TenantConsentRepository,
+)
+from cloudguardiq.tenants.onboarding_session_repository import (
+    OnboardingSession,
+    OnboardingSessionRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,11 +146,11 @@ _repository: SubscriptionsRepository | None = None
 _billing_repo: BillingRepository | None = None
 _settings: Settings | None = None
 _consent_repo: TenantConsentRepository | None = None
+_onboarding_repo: OnboardingSessionRepository | None = None
 # Factory for per-customer-tenant Azure credentials. Wired only when
 # Phase 3 cross-tenant credentials (cert or secret) are configured;
 # ``None`` falls back to the local DefaultAzureCredential.
 _credential_factory: object | None = None
-
 # Tests inject a stub probe via subscriptions.set_access_probe(); production
 # leaves it None and uses the default Resource Graph probe.
 from collections.abc import Awaitable, Callable  # noqa: E402
@@ -165,6 +171,7 @@ def configure(
     billing_repository: BillingRepository,
     settings: Settings,
     consent_repository: TenantConsentRepository | None = None,
+    onboarding_session_repository: OnboardingSessionRepository | None = None,
     credential_factory: object | None = None,
 ) -> None:
     """Wire dependencies from the application startup hook.
@@ -175,17 +182,22 @@ def configure(
     Both are optional so single-tenant deployments keep working.
     """
     global _repository, _billing_repo, _settings  # noqa: PLW0603
-    global _consent_repo, _credential_factory  # noqa: PLW0603
+    global _consent_repo, _onboarding_repo, _credential_factory  # noqa: PLW0603
     _repository = repository
     _billing_repo = billing_repository
     _settings = settings
     _consent_repo = consent_repository
+    _onboarding_repo = onboarding_session_repository
     _credential_factory = credential_factory
 
 
 def _get_consent_repo() -> TenantConsentRepository | None:
     """Return the configured consent repository or ``None``."""
     return _consent_repo
+
+def _get_onboarding_repo() -> OnboardingSessionRepository | None:
+    """Return the configured onboarding session repository or ``None``."""
+    return _onboarding_repo
 
 
 def _get_repo() -> SubscriptionsRepository:
@@ -512,8 +524,71 @@ class ConsentRecordResponse(BaseModel):
     consented_at: str
     status: str = "recorded"
 
+class OnboardingSessionCreateRequest(BaseModel):
+    """Body for ``POST /subscriptions/onboarding-sessions``."""
 
-def _build_consent_url(settings: Settings, tenant_id: str) -> str:
+    customer_tenant_id: str
+
+
+class OnboardingSessionConnectRequest(BaseModel):
+    """Body for ``POST /subscriptions/onboarding-sessions/{id}/connect``."""
+
+    subscription_ids: list[str] = Field(default_factory=list)
+
+
+class OnboardingSessionResponse(BaseModel):
+    """Status payload for a simplified onboarding session."""
+
+    session_id: str
+    customer_tenant_id: str
+    status: str
+    consent_url: str
+    discovered_subscription_ids: list[str] = Field(default_factory=list)
+    connected_subscription_ids: list[str] = Field(default_factory=list)
+
+
+def _to_onboarding_session_response(
+    session: OnboardingSession,
+    settings: Settings,
+) -> OnboardingSessionResponse:
+    """Map persistent session state to API response."""
+    return OnboardingSessionResponse(
+        session_id=session.session_id,
+        customer_tenant_id=session.customer_tenant_id,
+        status=session.status,
+        consent_url=_build_consent_url(
+            settings,
+            session.customer_tenant_id,
+            state=session.session_id,
+        ),
+        discovered_subscription_ids=session.discovered_subscription_ids,
+        connected_subscription_ids=session.connected_subscription_ids,
+    )
+
+
+async def _get_session_or_404(
+    user: TokenPayload,
+    session_id: str,
+) -> OnboardingSession:
+    """Return one onboarding session scoped to the caller tenant."""
+    repo = _get_onboarding_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Onboarding session repository not configured",
+        )
+    tenant_id = get_tenant_id(user)
+    session = await repo.get(tenant_id, session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Onboarding session not found",
+        )
+    return session
+
+
+
+def _build_consent_url(settings: Settings, tenant_id: str, state: str = "") -> str:
     """Return the Azure AD admin-consent URL for *tenant_id*.
 
     Microsoft documents the endpoint at
@@ -527,14 +602,13 @@ def _build_consent_url(settings: Settings, tenant_id: str) -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="azure_client_id not configured",
         )
-    params = urlencode({
+    payload = {
         "client_id": settings.azure_client_id,
         "redirect_uri": settings.consent_redirect_uri,
-        # Random ``state`` is recommended; the frontend caches it before
-        # opening the popup and verifies it on callback. Server side we
-        # echo whatever the caller supplied so we do not mint a value
-        # the frontend cannot anticipate.
-    })
+    }
+    if state:
+        payload["state"] = state
+    params = urlencode(payload)
     return (
         f"https://login.microsoftonline.com/{tenant_id}/adminconsent?"
         f"{params}"
@@ -544,6 +618,7 @@ def _build_consent_url(settings: Settings, tenant_id: str) -> str:
 @router.get("/consent-url", response_model=ConsentUrlResponse)
 async def get_consent_url(
     tenant_id: str,
+    state: str = "",
     user: TokenPayload = _auth,  # noqa: ARG001 -- auth required
 ) -> ConsentUrlResponse:
     """Return the admin-consent URL for *tenant_id*.
@@ -563,10 +638,187 @@ async def get_consent_url(
         )
     settings = _get_settings()
     return ConsentUrlResponse(
-        consent_url=_build_consent_url(settings, customer_tid),
+        consent_url=_build_consent_url(settings, customer_tid, state=state),
         customer_tenant_id=customer_tid,
     )
 
+
+@router.post(
+    "/onboarding-sessions",
+    response_model=OnboardingSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_onboarding_session(
+    body: OnboardingSessionCreateRequest,
+    user: TokenPayload = _auth,
+) -> OnboardingSessionResponse:
+    """Create a streamlined onboarding session for one customer tenant."""
+    customer_tid = body.customer_tenant_id.strip().lower()
+    if not _GUID_TID_RE.match(customer_tid):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_tenant_id",
+                "message": "customer_tenant_id must be an Entra tenant GUID.",
+            },
+        )
+
+    tenant_id = get_tenant_id(user)
+    settings = _get_settings()
+    consent_repo = _get_consent_repo()
+    has_consent = (
+        settings.auth_disabled
+        or customer_tid == tenant_id.lower()
+        or (
+            consent_repo is not None
+            and await consent_repo.has_active_consent(customer_tid)
+        )
+    )
+
+    repo = _get_onboarding_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Onboarding session repository not configured",
+        )
+
+    session = OnboardingSession(
+        session_id=uuid.uuid4().hex,
+        operator_tenant_id=tenant_id,
+        customer_tenant_id=customer_tid,
+        status="pending_reader" if has_consent else "pending_consent",
+        consented_at=datetime.now(timezone.utc) if has_consent else None,
+    )
+    saved = await repo.upsert(session)
+    return _to_onboarding_session_response(saved, settings)
+
+
+@router.get(
+    "/onboarding-sessions/{session_id}",
+    response_model=OnboardingSessionResponse,
+)
+async def get_onboarding_session(
+    session_id: str,
+    user: TokenPayload = _auth,
+) -> OnboardingSessionResponse:
+    """Return onboarding session status for the current operator tenant."""
+    settings = _get_settings()
+    session = await _get_session_or_404(user, session_id)
+
+    if session.status == "pending_consent":
+        consent_repo = _get_consent_repo()
+        if consent_repo is not None and await consent_repo.has_active_consent(
+            session.customer_tenant_id,
+        ):
+            session.status = "pending_reader"
+            session.consented_at = datetime.now(timezone.utc)
+            repo = _get_onboarding_repo()
+            if repo is not None:
+                await repo.upsert(session)
+
+    return _to_onboarding_session_response(session, settings)
+
+
+@router.post(
+    "/onboarding-sessions/{session_id}/reader-granted",
+    response_model=OnboardingSessionResponse,
+)
+async def mark_onboarding_reader_granted(
+    session_id: str,
+    user: TokenPayload = _auth,
+) -> OnboardingSessionResponse:
+    """Mark that customer RBAC grant was completed by admin."""
+    settings = _get_settings()
+    session = await _get_session_or_404(user, session_id)
+    session.status = "pending_discovery"
+    session.reader_granted_at = datetime.now(timezone.utc)
+    repo = _get_onboarding_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Onboarding session repository not configured",
+        )
+    await repo.upsert(session)
+    return _to_onboarding_session_response(session, settings)
+
+
+@router.post(
+    "/onboarding-sessions/{session_id}/discover",
+    response_model=OnboardingSessionResponse,
+)
+async def discover_onboarding_session_subscriptions(
+    session_id: str,
+    user: TokenPayload = _auth,
+) -> OnboardingSessionResponse:
+    """Discover customer subscriptions and persist them on a session."""
+    settings = _get_settings()
+    session = await _get_session_or_404(user, session_id)
+    res = await discover_subscriptions(
+        tenant_id=session.customer_tenant_id,
+        user=user,
+    )
+    session.status = "subscriptions_discovered"
+    session.discovered_subscription_ids = [
+        s.subscription_id for s in res.subscriptions if not s.already_linked
+    ]
+    repo = _get_onboarding_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Onboarding session repository not configured",
+        )
+    await repo.upsert(session)
+    return _to_onboarding_session_response(session, settings)
+
+
+@router.post(
+    "/onboarding-sessions/{session_id}/connect",
+    response_model=OnboardingSessionResponse,
+)
+async def connect_onboarding_session_subscriptions(
+    session_id: str,
+    body: OnboardingSessionConnectRequest,
+    user: TokenPayload = _auth,
+) -> OnboardingSessionResponse:
+    """Link discovered subscriptions and mark onboarding complete."""
+    settings = _get_settings()
+    session = await _get_session_or_404(user, session_id)
+    candidate_ids = body.subscription_ids or session.discovered_subscription_ids
+    subscription_ids = [
+        sid.strip().lower() for sid in candidate_ids if sid.strip()
+    ]
+    if not subscription_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "no_subscriptions_selected",
+                "message": "Provide subscription_ids or run discover first.",
+            },
+        )
+
+    connected: list[str] = []
+    for sid in subscription_ids:
+        await add_subscription(
+            AddSubscriptionRequest(
+                subscription_id=sid,
+                customer_tenant_id=session.customer_tenant_id,
+            ),
+            user=user,
+        )
+        connected.append(sid)
+
+    merged = session.connected_subscription_ids + connected
+    session.connected_subscription_ids = list(dict.fromkeys(merged))
+    session.status = "completed"
+
+    repo = _get_onboarding_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Onboarding session repository not configured",
+        )
+    await repo.upsert(session)
+    return _to_onboarding_session_response(session, settings)
 
 @router.get(
     "/consent-callback", response_model=ConsentRecordResponse,
@@ -576,6 +828,7 @@ async def consent_callback(
     admin_consent: str = "",
     error: str = "",
     error_description: str = "",
+    state: str = "",
     user: TokenPayload = _auth,
 ) -> ConsentRecordResponse:
     """Record a successful admin-consent grant.
@@ -635,6 +888,16 @@ async def consent_callback(
         "Recorded admin consent customer_tid=%s consented_by=%s",
         customer_tid, saved.consented_by,
     )
+
+    onboarding_repo = _get_onboarding_repo()
+    caller_tid = get_tenant_id(user)
+    if onboarding_repo is not None and state:
+        session = await onboarding_repo.get(caller_tid, state.strip())
+        if session is not None:
+            session.status = "pending_reader"
+            session.consented_at = datetime.now(timezone.utc)
+            await onboarding_repo.upsert(session)
+
     return ConsentRecordResponse(
         customer_tenant_id=saved.customer_tenant_id,
         consented_at=saved.consented_at.isoformat(),
@@ -984,3 +1247,17 @@ async def get_onboarding_template(
         deploy_url=_build_deploy_url(template_uri, scope),
         scope=scope,
     )
+
+
+
+
+
+
+
+
+
+
+
+
+
+

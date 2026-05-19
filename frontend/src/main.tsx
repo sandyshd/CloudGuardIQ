@@ -21,6 +21,7 @@ export const PENDING_CONSENT_CALLBACK_KEY = "cguardiq.pendingConsentCallback";
       admin_consent: url.searchParams.get("admin_consent") ?? "",
       error: url.searchParams.get("error") ?? "",
       error_description: url.searchParams.get("error_description") ?? "",
+      state: url.searchParams.get("state") ?? "",
       capturedAt: new Date().toISOString(),
     };
     sessionStorage.setItem(PENDING_CONSENT_CALLBACK_KEY, JSON.stringify(payload));
@@ -70,3 +71,4 @@ async function startApp() {
 }
 
 startApp();
+

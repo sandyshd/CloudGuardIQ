@@ -45,7 +45,7 @@ export async function toggleSubscription(
 
 
 // ---------------------------------------------------------------------------
-// Cross-tenant onboarding (Phase 3 wizard)
+// Cross-tenant onboarding
 // ---------------------------------------------------------------------------
 
 export interface ConsentUrlResponse {
@@ -78,10 +78,28 @@ export interface DiscoverResponse {
   subscriptions: DiscoveredSubscription[];
 }
 
-export async function getConsentUrl(tenant_id: string): Promise<ConsentUrlResponse> {
+export interface OnboardingSessionResponse {
+  session_id: string;
+  customer_tenant_id: string;
+  status:
+    | "pending_consent"
+    | "pending_reader"
+    | "pending_discovery"
+    | "subscriptions_discovered"
+    | "completed"
+    | string;
+  consent_url: string;
+  discovered_subscription_ids: string[];
+  connected_subscription_ids: string[];
+}
+
+export async function getConsentUrl(
+  tenant_id: string,
+  state = "",
+): Promise<ConsentUrlResponse> {
   const { data } = await apiClient.get<ConsentUrlResponse>(
     "/subscriptions/consent-url",
-    { params: { tenant_id } },
+    { params: { tenant_id, state } },
   );
   return data;
 }
@@ -91,6 +109,7 @@ export async function recordConsentCallback(
   admin_consent: string,
   error?: string,
   error_description?: string,
+  state?: string,
 ): Promise<ConsentRecordResponse> {
   const { data } = await apiClient.get<ConsentRecordResponse>(
     "/subscriptions/consent-callback",
@@ -100,6 +119,7 @@ export async function recordConsentCallback(
         admin_consent,
         ...(error ? { error } : {}),
         ...(error_description ? { error_description } : {}),
+        ...(state ? { state } : {}),
       },
     },
   );
@@ -123,6 +143,54 @@ export async function discoverSubscriptions(
   const { data } = await apiClient.get<DiscoverResponse>(
     "/subscriptions/discover",
     { params: { tenant_id } },
+  );
+  return data;
+}
+
+export async function createOnboardingSession(
+  customer_tenant_id: string,
+): Promise<OnboardingSessionResponse> {
+  const { data } = await apiClient.post<OnboardingSessionResponse>(
+    "/subscriptions/onboarding-sessions",
+    { customer_tenant_id },
+  );
+  return data;
+}
+
+export async function getOnboardingSession(
+  session_id: string,
+): Promise<OnboardingSessionResponse> {
+  const { data } = await apiClient.get<OnboardingSessionResponse>(
+    `/subscriptions/onboarding-sessions/${session_id}`,
+  );
+  return data;
+}
+
+export async function markOnboardingReaderGranted(
+  session_id: string,
+): Promise<OnboardingSessionResponse> {
+  const { data } = await apiClient.post<OnboardingSessionResponse>(
+    `/subscriptions/onboarding-sessions/${session_id}/reader-granted`,
+  );
+  return data;
+}
+
+export async function discoverOnboardingSession(
+  session_id: string,
+): Promise<OnboardingSessionResponse> {
+  const { data } = await apiClient.post<OnboardingSessionResponse>(
+    `/subscriptions/onboarding-sessions/${session_id}/discover`,
+  );
+  return data;
+}
+
+export async function connectOnboardingSession(
+  session_id: string,
+  subscription_ids: string[] = [],
+): Promise<OnboardingSessionResponse> {
+  const { data } = await apiClient.post<OnboardingSessionResponse>(
+    `/subscriptions/onboarding-sessions/${session_id}/connect`,
+    { subscription_ids },
   );
   return data;
 }

@@ -1,8 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  ConnectTenantWizard,
-  type WizardStep,
-} from "./ConnectTenantWizard";
+import { ConnectTenantWizard } from "./ConnectTenantWizard";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Alert, AlertDescription } from "../ui/alert";
@@ -99,30 +96,6 @@ export function SubscriptionList() {
   // persists progress through sessionStorage so we can resume after the
   // admin-consent redirect bounces the user back to /settings.
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [wizardInitial, setWizardInitial] = useState<{
-    tenantId: string;
-    step: WizardStep;
-  }>({ tenantId: "", step: "tenant" });
-
-  useEffect(() => {
-    // If sessionStorage already has wizard state (because the consent
-    // callback handler in Settings.tsx primed it), auto-open the wizard
-    // at the persisted step.
-    try {
-      const raw = sessionStorage.getItem("cguardiq.connectWizard");
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as {
-        tenantId: string;
-        step: WizardStep;
-      };
-      if (parsed?.tenantId && parsed?.step) {
-        setWizardInitial(parsed);
-        setWizardOpen(true);
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
 
   const counter = useMemo(() => {
     const total = subscriptions.length;
@@ -290,10 +263,7 @@ export function SubscriptionList() {
           <ConnectTenantWizard
             onClose={() => {
               setWizardOpen(false);
-              setWizardInitial({ tenantId: "", step: "tenant" });
             }}
-            initialTenantId={wizardInitial.tenantId}
-            initialStep={wizardInitial.step}
           />
         ) : (
           <div className="flex items-center justify-between rounded border border-dashed p-3">
@@ -302,16 +272,11 @@ export function SubscriptionList() {
                 Connect another tenant
               </div>
               <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                Walk a customer through admin consent + Reader role + sub discovery.
+                Start a customer onboarding session and complete consent, Reader grant, and subscription connection from one flow.
               </p>
             </div>
-            <Button
-              onClick={() => {
-                setWizardInitial({ tenantId: "", step: "tenant" });
-                setWizardOpen(true);
-              }}
-            >
-              Start onboarding wizard
+            <Button onClick={() => setWizardOpen(true)}>
+              Start onboarding
             </Button>
           </div>
         )}
@@ -463,3 +428,8 @@ export function SubscriptionList() {
     </Card>
   );
 }
+
+
+
+
+

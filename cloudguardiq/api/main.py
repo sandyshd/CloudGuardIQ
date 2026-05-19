@@ -72,6 +72,9 @@ from cloudguardiq.pipeline.scan_pipeline import ScanResult
 from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
 from cloudguardiq.subscriptions.repository import SubscriptionsRepository
 from cloudguardiq.tenants.consent_repository import TenantConsentRepository
+from cloudguardiq.tenants.onboarding_session_repository import (
+    OnboardingSessionRepository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,7 @@ _repo: CosmosRepository | None = None
 _billing_repo: BillingRepository | None = None
 _subs_repo: SubscriptionsRepository | None = None
 _consent_repo: TenantConsentRepository | None = None
+_onboarding_session_repo: OnboardingSessionRepository | None = None
 _tier_middleware: TierEnforcementMiddleware | None = None
 
 
@@ -165,7 +169,7 @@ async def lifespan(
         ),
     )
 
-    global _subs_repo, _consent_repo  # noqa: PLW0603
+    global _subs_repo, _consent_repo, _onboarding_session_repo  # noqa: PLW0603
     _subs_repo = SubscriptionsRepository(
         settings,
         cosmos_db=_repo._db if _repo is not None else None,
@@ -174,11 +178,16 @@ async def lifespan(
         settings,
         cosmos_db=_repo._db if _repo is not None else None,
     )
+    _onboarding_session_repo = OnboardingSessionRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
     subscriptions_module.configure(
         repository=_subs_repo,
         billing_repository=_billing_repo,
         settings=settings,
         consent_repository=_consent_repo,
+        onboarding_session_repository=_onboarding_session_repo,
         credential_factory=build_default_factory(settings),
     )
 
@@ -240,11 +249,15 @@ _bootstrap_subs_repo = SubscriptionsRepository(get_settings(), cosmos_db=None)
 _bootstrap_consent_repo = TenantConsentRepository(
     get_settings(), cosmos_db=None,
 )
+_bootstrap_onboarding_session_repo = OnboardingSessionRepository(
+    get_settings(), cosmos_db=None,
+)
 subscriptions_module.configure(
     repository=_bootstrap_subs_repo,
     billing_repository=_bootstrap_billing_repo,
     settings=get_settings(),
     consent_repository=_bootstrap_consent_repo,
+    onboarding_session_repository=_bootstrap_onboarding_session_repo,
 )
 
 # Billing routes
@@ -1241,4 +1254,6 @@ async def get_finding_terraform(
 
 
 # /subscriptions endpoints are now served by subscriptions_module.router
+
+
 

@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     cosmos_container_billing: str = "billing"
     cosmos_container_subscriptions: str = "subscriptions"
     cosmos_container_tenant_consents: str = "tenant_consents"
+    cosmos_container_onboarding_sessions: str = "onboarding_sessions"
 
     # Azure OpenAI
     azure_openai_endpoint: str = ""
@@ -103,3 +104,6 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return a cached Settings instance."""
     return Settings()
+
+
+
