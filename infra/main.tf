@@ -103,6 +103,21 @@ resource "azuread_application" "cloudguardiq" {
     }
   }
 
+  required_resource_access {
+    # Microsoft Graph -- application permission used by the onboarding
+    # wizard to resolve the customer-tenant SP object id via
+    # GET /v1.0/servicePrincipals(appId='<cgiq-client-id>'). Required so
+    # the wizard can surface the correct principal id per tenant.
+    # Permission id reference:
+    # https://learn.microsoft.com/graph/permissions-reference#applicationreadall
+    resource_app_id = "00000003-0000-0000-c000-000000000000" # Microsoft Graph
+
+    resource_access {
+      id   = "9a5d68dd-52b0-4cc2-bd40-abcf44ac3a30" # Application.Read.All (Application)
+      type = "Role"
+    }
+  }
+
   api {
     requested_access_token_version = 2
   }
