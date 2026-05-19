@@ -55,11 +55,12 @@ class _StubFactory:
 def _wire(
     *,
     consent_repo: TenantConsentRepository | None = None,
-    factory: _StubFactory | None = None,
+    factory: Any = None,
     template_uri: str = TEMPLATE_URI,
     seeded: list[SubscriptionRecord] | None = None,
 ) -> tuple[SubscriptionsRepository, _StubFactory]:
     settings = Settings(
+        azure_tenant_id=HOME_TID,
         azure_client_id="client-abc",
         onboarding_template_uri=template_uri,
         azure_principal_id="00000000-0000-0000-0000-0000000000aa",
@@ -92,6 +93,14 @@ def _override_auth() -> Iterator[None]:
     )
     yield
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _clear_graph_cache() -> Iterator[None]:
+    from cloudguardiq.auth.graph_principal_resolver import clear_cache
+    clear_cache()
+    yield
+    clear_cache()
 
 
 @pytest.fixture
@@ -218,7 +227,7 @@ def test_onboarding_template_returns_deploy_url(_client: TestClient) -> None:
     body = r.json()
     assert body["template_uri"] == TEMPLATE_URI
     assert body["scope"] == "managementGroup"
-    assert "DeployToAzureMgBlade" in body["deploy_url"]
+    assert "#create/Microsoft.Template/uri/" in body["deploy_url"]
     assert TEMPLATE_URI in unquote(body["deploy_url"])
     assert body["azure_principal_id"]
 
@@ -240,3 +249,144 @@ def test_onboarding_template_unconfigured(_client: TestClient) -> None:
     _wire(template_uri="")
     r = _client.get("/subscriptions/onboarding-template")
     assert r.status_code == 503
+
+# ---------------------------------------------------------------------------
+# /subscriptions/onboarding-template -- cross-tenant Graph lookup
+# ---------------------------------------------------------------------------
+
+
+class _StubToken:
+    def __init__(self) -> None:
+        self.token = "fake-graph-token"
+        self.expires_on = 0
+
+
+class _StubGraphCred:
+    def get_token(self, scope: str) -> _StubToken:  # noqa: ARG002
+        return _StubToken()
+
+
+class _StubGraphFactory:
+    def __init__(self) -> None:
+        self.tenants: list[str] = []
+
+    def for_tenant(self, tenant_id: str) -> _StubGraphCred:
+        self.tenants.append(tenant_id)
+        return _StubGraphCred()
+
+
+def _install_graph_mock(
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Any,
+) -> None:
+    """Patch the resolver so its outbound httpx call uses *handler*."""
+    import httpx
+
+    from cloudguardiq.auth import graph_principal_resolver as gpr
+
+    real = gpr.resolve_customer_principal_id
+
+    async def _wrapped(factory, *, client_id, tenant_id, http_client=None):
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            return await real(
+                factory,
+                client_id=client_id,
+                tenant_id=tenant_id,
+                http_client=client,
+            )
+
+    monkeypatch.setattr(
+        "cloudguardiq.api.subscriptions.resolve_customer_principal_id",
+        _wrapped,
+    )
+
+
+def test_onboarding_template_uses_graph_for_cross_tenant(
+    _client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-home tenant gets its SP object id from Microsoft Graph."""
+    factory = _StubGraphFactory()
+    _wire(factory=factory)
+
+    captured: list[str] = []
+
+    def handler(request):
+        import httpx
+        captured.append(str(request.url))
+        return httpx.Response(200, json={"id": "customer-sp-oid-9999"})
+
+    _install_graph_mock(monkeypatch, handler)
+
+    r = _client.get(
+        f"/subscriptions/onboarding-template?tenant_id={CUSTOMER_TID}",
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["azure_principal_id"] == "customer-sp-oid-9999"
+    assert body["customer_tenant_id"] == CUSTOMER_TID
+    assert factory.tenants == [CUSTOMER_TID]
+    assert captured and "servicePrincipals(appId=" in captured[0]
+
+
+def test_onboarding_template_returns_409_when_not_consented(
+    _client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the customer SP doesn't exist, return 409 + consent URL."""
+    _wire(factory=_StubGraphFactory())
+
+    def handler(request):  # noqa: ARG001
+        import httpx
+        return httpx.Response(
+            404, json={"error": {"code": "Request_ResourceNotFound"}},
+        )
+
+    _install_graph_mock(monkeypatch, handler)
+
+    r = _client.get(
+        f"/subscriptions/onboarding-template?tenant_id={CUSTOMER_TID}",
+    )
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["error"] == "consent_required"
+    assert detail["customer_tenant_id"] == CUSTOMER_TID
+    assert CUSTOMER_TID in detail["consent_url"]
+    assert "adminconsent" in detail["consent_url"]
+
+
+def test_onboarding_template_502_on_graph_failure_for_non_home(
+    _client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-home tenant with a transient Graph 5xx surfaces 502."""
+    _wire(factory=_StubGraphFactory())
+
+    def handler(request):  # noqa: ARG001
+        import httpx
+        return httpx.Response(500, text="boom")
+
+    _install_graph_mock(monkeypatch, handler)
+
+    r = _client.get(
+        f"/subscriptions/onboarding-template?tenant_id={CUSTOMER_TID}",
+    )
+    assert r.status_code == 502
+    assert r.json()["detail"]["error"] == "principal_lookup_failed"
+
+
+def test_onboarding_template_home_tenant_falls_back_on_graph_failure(
+    _client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """For the *home* tenant a Graph failure falls back to the env var."""
+    _wire(factory=_StubGraphFactory())
+
+    def handler(request):  # noqa: ARG001
+        import httpx
+        return httpx.Response(500, text="boom")
+
+    _install_graph_mock(monkeypatch, handler)
+
+    # No tenant_id query param -> defaults to caller_tid = HOME_TID.
+    r = _client.get("/subscriptions/onboarding-template")
+    assert r.status_code == 200, r.text
+    # Falls back to the configured azure_principal_id.
+    assert r.json()["azure_principal_id"] == "00000000-0000-0000-0000-0000000000aa"

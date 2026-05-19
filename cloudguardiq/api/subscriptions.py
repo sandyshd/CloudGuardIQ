@@ -20,6 +20,11 @@ from cloudguardiq.adapters.access_probe import (
 )
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
 from cloudguardiq.api.onboarding import OnboardingInfo
+from cloudguardiq.auth.graph_principal_resolver import (
+    PrincipalLookupError,
+    PrincipalNotFoundError,
+    resolve_customer_principal_id,
+)
 from cloudguardiq.billing.plans import get_plan
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.core.config import Settings
@@ -857,6 +862,89 @@ async def discover_subscriptions(
     )
 
 
+async def _resolve_principal_for_tenant(
+    settings: Settings, *, caller_tid: str, customer_tid: str,
+) -> str:
+    """Return the CloudGuardIQ SP object id to grant Reader to.
+
+    Strategy:
+
+    1. If a cross-tenant credential factory is wired and ``azure_client_id``
+       is configured, ask Microsoft Graph for the SP object id that the
+       customer tenant materialised on admin consent. This is the
+       *correct* value for any tenant (home or customer).
+    2. If the Graph lookup says the SP does not exist
+       (:class:`PrincipalNotFoundError`), the customer has not granted
+       admin consent yet -- raise 409 with the consent URL so the wizard
+       can prompt the admin.
+    3. On any other Graph failure for a non-home tenant, surface 502.
+    4. For the home tenant (or when no factory is configured), fall back
+       to the env-var-derived value from :class:`OnboardingInfo` -- this
+       keeps single-tenant / dev deployments working.
+    """
+    home_tid = (settings.azure_tenant_id or "").strip().lower()
+    client_id = settings.azure_client_id or ""
+    is_home = (
+        customer_tid == home_tid
+        or (not home_tid and customer_tid == caller_tid.lower())
+    )
+
+    if _credential_factory is not None and client_id:
+        try:
+            return await resolve_customer_principal_id(
+                _credential_factory,  # type: ignore[arg-type]
+                client_id=client_id,
+                tenant_id=customer_tid,
+            )
+        except PrincipalNotFoundError as exc:
+            logger.info(
+                "Onboarding blocked for tenant=%s: no consented SP (%s)",
+                customer_tid, exc,
+            )
+            consent_url = _build_consent_url(settings, customer_tid)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "consent_required",
+                    "message": (
+                        "CloudGuardIQ is not yet admin-consented in this "
+                        "tenant. An Entra ID Global Administrator must "
+                        "accept the consent URL before the deployment can "
+                        "grant a role to CloudGuardIQ."
+                    ),
+                    "consent_url": consent_url,
+                    "customer_tenant_id": customer_tid,
+                },
+            ) from exc
+        except PrincipalLookupError as exc:
+            logger.warning(
+                "Graph principal lookup failed for tenant=%s: %s",
+                customer_tid, exc,
+            )
+            if not is_home:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail={
+                        "error": "principal_lookup_failed",
+                        "message": (
+                            "Could not resolve CloudGuardIQ's principal id "
+                            "in the target tenant. Retry; if the problem "
+                            "persists, contact support."
+                        ),
+                    },
+                ) from exc
+            # Home tenant: fall through to env-var fallback.
+
+    # Home-tenant / dev fallback: prefer the explicit value on the wired
+    # ``Settings`` instance (this is what tests inject) and only fall back
+    # to ``OnboardingInfo.build()`` -- which re-reads the global settings
+    # and invokes the runtime identity resolver -- when nothing was set.
+    if settings.azure_principal_id:
+        return settings.azure_principal_id
+    info = OnboardingInfo.build()
+    return info.azure_principal_id
+
+
 @router.get("/onboarding-template", response_model=OnboardingTemplateResponse)
 async def get_onboarding_template(
     tenant_id: str = "",
@@ -886,10 +974,12 @@ async def get_onboarding_template(
                 "set CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI on the API."
             ),
         )
-    info = OnboardingInfo.build()
+    principal_id = await _resolve_principal_for_tenant(
+        settings, caller_tid=caller_tid, customer_tid=customer_tid,
+    )
     return OnboardingTemplateResponse(
         customer_tenant_id=customer_tid,
-        azure_principal_id=info.azure_principal_id,
+        azure_principal_id=principal_id,
         template_uri=template_uri,
         deploy_url=_build_deploy_url(template_uri, scope),
         scope=scope,
