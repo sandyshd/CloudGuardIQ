@@ -521,11 +521,17 @@ resource "azurerm_container_app" "api" {
         name  = "CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS"
         value = "10"
       }
-      # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID is intentionally NOT injected here:
-      # referencing the container app's own identity from inside its own
-      # block creates a self-referential dependency cycle. The app
-      # discovers its principal id at runtime via cloudguardiq.core.
-      # identity_resolver (oid claim of an MSI token).
+      # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID is the home-tenant service-principal
+      # object id of the CloudGuardIQ multi-tenant app registration. This is
+      # the value the onboarding wizard surfaces so customers can grant it
+      # Reader on their subscriptions. It is a different directory object
+      # from the Container App's managed identity (which is used for backend
+      # -> Azure service auth like Cosmos and OpenAI) so there is no
+      # self-reference / dependency cycle here.
+      env {
+        name  = "CLOUDGUARDIQ_AZURE_PRINCIPAL_ID"
+        value = azuread_service_principal.cloudguardiq.object_id
+      }
       env {
         name  = "CLOUDGUARDIQ_STRIPE_PRICE_FREE"
         value = var.stripe_price_free
@@ -680,9 +686,9 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_CONSENT_REDIRECT_URI             = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
     CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI          = var.onboarding_template_uri
     CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS            = "10"
-    # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID intentionally omitted: referencing
-    # the function app's own identity here is a self-reference. Resolved
-    # at runtime by cloudguardiq.core.identity_resolver.
+    # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID = home-tenant SP object id of the
+    # CloudGuardIQ multi-tenant app registration (NOT the function app's MI).
+    CLOUDGUARDIQ_AZURE_PRINCIPAL_ID      = azuread_service_principal.cloudguardiq.object_id
     CLOUDGUARDIQ_STRIPE_PRICE_FREE       = var.stripe_price_free
     CLOUDGUARDIQ_STRIPE_PRICE_PRO        = var.stripe_price_pro
     CLOUDGUARDIQ_STRIPE_PRICE_ENTERPRISE = var.stripe_price_enterprise
