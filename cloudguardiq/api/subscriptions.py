@@ -694,23 +694,25 @@ def _normalize_template_uri(uri: str) -> str:
 
 
 def _build_deploy_url(template_uri: str, scope: str) -> str:
-    """Return an Azure Portal Deploy-to-Azure URL for the given scope.
+    """Return an Azure Portal Deploy-to-Azure URL.
 
-    The portal accepts a ``#create/Microsoft.Template/uri/<encoded>``
-    fragment which opens the Custom Deployment blade pre-filled with
-    the template at *template_uri*. ``scope`` chooses the host blade:
+    The universal, documented Deploy-to-Azure URL is
+    ``https://portal.azure.com/#create/Microsoft.Template/uri/<encoded>``.
+    The portal reads the template\'s ``$schema`` to route to the correct
+    deployment blade (resource group, subscription, management group, or
+    tenant). ``scope`` is accepted for API/wizard compatibility but does
+    not change the URL -- the portal infers the scope from the template
+    itself, which avoids 404s on non-public blade names like
+    ``DeployToAzureMgBlade``.
 
-    * ``subscription`` -> deploy at the currently-selected subscription
-    * ``managementGroup`` -> deploy at a management group (recommended for
-      the tenant root MG so all current and future subs are covered)
+    * Subscription-scoped templates (``$schema`` =
+      ``deploymentTemplate.json``) prompt for a subscription/RG.
+    * Management-group-scoped templates (``$schema`` =
+      ``managementGroupDeploymentTemplate.json``) prompt for an MG.
     """
     from urllib.parse import quote
+    del scope  # informational only; portal routes via $schema
     encoded = quote(template_uri, safe="")
-    if scope == "managementGroup":
-        return (
-            f"https://portal.azure.com/#blade/Microsoft_Azure_Resources/"
-            f"DeployToAzureMgBlade/uri/{encoded}"
-        )
     return f"https://portal.azure.com/#create/Microsoft.Template/uri/{encoded}"
 
 

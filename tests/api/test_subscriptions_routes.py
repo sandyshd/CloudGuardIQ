@@ -360,4 +360,4 @@ def test_build_deploy_url_uses_normalized_uri_via_get_template(
     # quoted raw URL must appear in deploy_url
     from urllib.parse import quote
     assert quote(raw, safe="") in body["deploy_url"]
-    assert "DeployToAzureMgBlade" in body["deploy_url"]
+    assert "#create/Microsoft.Template/uri/" in body["deploy_url"]
