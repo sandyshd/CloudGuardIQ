@@ -304,3 +304,60 @@ def test_add_rejects_garbage_with_invalid_id_error() -> None:
     body = r.json()
     assert body["detail"]["error"] == "invalid_subscription_id"
 
+
+# ---------------------------------------------------------------------------
+# Onboarding template URL normalization
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_template_uri_rewrites_github_blob() -> None:
+    """github.com/<o>/<r>/blob/<ref>/<path> -> raw.githubusercontent.com/..."""
+    from cloudguardiq.api.subscriptions import _normalize_template_uri
+    src = "https://github.com/sandyshd/CloudGuardIQ/blob/development/infra/templates/cloudguardiq-reader.json"
+    expected = "https://raw.githubusercontent.com/sandyshd/CloudGuardIQ/development/infra/templates/cloudguardiq-reader.json"
+    assert _normalize_template_uri(src) == expected
+
+
+def test_normalize_template_uri_passthrough_raw() -> None:
+    """raw.githubusercontent.com URLs are returned unchanged."""
+    from cloudguardiq.api.subscriptions import _normalize_template_uri
+    raw = "https://raw.githubusercontent.com/sandyshd/CloudGuardIQ/main/infra/templates/cloudguardiq-reader.json"
+    assert _normalize_template_uri(raw) == raw
+
+
+def test_normalize_template_uri_passthrough_other() -> None:
+    """Non-GitHub URLs (storage, CDN) are returned unchanged."""
+    from cloudguardiq.api.subscriptions import _normalize_template_uri
+    sa = "https://cguardiqassets.blob.core.windows.net/templates/reader.json"
+    assert _normalize_template_uri(sa) == sa
+
+
+def test_normalize_template_uri_empty() -> None:
+    """Empty input returns empty (callers handle the unconfigured case)."""
+    from cloudguardiq.api.subscriptions import _normalize_template_uri
+    assert _normalize_template_uri("") == ""
+
+
+def test_build_deploy_url_uses_normalized_uri_via_get_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """/onboarding-template rewrites a /blob/ URI before encoding."""
+    blob = "https://github.com/sandyshd/CloudGuardIQ/blob/development/infra/templates/cloudguardiq-reader.json"
+    raw = "https://raw.githubusercontent.com/sandyshd/CloudGuardIQ/development/infra/templates/cloudguardiq-reader.json"
+
+    client = TestClient(app)
+    _wire()
+
+    # Inject a settings object that returns the misconfigured /blob/ URL.
+    settings = Settings()
+    settings.onboarding_template_uri = blob
+    monkeypatch.setattr(subs_module, "_get_settings", lambda: settings)
+
+    r = client.get("/subscriptions/onboarding-template?tenant_id=tenant-A")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["template_uri"] == raw
+    # quoted raw URL must appear in deploy_url
+    from urllib.parse import quote
+    assert quote(raw, safe="") in body["deploy_url"]
+    assert "DeployToAzureMgBlade" in body["deploy_url"]

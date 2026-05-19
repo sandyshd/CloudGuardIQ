@@ -667,6 +667,32 @@ class OnboardingTemplateResponse(BaseModel):
     scope: str  # 'subscription' or 'managementGroup'
 
 
+_GITHUB_BLOB_RE = re.compile(
+    r"^https://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$"
+)
+
+
+def _normalize_template_uri(uri: str) -> str:
+    """Rewrite GitHub HTML viewer URLs to raw.githubusercontent.com.
+
+    The Azure Portal DeployToAzure blade fetches the URI directly and
+    parses it as JSON. A ``https://github.com/<owner>/<repo>/blob/<ref>/<path>``
+    URL returns an HTML preview page, which makes the blade fail with
+    ``ErrorLoadingExtensionAndDefinition``. This helper rewrites such URLs
+    to the matching ``https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>``
+    form so a misconfigured ``CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI`` still
+    works. Any other URL (raw GitHub, Azure Storage, custom CDN) is
+    returned unchanged.
+    """
+    if not uri:
+        return uri
+    m = _GITHUB_BLOB_RE.match(uri.strip())
+    if not m:
+        return uri
+    owner, repo, ref, path = m.groups()
+    return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
+
+
 def _build_deploy_url(template_uri: str, scope: str) -> str:
     """Return an Azure Portal Deploy-to-Azure URL for the given scope.
 
@@ -787,7 +813,7 @@ async def discover_subscriptions(
                 "Discover blocked by RBAC tenant=%s: %s", customer_tid, msg,
             )
             info = OnboardingInfo.build()
-            template_uri = settings.onboarding_template_uri
+            template_uri = _normalize_template_uri(settings.onboarding_template_uri)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -849,7 +875,7 @@ async def get_onboarding_template(
     caller_tid = get_tenant_id(user)
     customer_tid = (tenant_id or caller_tid).strip().lower()
     settings = _get_settings()
-    template_uri = settings.onboarding_template_uri
+    template_uri = _normalize_template_uri(settings.onboarding_template_uri)
     if not template_uri:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
