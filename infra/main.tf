@@ -707,14 +707,14 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_AZURE_CLIENT_ID = azuread_application.cloudguardiq.client_id
 
     # Billing
-    CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING         = azurerm_cosmosdb_sql_container.billing.name
-    CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS   = azurerm_cosmosdb_sql_container.subscriptions.name
-    CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS = azurerm_cosmosdb_sql_container.tenant_consents.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING             = azurerm_cosmosdb_sql_container.billing.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS       = azurerm_cosmosdb_sql_container.subscriptions.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS     = azurerm_cosmosdb_sql_container.tenant_consents.name
     CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS = azurerm_cosmosdb_sql_container.onboarding_sessions.name
-    CLOUDGUARDIQ_AZURE_CLIENT_SECRET              = azuread_application_password.cloudguardiq.value
-    CLOUDGUARDIQ_CONSENT_REDIRECT_URI             = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
-    CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI          = var.onboarding_template_uri
-    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS            = "10"
+    CLOUDGUARDIQ_AZURE_CLIENT_SECRET                  = azuread_application_password.cloudguardiq.value
+    CLOUDGUARDIQ_CONSENT_REDIRECT_URI                 = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
+    CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI              = var.onboarding_template_uri
+    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS                = "10"
     # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID = home-tenant SP object id of the
     # CloudGuardIQ multi-tenant app registration (NOT the function app's MI).
     CLOUDGUARDIQ_AZURE_PRINCIPAL_ID      = azuread_service_principal.cloudguardiq.object_id
