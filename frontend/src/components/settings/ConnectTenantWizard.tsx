@@ -80,6 +80,8 @@ export function ConnectTenantWizard({
   const [onboarding, setOnboarding] = useState<OnboardingInfo | null>(null);
   const [template, setTemplate] =
     useState<OnboardingTemplateResponse | null>(null);
+  const [consentUrl, setConsentUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredSubscription[]>([]);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [connectResults, setConnectResults] = useState<
@@ -93,6 +95,24 @@ export function ConnectTenantWizard({
       .catch(() => { if (!cancelled) setOnboarding(null); });
     return () => { cancelled = true; };
   }, []);
+
+  // When entering the consent step, pre-fetch the consent URL so the
+  // operator can copy/share it without first triggering a redirect.
+  useEffect(() => {
+    if (step !== "consent" || !tenantId) return;
+    let cancelled = false;
+    setBusy(true);
+    setError(null);
+    setConsentUrl(null);
+    getConsentUrl(tenantId)
+      .then((r) => { if (!cancelled) setConsentUrl(r.consent_url); })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(formatErr(err, "Failed to build consent URL"));
+      })
+      .finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+  }, [step, tenantId]);
 
   // When stepping into the reader step, fetch the ARM template URL.
   useEffect(() => {
@@ -124,16 +144,37 @@ export function ConnectTenantWizard({
 
   const handleOpenConsent = async () => {
     setError(null);
-    setBusy(true);
     try {
-      const { consent_url } = await getConsentUrl(tenantId);
+      const url = consentUrl ?? (await getConsentUrl(tenantId)).consent_url;
       // Persist so we can resume after the same-tab redirect.
       savePersisted({ tenantId, step: "reader" });
-      window.location.href = consent_url;
+      window.location.href = url;
     } catch (err) {
       setError(formatErr(err, "Failed to build consent URL"));
-      setBusy(false);
     }
+  };
+
+  const handleCopyConsentUrl = async () => {
+    if (!consentUrl) return;
+    try {
+      await navigator.clipboard.writeText(consentUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API can be blocked by permissions; fall back to a
+      // manual-select hint instead of failing silently.
+      setError(
+        "Clipboard blocked. Select the URL above and copy it manually (Ctrl+C).",
+      );
+    }
+  };
+
+  const handleSkipConsent = () => {
+    // Async / link-based flow: operator emailed the URL to the customer
+    // admin. Advance to the Reader step; if consent has not actually been
+    // recorded yet, discover() in step 4 will surface the error.
+    setError(null);
+    setStep("reader");
   };
 
   const handleDiscover = async () => {
@@ -285,16 +326,66 @@ export function ConnectTenantWizard({
             <p className="text-xs text-[hsl(var(--muted-foreground))]">
               A Global Administrator in tenant{" "}
               <span className="font-mono">{tenantId}</span> must approve
-              CloudGuardIQ's read-only Azure permissions. You'll be redirected
-              to Microsoft to sign in, then sent back here automatically.
+              CloudGuardIQ's read-only Azure permissions. Send the URL
+              below to the customer admin (or open it yourself if you have
+              that role). Azure AD will redirect them back to CloudGuardIQ
+              and consent is recorded automatically.
             </p>
-            <div className="flex justify-between gap-2">
+            {busy && !consentUrl && <LoadingSpinner />}
+            {consentUrl && (
+              <div className="space-y-2">
+                <label
+                  htmlFor="cguardiq-consent-url"
+                  className="block text-xs font-medium text-[hsl(var(--muted-foreground))]"
+                >
+                  Admin-consent URL (copy &amp; email to the customer admin)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="cguardiq-consent-url"
+                    type="text"
+                    value={consentUrl}
+                    readOnly
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    className="flex-1 rounded border px-2 py-1 text-xs font-mono"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyConsentUrl}
+                  >
+                    {copied ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                  Sample email body:{" "}
+                  <em>
+                    "Please open this link in tenant {tenantId} and click
+                    Accept to grant CloudGuardIQ read-only access."
+                  </em>
+                </p>
+              </div>
+            )}
+            <div className="flex flex-wrap justify-between gap-2 pt-2">
               <Button variant="outline" onClick={() => setStep("tenant")}>
                 Back
               </Button>
-              <Button onClick={handleOpenConsent} disabled={busy}>
-                {busy ? "Redirecting…" : "Open Microsoft consent"}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleSkipConsent}
+                  disabled={!consentUrl}
+                >
+                  I've sent the link &mdash; continue
+                </Button>
+                <Button
+                  onClick={handleOpenConsent}
+                  disabled={busy || !consentUrl}
+                >
+                  Open consent in this tab
+                </Button>
+              </div>
             </div>
           </div>
         )}
