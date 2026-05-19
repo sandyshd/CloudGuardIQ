@@ -156,7 +156,7 @@ class TestPolicyEngineNew:
     ) -> None:
         """Async evaluate_async produces same results as sync evaluate."""
         sync_findings = engine.evaluate([insecure_storage])
-        async_findings = asyncio.get_event_loop().run_until_complete(
+        async_findings = asyncio.run(
             engine.evaluate_async([insecure_storage])
         )
         sync_ids = sorted(f.rule_id for f in sync_findings)
@@ -173,7 +173,7 @@ class TestPolicyEngineNew:
         self, engine: PolicyEngine,
     ) -> None:
         """Async evaluation of zero snapshots returns an empty list."""
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             engine.evaluate_async([])
         )
         assert result == []

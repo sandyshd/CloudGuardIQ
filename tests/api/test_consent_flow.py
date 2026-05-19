@@ -140,7 +140,7 @@ def test_add_subscription_blocked_without_consent_for_other_tenant(
 def test_add_subscription_succeeds_for_other_tenant_with_consent(
     monkeypatch,
 ) -> None:
-    """After consent is recorded, cross-tenant add stores the record."""
+    """After consent, cross-tenant add stores under customer ownership."""
     consent_repo = TenantConsentRepository(Settings(), cosmos_db=None)
     asyncio.run(consent_repo.upsert(
         TenantConsent(customer_tenant_id=CUSTOMER_TID),
@@ -161,9 +161,9 @@ def test_add_subscription_succeeds_for_other_tenant_with_consent(
         },
     )
     assert r.status_code == 201, r.text
-    # Verify record stored customer_tenant_id
+    # Verify record is owned by customer tenant
     repo = subs_module._repository  # noqa: SLF001
-    rec = asyncio.run(repo.get(HOME_TID, SUB_GUID))
+    rec = asyncio.run(repo.get(CUSTOMER_TID, SUB_GUID))
     assert rec is not None
     assert rec.customer_tenant_id == CUSTOMER_TID
 

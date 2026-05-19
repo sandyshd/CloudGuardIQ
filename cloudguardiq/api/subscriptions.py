@@ -293,10 +293,33 @@ _auth = Depends(verify_token)
 async def list_subscriptions(
     user: TokenPayload = _auth,
 ) -> list[SubscriptionResponse]:
-    """Return the caller tenant's linked Azure subscriptions."""
+    """Return subscriptions visible to the caller tenant."""
     tenant_id = get_tenant_id(user)
     repo = _get_repo()
     records = await repo.list(tenant_id)
+
+    # Backward-compatibility bridge: older cross-tenant enrollments stored
+    # records under the operator tenant_id. On first customer login we
+    # materialize customer-owned rows so the customer can see/manage them.
+    if not records:
+        legacy = await repo.list_by_customer_tenant(tenant_id)
+        for rec in legacy:
+            exists = await repo.get(tenant_id, rec.subscription_id)
+            if exists is not None:
+                continue
+            claimed = SubscriptionRecord(
+                tenant_id=tenant_id,
+                subscription_id=rec.subscription_id,
+                customer_tenant_id=rec.customer_tenant_id or tenant_id,
+                display_name=rec.display_name,
+                state=rec.state,
+                added_at=rec.added_at,
+                last_scan_at=rec.last_scan_at,
+                removed_at=rec.removed_at,
+            )
+            await repo.upsert(claimed)
+            records.append(claimed)
+
     return [SubscriptionResponse.from_record(r) for r in records]
 
 
@@ -313,17 +336,23 @@ async def add_subscription(
     when the tenant is at its plan limit.
     """
     tenant_id = get_tenant_id(user)
-    customer_tid = (body.customer_tenant_id or tenant_id).strip().lower()
+    raw_customer_tid = (body.customer_tenant_id or tenant_id).strip()
+    customer_tid = (
+        raw_customer_tid.lower()
+        if _GUID_TID_RE.match(raw_customer_tid)
+        else raw_customer_tid
+    )
     repo = _get_repo()
     billing = _get_billing()
     settings = _get_settings()
+    owning_tenant_id = customer_tid
 
     # Cross-tenant guard (Phase 3.4): when the customer tenant differs
     # from the caller's tenant we must have a recorded admin consent
     # before we can issue an Azure access probe against it. Without
     # this guard a malicious caller could try to brute-force tenant
     # ids by triggering access probes through us.
-    if customer_tid != tenant_id.lower() and not settings.auth_disabled:
+    if customer_tid.lower() != tenant_id.lower() and not settings.auth_disabled:
         consent_repo = _get_consent_repo()
         if consent_repo is None or not await consent_repo.has_active_consent(
             customer_tid,
@@ -374,7 +403,7 @@ async def add_subscription(
             },
         )
 
-    record = await billing.get(tenant_id)
+    record = await billing.get(owning_tenant_id)
     tier = record.tier if record else SubscriptionTier.FREE
     cap = _cap_for_tier(settings, tier)
 
@@ -419,7 +448,7 @@ async def add_subscription(
     # Soft-delete restore: if the GUID was previously Removed, bring it
     # back so the tenant recovers its historical findings without paying
     # the tier-cap cost twice.
-    existing = await repo.get(tenant_id, body.subscription_id)
+    existing = await repo.get(owning_tenant_id, body.subscription_id)
     if existing is not None and existing.state == "Removed":
         existing.state = "Enabled"
         existing.removed_at = None
@@ -427,16 +456,16 @@ async def add_subscription(
             existing.display_name = body.display_name
         restored = await repo.upsert(existing)
         logger.info(
-            "Restored soft-deleted subscription tenant=%s sub=%s",
-            tenant_id, body.subscription_id,
+            "Restored soft-deleted subscription tenant=%s owner=%s sub=%s",
+            tenant_id, owning_tenant_id, body.subscription_id,
         )
         return SubscriptionResponse.from_record(restored)
 
-    current = await repo.count(tenant_id)
+    current = await repo.count(owning_tenant_id)
     if cap >= 0 and current >= cap:
         logger.info(
-            "Tier cap reached: tenant=%s tier=%s current=%d cap=%d",
-            tenant_id, tier.value, current, cap,
+            "Tier cap reached: owner=%s requested_by=%s tier=%s current=%d cap=%d",
+            owning_tenant_id, tenant_id, tier.value, current, cap,
         )
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -450,7 +479,7 @@ async def add_subscription(
         )
 
     rec = SubscriptionRecord(
-        tenant_id=tenant_id,
+        tenant_id=owning_tenant_id,
         subscription_id=body.subscription_id,
         display_name=body.display_name or body.subscription_id,
         customer_tenant_id=customer_tid,

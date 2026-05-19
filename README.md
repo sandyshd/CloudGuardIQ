@@ -211,7 +211,8 @@ AI-generated fix plan for a finding.
 |-------|------|-------------|
 | `card_id` | `str` | UUID |
 | `finding_result` | `FindingResult` | The finding being remediated |
-| `narrative` | `str` | Plain-English explanation |
+| 
+arrative` | `str` | Plain-English explanation |
 | `terraform_fix` | `str` | Ready-to-deploy HCL code |
 | `cli_fix` | `str` | Equivalent Azure CLI commands |
 | `confidence_qualifier` | `str` | Data tier confidence context |
@@ -251,8 +252,8 @@ All endpoints except `/health` require a Bearer JWT from Azure AD.
 | `GET` | `/findings` | List remediation cards (sorted by priority) |
 | `GET` | `/findings/{finding_id}` | Get single remediation card |
 | `GET` | `/findings/{finding_id}/terraform` | Get Terraform fix as plain text |
-| `GET` | `/subscriptions` | List the tenant's linked Azure subscriptions |
-| `POST` | `/subscriptions` | Link a subscription (validates GUID + tier cap; `402` on cap exceeded) |
+| `GET` | `/subscriptions` | List subscriptions visible to the caller tenant. Cross-tenant links are owned by the customer tenant, so customer users see their own subscriptions after operator enrollment. |
+| `POST` | `/subscriptions` | Link a subscription (validates GUID + tier cap; `402` on cap exceeded). When `customer_tenant_id` is provided, the link is persisted under that customer tenant so customer logins can manage it. |
 | `PATCH` | `/subscriptions/{id}` | Rename or enable/disable a subscription |
 | `DELETE` | `/subscriptions/{id}` | Unlink a subscription |
 | `GET` | `/subscriptions/consent-url` | Build the Azure AD admin-consent URL for a customer tenant (used by the onboarding wizard) |
@@ -329,9 +330,12 @@ relying on a deploy-time `AZURE_SUBSCRIPTION_ID` env var.
 - Cosmos queries always filter by `tenant_id` from the caller's JWT — no
   cross-tenant reads are possible even with guessed IDs.
 - The `subscriptions` Cosmos container (PK `/tenant_id`) holds each tenant's
-  linked subscriptions; `/scan`, `/findings`, etc. enforce a 403
-  `subscription_not_linked` error when a tenant requests data for a
-  subscription they have not added.
+  linked subscriptions. For cross-tenant onboarding, links are stored under
+  the customer tenant (`tenant_id=customer_tenant_id`) so customer users can
+  see/manage subscriptions after login even when an operator performed the
+  initial enrollment.
+- `/scan`, `/findings`, etc. enforce a 403 `subscription_not_linked` error
+  when a tenant requests data for a subscription they do not own.
 
 ### Plan catalog (single source of truth)
 
@@ -461,7 +465,7 @@ then advances by status (`pending_consent` → `pending_reader` →
 | 2. Grant admin consent | **Customer Global Admin / Privileged Role Admin** | Open the generated consent URL and click **Accept**. | **Open Admin Consent** | `GET /subscriptions/consent-url` (via response `consent_url`) and `GET /subscriptions/consent-callback` (AAD redirect) |
 | 3. Confirm Reader role | **Customer Subscription Owner/User Access Admin** performs RBAC grant; **Operator** acknowledges in wizard | Assign Reader to CloudGuardIQ service principal, then confirm in UI. | **I Granted Reader Role** | `POST /subscriptions/onboarding-sessions/{session_id}/reader-granted` |
 | 4. Discover subscriptions | **Operator** | Query visible subscriptions in customer tenant. | **Discover Subscriptions** | `POST /subscriptions/onboarding-sessions/{session_id}/discover` |
-| 5. Connect subscriptions | **Operator** | Connect discovered subscriptions in one action. | **Connect All Discovered** | `POST /subscriptions/onboarding-sessions/{session_id}/connect` |
+| 5. Connect subscriptions | **Operator** | Connect discovered subscriptions in one action. Ownership is recorded on the customer tenant, so customer users see them after login. | **Connect All Discovered** | `POST /subscriptions/onboarding-sessions/{session_id}/connect` |
 
 #### Actor-to-action quick reference
 
@@ -536,6 +540,9 @@ Content-Type: application/json
 
 If `subscription_ids` is omitted, the API connects all discovered IDs.
 Session status moves to `completed` after successful linking.
+Connected subscriptions are persisted under the customer tenant id, so both
+self-signup customers and operator-enrolled customers see subscriptions in
+Settings after customer login.
 
 #### Common onboarding failures
 
@@ -947,11 +954,13 @@ terraform output -raw frontend_env_file > ../frontend/.env.local
 
 | Job | Steps |
 |-----|-------|
-| **deploy-frontend** | `npm ci` → Build with `VITE_*` env vars → Deploy to Static Web App |
+| **deploy-frontend** | 
+pm ci` → Build with `VITE_*` env vars → Deploy to Static Web App |
 | **deploy-backend** | Azure Login → Docker build → Push to ACR → Update Container App |
 | **deploy-functions** | Setup Python → Azure Login → Deploy to Azure Functions via `functions-action` |
 
-**Frontend `VITE_*` variables** are injected as build-time env vars during `npm run build`
+**Frontend `VITE_*` variables** are injected as build-time env vars during 
+pm run build`
 and baked into the static JS bundle. `VITE_AZURE_CLIENT_ID` uses the `APP_CLIENT_ID`
 environment secret (CloudGuardIQ-dev app), not the `AZURE_CLIENT_ID` repository secret.
 
@@ -1036,7 +1045,8 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 | `location` | `string` | `eastus` | Azure region |
 | `openai_location` | `string` | `eastus2` | Region for OpenAI (limited availability) |
 | `swa_location` | `string` | `eastus2` | Region for Static Web App |
-| `openai_capacity` | `number` | `10` | TPM capacity (thousands) |
+| `openai_capacity` | 
+umber` | `10` | TPM capacity (thousands) |
 | `api_container_image` | `string` | hello-world image | Docker image for backend |
 | `frontend_redirect_uris` | `list(string)` | `["http://localhost:3000"]` | Additional auth redirect URIs |
 | `consent_redirect_uris` | `list(string)` | `["http://localhost:3000/settings?consent=callback"]` | Extra Reply URLs for the Azure AD admin-consent callback (cross-tenant onboarding) |

@@ -13,7 +13,10 @@ from cloudguardiq.api.main import app
 from cloudguardiq.billing.repository import BillingCustomer, BillingRepository
 from cloudguardiq.core.config import Settings
 from cloudguardiq.core.enums import SubscriptionTier
-from cloudguardiq.subscriptions.repository import SubscriptionsRepository
+from cloudguardiq.subscriptions.repository import (
+    SubscriptionRecord,
+    SubscriptionsRepository,
+)
 
 
 def _wire(tier: SubscriptionTier | None = None) -> None:
@@ -361,3 +364,72 @@ def test_build_deploy_url_uses_normalized_uri_via_get_template(
     from urllib.parse import quote
     assert quote(raw, safe="") in body["deploy_url"]
     assert "#create/Microsoft.Template/uri/" in body["deploy_url"]
+
+
+def test_operator_enrolled_subscription_is_visible_to_customer_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Operator enrollment persists under customer tenant ownership."""
+    _wire()
+    client = _client()
+
+    # Keep the flow focused on ownership semantics, not consent wiring.
+    monkeypatch.setattr(
+        "cloudguardiq.api.subscriptions._get_settings",
+        lambda: type("S", (), {"auth_disabled": True})(),
+    )
+
+    sid = "aaaaaaaa-1111-1111-1111-111111111111"
+    r = client.post(
+        "/subscriptions",
+        json={
+            "subscription_id": sid,
+            "customer_tenant_id": "tenant-b",
+            "display_name": "Customer Prod",
+        },
+    )
+    assert r.status_code == 201, r.text
+
+    # Operator tenant should not own or list customer-owned rows.
+    r = client.get("/subscriptions")
+    assert r.status_code == 200
+    assert r.json() == []
+
+    # Customer tenant sees the linked subscription after login.
+    app.dependency_overrides[verify_token] = lambda: TokenPayload(
+        sub="customer-user", tid="tenant-b",
+    )
+    r = client.get("/subscriptions")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["subscription_id"] == sid
+
+
+def test_customer_list_claims_legacy_operator_owned_subscription() -> None:
+    """Legacy rows keyed by operator tenant are materialized for customer."""
+    _wire()
+    client = _client()
+
+    sid = "bbbbbbbb-2222-2222-2222-222222222222"
+    repo = subs_module._repository
+    assert repo is not None
+    asyncio.run(repo.upsert(SubscriptionRecord(
+        tenant_id="tenant-A",
+        subscription_id=sid,
+        customer_tenant_id="tenant-b",
+        display_name="Legacy linked",
+    )))
+
+    app.dependency_overrides[verify_token] = lambda: TokenPayload(
+        sub="customer-user", tid="tenant-b",
+    )
+    r = client.get("/subscriptions")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["subscription_id"] == sid
+
+    # Claimed row is now customer-owned so lifecycle operations work.
+    r = client.delete(f"/subscriptions/{sid}")
+    assert r.status_code == 204
