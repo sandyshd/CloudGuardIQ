@@ -4,8 +4,33 @@ import { NotificationSettings } from "../components/settings/NotificationSetting
 import { TierSelector } from "../components/settings/TierSelector";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { recordConsentCallback } from "../api/subscriptions";
+import { PENDING_CONSENT_CALLBACK_KEY } from "../main";
 
 const CONSENT_PARAM = "consent";
+
+interface PendingConsentCallback {
+  tenant: string;
+  admin_consent: string;
+  error: string;
+  error_description: string;
+}
+
+function readPendingConsentCallback(): PendingConsentCallback | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_CONSENT_CALLBACK_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(PENDING_CONSENT_CALLBACK_KEY);
+    const parsed = JSON.parse(raw) as Partial<PendingConsentCallback>;
+    return {
+      tenant: parsed.tenant ?? "",
+      admin_consent: parsed.admin_consent ?? "",
+      error: parsed.error ?? "",
+      error_description: parsed.error_description ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
 
 interface ConsentBanner {
   kind: "info" | "error";
@@ -19,22 +44,34 @@ export function Settings() {
   useEffect(() => {
     const url = new URL(window.location.href);
     const params = url.searchParams;
-    if (params.get(CONSENT_PARAM) !== "callback") return;
+    const hasUrlCallback = params.get(CONSENT_PARAM) === "callback";
+    const pending = hasUrlCallback ? null : readPendingConsentCallback();
+    if (!hasUrlCallback && !pending) return;
 
-    const tenant = params.get("tenant") ?? "";
-    const adminConsent = params.get("admin_consent") ?? "";
-    const errorParam = params.get("error") ?? undefined;
-    const errorDescription = params.get("error_description") ?? undefined;
+    const tenant = hasUrlCallback
+      ? (params.get("tenant") ?? "")
+      : (pending?.tenant ?? "");
+    const adminConsent = hasUrlCallback
+      ? (params.get("admin_consent") ?? "")
+      : (pending?.admin_consent ?? "");
+    const errorParam = hasUrlCallback
+      ? (params.get("error") ?? undefined)
+      : (pending?.error || undefined);
+    const errorDescription = hasUrlCallback
+      ? (params.get("error_description") ?? undefined)
+      : (pending?.error_description || undefined);
 
     // Strip the callback params from the visible URL immediately so a refresh
     // does not re-trigger this handler.
-    params.delete(CONSENT_PARAM);
-    params.delete("tenant");
-    params.delete("admin_consent");
-    params.delete("error");
-    params.delete("error_description");
-    const cleaned = url.pathname + (params.toString() ? `?${params}` : "");
-    window.history.replaceState({}, "", cleaned);
+    if (hasUrlCallback) {
+      params.delete(CONSENT_PARAM);
+      params.delete("tenant");
+      params.delete("admin_consent");
+      params.delete("error");
+      params.delete("error_description");
+      const cleaned = url.pathname + (params.toString() ? `?${params}` : "");
+      window.history.replaceState({}, "", cleaned);
+    }
 
     if (errorParam) {
       setBanner({
