@@ -232,6 +232,15 @@ resource "azurerm_cosmosdb_sql_container" "tenant_consents" {
   partition_key_paths = ["/customer_tenant_id"]
 }
 
+resource "azurerm_cosmosdb_sql_container" "onboarding_sessions" {
+  # Phase 4.0: session-based onboarding workflow state.
+  name                = "onboarding_sessions"
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
+  partition_key_paths = ["/operator_tenant_id"]
+}
+
 # ==========================================================================
 # Azure OpenAI
 # ==========================================================================
@@ -521,6 +530,10 @@ resource "azurerm_container_app" "api" {
         value = azurerm_cosmosdb_sql_container.tenant_consents.name
       }
       env {
+        name  = "CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS"
+        value = azurerm_cosmosdb_sql_container.onboarding_sessions.name
+      }
+      env {
         name  = "CLOUDGUARDIQ_AZURE_CLIENT_SECRET"
         value = azuread_application_password.cloudguardiq.value
       }
@@ -697,6 +710,7 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING         = azurerm_cosmosdb_sql_container.billing.name
     CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS   = azurerm_cosmosdb_sql_container.subscriptions.name
     CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS = azurerm_cosmosdb_sql_container.tenant_consents.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS = azurerm_cosmosdb_sql_container.onboarding_sessions.name
     CLOUDGUARDIQ_AZURE_CLIENT_SECRET              = azuread_application_password.cloudguardiq.value
     CLOUDGUARDIQ_CONSENT_REDIRECT_URI             = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
     CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI          = var.onboarding_template_uri
@@ -785,5 +799,6 @@ locals {
     managed_by  = "terraform"
   }
 }
+
 
 
