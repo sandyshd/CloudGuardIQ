@@ -22,7 +22,11 @@ export interface SubscriptionContextValue {
   selected: Subscription | null;
   setSelectedId: (id: string | null) => void;
   refresh: () => Promise<void>;
-  add: (subscription_id: string, display_name?: string) => Promise<Subscription>;
+  add: (
+    subscription_id: string,
+    display_name?: string,
+    customer_tenant_id?: string,
+  ) => Promise<Subscription>;
   remove: (subscription_id: string) => Promise<void>;
   rename: (subscription_id: string, display_name: string) => Promise<Subscription>;
   replace: (
@@ -115,8 +119,16 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const add = useCallback(
-    async (subscription_id: string, display_name = "") => {
-      const created = await apiAdd(subscription_id, display_name);
+    async (
+      subscription_id: string,
+      display_name = "",
+      customer_tenant_id = "",
+    ) => {
+      const created = await apiAdd(
+        subscription_id,
+        display_name,
+        customer_tenant_id,
+      );
       setSubscriptions((prev) => {
         // POST may return a restored soft-deleted record -- replace if it
         // already exists, otherwise append.

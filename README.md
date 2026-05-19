@@ -255,6 +255,11 @@ All endpoints except `/health` require a Bearer JWT from Azure AD.
 | `POST` | `/subscriptions` | Link a subscription (validates GUID + tier cap; `402` on cap exceeded) |
 | `PATCH` | `/subscriptions/{id}` | Rename or enable/disable a subscription |
 | `DELETE` | `/subscriptions/{id}` | Unlink a subscription |
+| `GET` | `/subscriptions/consent-url` | Build the Azure AD admin-consent URL for a customer tenant (used by the onboarding wizard) |
+| `GET` | `/subscriptions/consent-callback` | Records admin consent after Azure AD redirects the customer back to the SPA |
+| `GET` | `/subscriptions/onboarding-template` | Returns the one-click ARM "Deploy to Azure" URL that assigns Reader to CloudGuardIQ's service principal |
+| `GET` | `/subscriptions/discover` | Lists every subscription visible to CloudGuardIQ in the customer tenant (used in the wizard's pick-list step) |
+| `GET` | `/onboarding/info` | Returns CloudGuardIQ's service-principal object id + the manual `az role assignment` template |
 | `GET` | `/billing/plans` | Public plan catalog (no auth) |
 | `GET` | `/billing/status` | Current tier, Stripe customer, usage |
 | `POST` | `/billing/checkout` | Create a Stripe checkout session |
@@ -400,6 +405,13 @@ Run these once, before any customer onboards.
       `redirect_uri` automatically.
 - [x] `tenant_consents` Cosmos container created
       (PK `/customer_tenant_id`).
+- [ ] `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI` set to a public HTTPS URL
+      hosting [`infra/templates/cloudguardiq-reader.json`](infra/templates/cloudguardiq-reader.json)
+      (e.g. raw GitHub URL or an Azure Storage blob). Drives the
+      **Deploy to Azure** button in step 3 of the wizard. Empty value
+      disables one-click deploy (the `az role assignment create`
+      fallback still works). Wired through the Terraform variable
+      `onboarding_template_uri`.
 
 **Manual one-time setup (cannot be automated by Terraform):**
 
@@ -428,16 +440,44 @@ Run these once, before any customer onboards.
       `consent_redirect_uris` in `terraform.tfvars` so admin-consent
       callbacks for those hosts are also accepted.
 
-#### Step 1 — Customer admin grants tenant-wide consent
+#### Onboarding wizard (UI-driven, recommended)
 
-Tenant **B**'s directory admin opens the CloudGuardIQ Settings page
-and clicks **Connect another tenant**. The frontend calls:
+The Settings page renders a **Connect another tenant** card backed by
+[`frontend/src/components/settings/ConnectTenantWizard.tsx`](frontend/src/components/settings/ConnectTenantWizard.tsx).
+Clicking **Start onboarding wizard** walks the operator (or the customer
+themselves) through four steps, each backed by one of the
+`/subscriptions/*` endpoints above:
+
+| # | Step | UI action | API call |
+|---|------|-----------|----------|
+| 1 | Tenant | Paste the customer's Entra tenant GUID. | — |
+| 2 | Admin consent | **Open Microsoft consent** does a *same-tab* redirect to `/adminconsent`. The wizard persists its progress in `sessionStorage` (`cguardiq.connectWizard`) so it can resume after the bounce. | `GET /subscriptions/consent-url` |
+| 2b | Callback | Azure AD redirects back to `/settings?consent=callback&tenant=<tid>&admin_consent=True`. [`pages/Settings.tsx`](frontend/src/pages/Settings.tsx) auto-records the consent, scrubs the URL, and re-opens the wizard at step 3. | `GET /subscriptions/consent-callback` |
+| 3 | Reader role | Renders a big **Deploy to Azure** button pointing at the Reader-role ARM template, plus a collapsible `az role assignment create` fallback. | `GET /subscriptions/onboarding-template` |
+| 4 | Discover & connect | Lists every visible subscription as a checkbox table (already-linked rows are disabled). On `400 reader_role_required` the wizard surfaces the Deploy button inline for retry. **Connect N subscriptions** loops `POST /subscriptions` with `customer_tenant_id` set. | `GET /subscriptions/discover` then `POST /subscriptions` per pick |
+
+**Who clicks what:**
+
+* The CloudGuardIQ operator drives steps 1, 3 and 4 from the SPA.
+* A **Global Administrator in the customer tenant** must approve step 2
+  (the `/adminconsent` page) — Azure enforces this regardless of who is
+  signed into CloudGuardIQ.
+* A subscription **Owner** in the customer tenant must run the ARM
+  deployment in step 3.
+* For the *async / link-based* variant, the operator can email the
+  customer the two URLs (`consent_url` from step 2 and `deploy_url` from
+  step 3), then resume the wizard at step 4 after the customer reports
+  back.
+
+#### Step 1 — Customer admin grants tenant-wide consent (API reference)
+
+Under the hood the wizard calls:
 
 ```http
 GET /subscriptions/consent-url?tenant_id=<TenantB-guid>
 ```
 
-and opens the returned URL in a popup:
+and redirects to the returned URL:
 
 ```
 https://login.microsoftonline.com/<TenantB-guid>/adminconsent
@@ -660,6 +700,10 @@ SERVICE_BUS_CONNECTION__fullyQualifiedNamespace=<namespace>.servicebus.windows.n
 
 # Azure Key Vault
 KEY_VAULT_URL=https://<vault>.vault.azure.net/
+
+# Cross-tenant onboarding (optional in dev)
+CLOUDGUARDIQ_CONSENT_REDIRECT_URI=http://localhost:3000/settings?consent=callback
+CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI=https://raw.githubusercontent.com/<org>/<repo>/main/infra/templates/cloudguardiq-reader.json
 ```
 
 > **No API keys needed.** Authentication uses `DefaultAzureCredential` which
@@ -965,7 +1009,8 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 | `CLOUDGUARDIQ_AZURE_CLIENT_SECRET` | Cross-tenant only | Client secret used by `CustomerCredentialFactory` to authenticate against customer tenants. Provisioned by Terraform. Prefer a certificate where possible. |
 | `CLOUDGUARDIQ_AZURE_CERTIFICATE_PATH` | Cross-tenant only | Path to a PFX/PEM certificate for `ClientCertificateCredential`. Takes precedence over the client secret when both are set. |
 | `CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS` | No | Cosmos container for cross-tenant admin-consent records (default: `tenant_consents`) |
-| `CLOUDGUARDIQ_CONSENT_REDIRECT_URI` | Cross-tenant only | Reply URL the Azure AD admin-consent popup returns to (must match an app-registration Reply URL) |
+| `CLOUDGUARDIQ_CONSENT_REDIRECT_URI` | Cross-tenant only | Reply URL the Azure AD admin-consent redirect returns to (must match an app-registration Reply URL). Default: `http://localhost:3000/settings?consent=callback`. |
+| `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI` | No | Public HTTPS URL hosting [`infra/templates/cloudguardiq-reader.json`](infra/templates/cloudguardiq-reader.json). Drives the **Deploy to Azure** button returned by `GET /subscriptions/onboarding-template`. Empty disables the one-click button (the `az role assignment` fallback still works). |
 | `SERVICE_BUS_CONNECTION__fullyQualifiedNamespace` | No | Service Bus namespace FQDN (managed identity auth) |
 | `KEY_VAULT_URL` | No | Key Vault URI |
 
@@ -993,6 +1038,7 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 | `api_container_image` | `string` | hello-world image | Docker image for backend |
 | `frontend_redirect_uris` | `list(string)` | `["http://localhost:3000"]` | Additional auth redirect URIs |
 | `consent_redirect_uris` | `list(string)` | `["http://localhost:3000/settings?consent=callback"]` | Extra Reply URLs for the Azure AD admin-consent callback (cross-tenant onboarding) |
+| `onboarding_template_uri` | `string` | `""` | Public HTTPS URL hosting [`infra/templates/cloudguardiq-reader.json`](infra/templates/cloudguardiq-reader.json). Drives the wizard's **Deploy to Azure** button. Propagated to the Container App and Function App as `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI`. |
 
 ---
 
