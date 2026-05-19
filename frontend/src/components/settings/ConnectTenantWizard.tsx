@@ -83,6 +83,7 @@ export function ConnectTenantWizard({
   const [consentUrl, setConsentUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [deployCopied, setDeployCopied] = useState(false);
+  const [principalCopied, setPrincipalCopied] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredSubscription[]>([]);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [connectResults, setConnectResults] = useState<
@@ -180,6 +181,20 @@ export function ConnectTenantWizard({
     } catch {
       setError(
         "Clipboard blocked. Select the URL above and copy it manually (Ctrl+C).",
+      );
+    }
+  };
+
+  const handleCopyPrincipalId = async () => {
+    const pid = template?.azure_principal_id;
+    if (!pid) return;
+    try {
+      await navigator.clipboard.writeText(pid);
+      setPrincipalCopied(true);
+      setTimeout(() => setPrincipalCopied(false), 2000);
+    } catch {
+      setError(
+        "Clipboard blocked. Select the principal id and copy it manually (Ctrl+C).",
       );
     }
   };
@@ -453,6 +468,37 @@ export function ConnectTenantWizard({
                     {deployCopied ? "Copied" : "Copy"}
                   </Button>
                 </div>
+                {template.azure_principal_id && (
+                  <>
+                    <label
+                      htmlFor="cguardiq-principal-id"
+                      className="block text-xs font-medium text-[hsl(var(--muted-foreground))]"
+                    >
+                      Paste this into the &quot;Cloud Guard IQ Principal
+                      Id&quot; field on the Azure Portal page
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        id="cguardiq-principal-id"
+                        type="text"
+                        value={template.azure_principal_id}
+                        readOnly
+                        onClick={(e) =>
+                          (e.target as HTMLInputElement).select()
+                        }
+                        className="flex-1 rounded border px-2 py-1 text-xs font-mono"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleCopyPrincipalId}
+                      >
+                        {principalCopied ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                  </>
+                )}
                 <p className="text-xs text-[hsl(var(--muted-foreground))]">
                   Sample email body:{" "}
                   <em>
