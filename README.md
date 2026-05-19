@@ -56,7 +56,7 @@ governance with **AI-generated remediation** powered by GPT-5.1.
                        │
 ┌──────────────────────▼───────────────────────────────────────────┐
 │  Azure Cosmos DB (serverless)                                    │
-│  Containers: snapshots │ findings │ remediations │ system │ billing │ subscriptions        │
+│  Containers: snapshots │ findings │ remediations │ system │ billing │ subscriptions │ tenant_consents │ onboarding_sessions │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -258,7 +258,12 @@ All endpoints except `/health` require a Bearer JWT from Azure AD.
 | `GET` | `/subscriptions/consent-url` | Build the Azure AD admin-consent URL for a customer tenant (used by the onboarding wizard) |
 | `GET` | `/subscriptions/consent-callback` | Records admin consent after Azure AD redirects the customer back to the SPA |
 | `GET` | `/subscriptions/onboarding-template` | Returns the one-click ARM "Deploy to Azure" URL that assigns Reader to CloudGuardIQ's service principal |
-| `GET` | `/subscriptions/discover` | Lists every subscription visible to CloudGuardIQ in the customer tenant (used in the wizard's pick-list step) |
+| `POST` | `/subscriptions/onboarding-sessions` | Start a customer onboarding session and return current status + consent URL |
+| `GET` | `/subscriptions/onboarding-sessions/{session_id}` | Read onboarding-session status (auto-advances to `pending_reader` after consent is detected) |
+| `POST` | `/subscriptions/onboarding-sessions/{session_id}/reader-granted` | Operator confirms Reader role was granted in customer tenant |
+| `POST` | `/subscriptions/onboarding-sessions/{session_id}/discover` | Discover visible customer subscriptions and cache discovered IDs on the session |
+| `POST` | `/subscriptions/onboarding-sessions/{session_id}/connect` | Connect selected (or all discovered) subscriptions and mark onboarding completed |
+| `GET` | `/subscriptions/discover` | Lists every subscription visible to CloudGuardIQ in the customer tenant (manual/advanced troubleshooting endpoint) |
 | `GET` | `/onboarding/info` | Returns CloudGuardIQ's service-principal object id + the manual `az role assignment` template |
 | `GET` | `/billing/plans` | Public plan catalog (no auth) |
 | `GET` | `/billing/status` | Current tier, Stripe customer, usage |
@@ -405,6 +410,8 @@ Run these once, before any customer onboards.
       `redirect_uri` automatically.
 - [x] `tenant_consents` Cosmos container created
       (PK `/customer_tenant_id`).
+- [x] `onboarding_sessions` Cosmos container created
+      (PK `/operator_tenant_id`).
 - [ ] `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI` set to a public HTTPS URL
       hosting [`infra/templates/cloudguardiq-reader.json`](infra/templates/cloudguardiq-reader.json)
       (e.g. raw GitHub URL or an Azure Storage blob). Drives the
@@ -444,81 +451,106 @@ Run these once, before any customer onboards.
 
 The Settings page renders a **Connect another tenant** card backed by
 [`frontend/src/components/settings/ConnectTenantWizard.tsx`](frontend/src/components/settings/ConnectTenantWizard.tsx).
-Clicking **Start onboarding wizard** walks the operator (or the customer
-themselves) through four steps, each backed by one of the
-`/subscriptions/*` endpoints above:
+Clicking **Start Onboarding** creates one backend onboarding session and
+then advances by status (`pending_consent` → `pending_reader` →
+`pending_discovery` → `subscriptions_discovered` → `completed`).
 
-| # | Step | Actor | UI action | API call |
-|---|------|-------|-----------|----------|
-| 1 | Tenant | **Operator** | Paste the customer's Entra tenant GUID into the wizard. | — |
-| 2 | Admin consent | **Operator** copies / emails the URL; **Customer Global Administrator** clicks Accept | Wizard renders the admin-consent URL in a read-only field with a **Copy** button so the operator can email it to the customer admin. Two actions: **Open consent in this tab** (same-tab redirect — for self-serve customers driving the wizard themselves; wizard state is persisted in `sessionStorage` under `cguardiq.connectWizard` so it resumes after the bounce) or **I've sent the link — continue** (async flow — operator advances to step 3 without redirecting; consent is picked up automatically the moment the customer admin clicks Accept). | `GET /subscriptions/consent-url` |
-| 2b | Callback | **Customer admin's browser** (automatic) | Azure AD redirects back to `/settings?consent=callback&tenant=<tid>&admin_consent=True`. [`pages/Settings.tsx`](frontend/src/pages/Settings.tsx) auto-records the consent, scrubs the URL, and re-opens the wizard at step 3 if the operator is the one who clicked. | `GET /subscriptions/consent-callback` |
-| 3 | Reader role | **Operator** copies / emails the URL; **Customer subscription Owner** clicks Deploy | Renders a **Deploy to Azure** button plus a read-only field with the same URL and a **Copy** button (mirrors step 2 so the operator can email it). Collapsible `az role assignment create` fallback is also shown. | `GET /subscriptions/onboarding-template` |
-| 4 | Discover & connect | **Operator** | Lists every visible subscription as a checkbox table (already-linked rows are disabled). On `400 reader_role_required` the wizard surfaces the Deploy button inline for retry. **Connect N subscriptions** loops `POST /subscriptions` with `customer_tenant_id` set. | `GET /subscriptions/discover` then `POST /subscriptions` per pick |
+| Stage | Primary actor | Action | UI button | Backend endpoint |
+|-------|---------------|--------|-----------|------------------|
+| 1. Start session | **Operator (CloudGuardIQ tenant)** | Enter customer tenant GUID and initialize the workflow. | **Start Onboarding** | `POST /subscriptions/onboarding-sessions` |
+| 2. Grant admin consent | **Customer Global Admin / Privileged Role Admin** | Open the generated consent URL and click **Accept**. | **Open Admin Consent** | `GET /subscriptions/consent-url` (via response `consent_url`) and `GET /subscriptions/consent-callback` (AAD redirect) |
+| 3. Confirm Reader role | **Customer Subscription Owner/User Access Admin** performs RBAC grant; **Operator** acknowledges in wizard | Assign Reader to CloudGuardIQ service principal, then confirm in UI. | **I Granted Reader Role** | `POST /subscriptions/onboarding-sessions/{session_id}/reader-granted` |
+| 4. Discover subscriptions | **Operator** | Query visible subscriptions in customer tenant. | **Discover Subscriptions** | `POST /subscriptions/onboarding-sessions/{session_id}/discover` |
+| 5. Connect subscriptions | **Operator** | Connect discovered subscriptions in one action. | **Connect All Discovered** | `POST /subscriptions/onboarding-sessions/{session_id}/connect` |
 
-**Who clicks what:**
+#### Actor-to-action quick reference
 
-* The CloudGuardIQ operator drives steps 1, 3 and 4 from the SPA.
-* A **Global Administrator in the customer tenant** must approve step 2
-  (the `/adminconsent` page) — Azure enforces this regardless of who is
-  signed into CloudGuardIQ.
-* A subscription **Owner** in the customer tenant must run the ARM
-  deployment in step 3.
-* For the *async / link-based* variant, the operator can email the
-  customer the two URLs (`consent_url` from step 2 and `deploy_url` from
-  step 3), then resume the wizard at step 4 after the customer reports
-  back.
+| Actor | Required role | What they do |
+|------|----------------|--------------|
+| CloudGuardIQ Operator | Any signed-in user in operator tenant | Starts session, refreshes status, discovers and connects subscriptions. |
+| Customer Admin | Global Administrator or Privileged Role Administrator in customer tenant | Grants tenant-wide admin consent on the CloudGuardIQ multi-tenant app. |
+| Customer Subscription Admin | Owner or User Access Administrator on each target subscription | Assigns `Reader` RBAC for the CloudGuardIQ enterprise app/service principal. |
 
-#### Step 1 — Customer admin grants tenant-wide consent (API reference)
+#### Session-based API sequence (technical reference)
 
-Under the hood the wizard calls:
+1. **Create session**
 
 ```http
-GET /subscriptions/consent-url?tenant_id=<TenantB-guid>
-```
+POST /subscriptions/onboarding-sessions
+Content-Type: application/json
 
-and redirects to the returned URL:
-
-```
-https://login.microsoftonline.com/<TenantB-guid>/adminconsent
-  ?client_id=<cgiq-client-id>
-  &redirect_uri=<consent_redirect_uri>
-```
-
-The admin signs in (in tenant **B**) and clicks **Accept**. Azure AD
-creates an **enterprise application** for CloudGuardIQ inside tenant
-**B** and redirects the browser to:
-
-```http
-GET /subscriptions/consent-callback?tenant=<TenantB-guid>&admin_consent=True
-```
-
-CloudGuardIQ writes a record to the `tenant_consents` Cosmos container:
-
-```json
 {
-  "id": "<TenantB-guid>",
-  "customer_tenant_id": "<TenantB-guid>",
-  "consented_by": "<admin-oid>",
-  "consented_at": "2026-05-07T12:34:56+00:00",
-  "revoked_at": null
+  "customer_tenant_id": "<TenantB-guid>"
 }
 ```
 
-**Failure cases:**
+Returns:
+
+```json
+{
+  "session_id": "<hex>",
+  "customer_tenant_id": "<tenant-guid>",
+  "status": "pending_consent",
+  "consent_url": "https://login.microsoftonline.com/.../adminconsent...",
+  "discovered_subscription_ids": [],
+  "connected_subscription_ids": []
+}
+```
+
+2. **Customer admin completes consent**
+
+- Customer admin opens `consent_url` and accepts.
+- Azure AD redirects to `/settings?consent=callback&tenant=<tid>&admin_consent=True`.
+- [`frontend/src/pages/Settings.tsx`](frontend/src/pages/Settings.tsx) records callback through:
+
+  ```http
+  GET /subscriptions/consent-callback?tenant=<TenantB-guid>&admin_consent=True
+  ```
+
+- Subsequent session reads auto-advance to `pending_reader` once consent is active.
+
+3. **Reader RBAC grant + operator confirmation**
+
+Use either one-click template or CLI:
+
+- `GET /subscriptions/onboarding-template?tenant_id=<TenantB-guid>&scope=managementGroup`
+- `GET /onboarding/info` (manual command template)
+
+Then operator confirms in the wizard:
+
+```http
+POST /subscriptions/onboarding-sessions/{session_id}/reader-granted
+```
+
+4. **Discover and connect**
+
+```http
+POST /subscriptions/onboarding-sessions/{session_id}/discover
+POST /subscriptions/onboarding-sessions/{session_id}/connect
+Content-Type: application/json
+
+{
+  "subscription_ids": ["<sub-guid-1>", "<sub-guid-2>"]
+}
+```
+
+If `subscription_ids` is omitted, the API connects all discovered IDs.
+Session status moves to `completed` after successful linking.
+
+#### Common onboarding failures
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `400 invalid_tenant_id` | `tenant_id` is not a GUID | Re-run Step 1 with the correct Entra tenant id. |
-| `400 consent_failed` with `azure_error=access_denied` | Admin clicked Cancel | Re-run Step 1; admin clicks Accept. |
-| Azure AD shows “This app is unverified” | Publisher verification missing | Complete pre-flight checklist. |
-| Popup blocked / `redirect_uri_mismatch` | Custom frontend host not in `var.consent_redirect_uris` | Add the host to `consent_redirect_uris` in `terraform.tfvars` and re-apply. The default SWA host is registered automatically. |
+| `400 invalid_tenant_id` when starting session | `customer_tenant_id` is not a GUID | Re-enter the correct Entra tenant ID and restart session. |
+| Session remains `pending_consent` | Customer admin has not accepted consent yet | Open `consent_url`, complete consent, then click **Refresh Status**. |
+| `400 consent_failed` in callback | Admin declined or callback carried error | Re-run consent and accept prompt. |
+| Discover/connect returns `400 access_denied` or `reader_role_required` | Reader RBAC missing or not propagated | Grant Reader role, wait up to 5 minutes, click **I Granted Reader Role**, retry discovery. |
+| Start onboarding returns `500`/`503` | `onboarding_sessions` container/repo not configured | Apply latest Terraform and ensure `CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS` is set. |
 
-#### Step 2 — Assign Reader on the target subscription(s)
+#### Manual Reader grant command (customer tenant shell)
 
 Inside tenant **B**, a subscription **Owner** grants the CloudGuardIQ
-enterprise application the `Reader` role. The Settings UI surfaces the
-exact command via `GET /onboarding/info`. From a shell signed in to
+enterprise application the `Reader` role. From a shell signed in to
 tenant **B**:
 
 ```bash
@@ -538,44 +570,7 @@ az role assignment create \
 > rendered as IaC diffs / `az cli` snippets the customer applies
 > themselves.
 
-Allow up to **5 minutes** for the role assignment to propagate before
-Step 3.
-
-#### Step 3 — Link the subscription(s) in CloudGuardIQ
-
-From the CloudGuardIQ Settings page, the customer (or operator on their
-behalf) submits:
-
-```http
-POST /subscriptions
-Content-Type: application/json
-
-{
-  "subscription_id": "<sub-guid>",
-  "customer_tenant_id": "<TenantB-guid>",
-  "display_name": "Acme Prod East"
-}
-```
-
-The backend pipeline runs in this order:
-
-1. **Consent guard** — looks up `tenant_consents` for `<TenantB-guid>`.
-   Returns `400 consent_required` if no active record. (Step 1 missing.)
-2. **Tier-cap check** — returns `402 upgrade_required` if the caller's
-   plan is at its `max_subscriptions` limit.
-3. **Cross-tenant access probe** — builds a `ClientCertificateCredential`
-   (or `ClientSecretCredential`) against
-   `login.microsoftonline.com/<TenantB-guid>` via
-   [`cloudguardiq/auth/customer_credential.py`](cloudguardiq/auth/customer_credential.py)
-   and queries Resource Graph for the subscription. On 401/403 returns
-   `400 access_denied` with a copy-pasteable
-   `az role assignment create` command. (Step 2 missing or not
-   propagated.)
-4. **Persist** — writes a `subscriptions` record with
-   `customer_tenant_id=<TenantB-guid>`. Returns `201`.
-
-Verify with `GET /subscriptions` — the new entry should appear with
-`state="Enabled"`.
+Allow up to **5 minutes** for the role assignment to propagate before discovery.
 
 #### Step 4 — First scan
 
@@ -622,7 +617,7 @@ To revoke consent server-side (e.g. customer churn), call
 
 #### End-to-end smoke test (single command)
 
-With `CLOUDGUARDIQ_AUTH_DISABLED=true` (dev only) the consent flow can
+With `CLOUDGUARDIQ_AUTH_DISABLED=true` (dev only) the session flow can
 be exercised without a real customer admin:
 
 ```powershell
@@ -630,12 +625,18 @@ $base = "http://localhost:8000"
 $tid  = "22222222-2222-2222-2222-222222222222"
 $sub  = "33333333-3333-3333-3333-333333333333"
 
-# Step 1: simulate Azure AD callback after admin consent
+# Step 1: create onboarding session
+$session = (Invoke-RestMethod -Method Post -Uri "$base/subscriptions/onboarding-sessions" -ContentType "application/json" -Body "{\"customer_tenant_id\":\"$tid\"}")
+$sid = $session.session_id
+
+# Step 2: simulate Azure AD callback after admin consent
 curl "$base/subscriptions/consent-callback?tenant=$tid&admin_consent=True"
 
-# Step 3: link the subscription as if the customer just clicked Add
-curl -X POST "$base/subscriptions" -H 'Content-Type: application/json' `
-  -d "{\"subscription_id\":\"$sub\",\"customer_tenant_id\":\"$tid\"}"
+# Step 3: mark Reader grant + discover + connect
+curl -X POST "$base/subscriptions/onboarding-sessions/$sid/reader-granted"
+curl -X POST "$base/subscriptions/onboarding-sessions/$sid/discover"
+curl -X POST "$base/subscriptions/onboarding-sessions/$sid/connect" -H 'Content-Type: application/json' `
+  -d "{\"subscription_ids\":[\"$sub\"]}"
 
 # Verify
 curl "$base/subscriptions"
@@ -645,7 +646,6 @@ curl "$base/subscriptions"
 non-verified multi-tenant apps before Azure AD will show consent prompts
 to customers outside your tenant. Plan for the Microsoft Partner
 Network step before going GA.
-
 ### Demo mode
 
 When `CLOUDGUARDIQ_AUTH_DISABLED=true` (local/dev), the API serves canned
@@ -1010,6 +1010,7 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 | `CLOUDGUARDIQ_AZURE_CLIENT_SECRET` | Cross-tenant only | Client secret used by `CustomerCredentialFactory` to authenticate against customer tenants. Provisioned by Terraform. Prefer a certificate where possible. |
 | `CLOUDGUARDIQ_AZURE_CERTIFICATE_PATH` | Cross-tenant only | Path to a PFX/PEM certificate for `ClientCertificateCredential`. Takes precedence over the client secret when both are set. |
 | `CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS` | No | Cosmos container for cross-tenant admin-consent records (default: `tenant_consents`) |
+| `CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS` | No | Cosmos container for onboarding-session state (default: `onboarding_sessions`) |
 | `CLOUDGUARDIQ_CONSENT_REDIRECT_URI` | Cross-tenant only | Reply URL the Azure AD admin-consent redirect returns to (must match an app-registration Reply URL). Default: `http://localhost:3000/settings?consent=callback`. |
 | `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI` | No | Public HTTPS URL hosting [`infra/templates/cloudguardiq-reader.json`](infra/templates/cloudguardiq-reader.json). Drives the **Deploy to Azure** button returned by `GET /subscriptions/onboarding-template`. Empty disables the one-click button (the `az role assignment` fallback still works). If a `https://github.com/<owner>/<repo>/blob/<ref>/<path>` URL is supplied by mistake, the API rewrites it to the matching `raw.githubusercontent.com` URL so the Azure Portal blade can fetch the JSON. |
 | `SERVICE_BUS_CONNECTION__fullyQualifiedNamespace` | No | Service Bus namespace FQDN (managed identity auth) |
