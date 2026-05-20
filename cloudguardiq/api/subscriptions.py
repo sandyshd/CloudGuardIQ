@@ -961,6 +961,7 @@ class OnboardingTemplateResponse(BaseModel):
     azure_principal_id: str
     template_uri: str
     deploy_url: str
+    parameters_uri: str = ""
     scope: str  # 'subscription' or 'managementGroup'
 
 
@@ -990,7 +991,27 @@ def _normalize_template_uri(uri: str) -> str:
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
 
 
-def _build_deploy_url(template_uri: str, scope: str) -> str:
+def _build_parameters_uri(base_url: str, principal_id: str) -> str:
+    """Return a public URL that serves ARM deployment parameters.
+
+    The URL is fed into the Azure Portal Deploy-to-Azure blade via
+    ``/uriParameters/<encoded>`` so the customer-tenant CloudGuardIQ
+    service principal id is pre-populated and the operator only has
+    to click Review + create. Returns an empty string when either
+    ``base_url`` is unset (prefill disabled) or ``principal_id`` is
+    not a well-formed GUID (defensive: never emit malformed URLs).
+    """
+    if not base_url or not principal_id:
+        return ""
+    if not _GUID_RE.match(principal_id):
+        return ""
+    base = base_url.rstrip("/")
+    return f"{base}/subscriptions/onboarding-parameters/{principal_id}"
+
+
+def _build_deploy_url(
+    template_uri: str, scope: str, parameters_uri: str = ""
+) -> str:
     """Return an Azure Portal Deploy-to-Azure URL.
 
     The universal, documented Deploy-to-Azure URL is
@@ -1010,7 +1031,10 @@ def _build_deploy_url(template_uri: str, scope: str) -> str:
     from urllib.parse import quote
     del scope  # informational only; portal routes via $schema
     encoded = quote(template_uri, safe="")
-    return f"https://portal.azure.com/#create/Microsoft.Template/uri/{encoded}"
+    url = f"https://portal.azure.com/#create/Microsoft.Template/uri/{encoded}"
+    if parameters_uri:
+        url += f"/uriParameters/{quote(parameters_uri, safe='')}"
+    return url
 
 
 async def _list_customer_subscriptions(credential: Any) -> list[DiscoveredSubscription]:
@@ -1269,11 +1293,57 @@ async def get_onboarding_template(
     principal_id = await _resolve_principal_for_tenant(
         settings, caller_tid=caller_tid, customer_tid=customer_tid,
     )
+    parameters_uri = _build_parameters_uri(
+        settings.public_api_base_url, principal_id,
+    )
     return OnboardingTemplateResponse(
         customer_tenant_id=customer_tid,
         azure_principal_id=principal_id,
         template_uri=template_uri,
-        deploy_url=_build_deploy_url(template_uri, scope),
+        deploy_url=_build_deploy_url(
+            template_uri, scope, parameters_uri=parameters_uri,
+        ),
+        parameters_uri=parameters_uri,
         scope=scope,
+    )
+
+
+@router.get(
+    "/onboarding-parameters/{principal_id}",
+    include_in_schema=False,
+    responses={200: {"content": {"application/json": {}}}},
+)
+async def get_onboarding_parameters(principal_id: str) -> Response:
+    """Return the ARM deployment parameters file for one principal.
+
+    The Azure Portal Deploy-to-Azure blade fetches this URL (anonymously)
+    to pre-populate ``cloudGuardIQPrincipalId`` in the customer-tenant
+    role-assignment template. The endpoint is intentionally unauthenticated
+    so the portal can fetch it; the only data echoed back is the GUID the
+    caller already provides in the path, so no information is leaked.
+    """
+    if not _GUID_RE.match(principal_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="principal_id must be a valid GUID.",
+        )
+    body = {
+        "$schema": (
+            "https://schema.management.azure.com/schemas/"
+            "2019-04-01/deploymentParameters.json#"
+        ),
+        "contentVersion": "1.0.0.0",
+        "parameters": {
+            "cloudGuardIQPrincipalId": {"value": principal_id},
+        },
+    }
+    import json
+    return Response(
+        content=json.dumps(body),
+        media_type="application/json",
+        headers={
+            "Cache-Control": "public, max-age=300",
+            "Access-Control-Allow-Origin": "*",
+        },
     )
 

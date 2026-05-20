@@ -833,6 +833,8 @@ async def generate_onboarding_artifacts_v1(
     azure_artifacts["template_uri"] = template.template_uri
     azure_artifacts["deploy_url"] = template.deploy_url
     azure_artifacts["azure_principal_id"] = template.azure_principal_id
+    if template.parameters_uri:
+        azure_artifacts["parameters_uri"] = template.parameters_uri
     await _append_audit_event(
         user=user,
         action="artifacts_generated",

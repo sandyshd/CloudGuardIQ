@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     # one-click flow (the manual `az role assignment` command still works).
     onboarding_template_uri: str = ""
 
+    # Public, externally-resolvable base URL for the CloudGuardIQ API. When
+    # set, /subscriptions/onboarding-template returns a parameters_uri that
+    # the Azure Portal Deploy-to-Azure blade can fetch to pre-populate the
+    # cloudGuardIQPrincipalId ARM parameter. Leave empty to disable
+    # parameter prefill (the user will type the principal id manually).
+    public_api_base_url: str = ""
+
     # Authentication
     auth_disabled: bool = False
 

@@ -433,3 +433,71 @@ def test_customer_list_claims_legacy_operator_owned_subscription() -> None:
     # Claimed row is now customer-owned so lifecycle operations work.
     r = client.delete(f"/subscriptions/{sid}")
     assert r.status_code == 204
+
+def test_onboarding_parameters_returns_arm_json() -> None:
+    """Anonymous endpoint returns ARM parameters JSON for a valid GUID."""
+    client = TestClient(app)
+    pid = "c237acc3-b7d8-4bb9-ad58-f0343ff8f331"
+    r = client.get(f"/subscriptions/onboarding-parameters/{pid}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["contentVersion"] == "1.0.0.0"
+    assert body["parameters"]["cloudGuardIQPrincipalId"]["value"] == pid
+    assert "deploymentParameters.json" in body["$schema"]
+
+
+def test_onboarding_parameters_rejects_non_guid() -> None:
+    """Endpoint refuses non-GUID input to avoid emitting junk JSON."""
+    client = TestClient(app)
+    r = client.get("/subscriptions/onboarding-parameters/not-a-guid")
+    assert r.status_code == 400
+
+
+def test_onboarding_template_emits_parameters_uri_when_base_url_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When public_api_base_url is configured the deploy_url embeds uriParameters."""
+    from urllib.parse import quote
+
+    client = TestClient(app)
+    _wire()
+
+    raw = "https://raw.githubusercontent.com/sandyshd/CloudGuardIQ/development/infra/templates/cloudguardiq-reader.json"
+    pid = "c237acc3-b7d8-4bb9-ad58-f0343ff8f331"
+
+    settings = Settings()
+    settings.onboarding_template_uri = raw
+    settings.public_api_base_url = "https://api.example.com"
+    settings.azure_principal_id = pid
+    monkeypatch.setattr(subs_module, "_get_settings", lambda: settings)
+
+    r = client.get("/subscriptions/onboarding-template?tenant_id=tenant-A")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    expected_params = f"https://api.example.com/subscriptions/onboarding-parameters/{pid}"
+    assert body["parameters_uri"] == expected_params
+    assert "/uriParameters/" in body["deploy_url"]
+    assert quote(expected_params, safe="") in body["deploy_url"]
+
+
+def test_onboarding_template_omits_parameters_uri_when_base_url_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without public_api_base_url, parameters_uri is empty.
+
+    deploy_url must not include the /uriParameters/ segment.
+    """
+    client = TestClient(app)
+    _wire()
+
+    raw = "https://raw.githubusercontent.com/sandyshd/CloudGuardIQ/development/infra/templates/cloudguardiq-reader.json"
+    settings = Settings()
+    settings.onboarding_template_uri = raw
+    settings.public_api_base_url = ""
+    monkeypatch.setattr(subs_module, "_get_settings", lambda: settings)
+
+    r = client.get("/subscriptions/onboarding-template?tenant_id=tenant-A")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["parameters_uri"] == ""
+    assert "/uriParameters/" not in body["deploy_url"]
