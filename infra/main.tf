@@ -718,7 +718,7 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     # /subscriptions/onboarding-template to emit a parameters_uri the
     # Azure Portal Deploy-to-Azure blade fetches to pre-populate the
     # cloudGuardIQPrincipalId ARM parameter.
-    CLOUDGUARDIQ_PUBLIC_API_BASE_URL   = "https://${azurerm_linux_function_app.cloudguardiq.default_hostname}"
+    CLOUDGUARDIQ_PUBLIC_API_BASE_URL   = "https://${var.prefix}-${var.environment}-func.azurewebsites.net"
     CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS = "10"
     # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID = home-tenant SP object id of the
     # CloudGuardIQ multi-tenant app registration (NOT the function app's MI).
