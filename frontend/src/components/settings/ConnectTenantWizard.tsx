@@ -106,7 +106,17 @@ export function ConnectTenantWizard({ onClose }: ConnectTenantWizardProps) {
 
   const openConsent = () => {
     if (!session?.consent_url) return;
-    window.location.href = session.consent_url;
+    window.open(session.consent_url, "_blank", "noopener,noreferrer");
+  };
+
+  const copyConsentUrl = async () => {
+    if (!session?.consent_url) return;
+    try {
+      await navigator.clipboard.writeText(session.consent_url);
+      setInfo("Consent URL copied. Share it with the customer admin.");
+    } catch {
+      setError("Unable to copy consent URL. Copy it manually from the field.");
+    }
   };
 
   const markReader = async () => {
@@ -214,13 +224,29 @@ export function ConnectTenantWizard({ onClose }: ConnectTenantWizardProps) {
               Discovered: {discoveredCount} | Connected: {session.connected_subscription_ids.length}
             </div>
 
-            <div className="flex flex-wrap gap-2 pt-2">
-              {session.status === "pending_consent" && (
-                <Button onClick={openConsent} disabled={busy}>
-                  Open Admin Consent
-                </Button>
-              )}
+            {session.consent_url && (
+              <div className="space-y-2 rounded border bg-[hsl(var(--muted))]/30 p-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
+                  Admin Consent URL (share with customer admin)
+                </div>
+                <textarea
+                  value={session.consent_url}
+                  readOnly
+                  rows={3}
+                  className="w-full resize-none rounded border bg-white px-2 py-1 font-mono text-xs"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={copyConsentUrl}>
+                    Copy URL
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={openConsent}>
+                    Open Admin Consent
+                  </Button>
+                </div>
+              </div>
+            )}
 
+            <div className="flex flex-wrap gap-2 pt-2">
               {(session.status === "pending_reader" ||
                 session.status === "pending_discovery") && (
                 <Button variant="outline" onClick={markReader} disabled={busy}>
