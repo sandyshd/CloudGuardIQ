@@ -25,7 +25,7 @@ import {
   type OnboardingSessionResponseV1,
 } from "../../api/onboardingV1";
 
-type NoticeKind = "info" | "error";
+type NoticeKind = "info" | "error" | "success";
 
 interface Notice {
   kind: NoticeKind;
@@ -45,6 +45,82 @@ interface ApiError {
     };
   };
   message?: string;
+}
+
+type StepId = 1 | 2 | 3 | 4 | 5;
+
+interface StepDef {
+  id: StepId;
+  title: string;
+  description: string;
+}
+
+const STEPS: ReadonlyArray<StepDef> = [
+  {
+    id: 1,
+    title: "Choose Provider",
+    description: "Pick a cloud and identify the account or tenant to enroll.",
+  },
+  {
+    id: 2,
+    title: "Grant Trust",
+    description: "Generate artifacts and apply them in the provider console.",
+  },
+  {
+    id: 3,
+    title: "Verify",
+    description: "Confirm CloudGuardIQ can authenticate and discover scopes.",
+  },
+  {
+    id: 4,
+    title: "Connect Scopes",
+    description: "Select which subscriptions, accounts, or projects to monitor.",
+  },
+  {
+    id: 5,
+    title: "Done",
+    description: "Connection established. Review or onboard another provider.",
+  },
+];
+
+const PROVIDER_LABELS: Record<CloudProvider, string> = {
+  AZURE: "Microsoft Azure",
+  AWS: "Amazon Web Services",
+  GCP: "Google Cloud Platform",
+};
+
+const URL_ARTIFACT_KEYS = new Set([
+  "deploy_url",
+  "template_uri",
+  "parameters_uri",
+  "consent_url",
+  "cloudformation_template_url",
+]);
+
+const LONG_ARTIFACT_KEYS = new Set([
+  "trust_policy_json",
+  "gcloud_bind_command",
+]);
+
+const ARTIFACT_LABELS: Record<string, string> = {
+  deploy_url: "Deploy to Azure",
+  template_uri: "ARM template URI",
+  parameters_uri: "ARM parameters URI",
+  consent_url: "Tenant consent URL",
+  azure_principal_id: "CloudGuardIQ principal ID",
+  cloudformation_template_url: "CloudFormation Launch Stack URL",
+  aws_account_id: "CloudGuardIQ AWS account",
+  aws_external_id: "External ID (paste into IAM trust policy)",
+  role_name: "IAM role name",
+  trust_policy_json: "IAM role trust policy (JSON)",
+  workload_identity_pool: "Workload Identity Pool",
+  provider_resource_name: "Workload Identity Provider",
+  service_account_email: "Service account to impersonate",
+  gcloud_bind_command: "gcloud command to bind impersonation",
+};
+
+function artifactLabel(key: string): string {
+  return ARTIFACT_LABELS[key] ?? key.replace(/_/g, " ");
 }
 
 function formatApiError(error: unknown, fallback: string): string {
@@ -76,16 +152,236 @@ function isoToLocal(value: string): string {
 }
 
 function statusVariant(status: string): "default" | "secondary" | "destructive" {
-  if (status === "connected" || status === "verified" || status === "active") {
+  if (status === "connected" || status === "verified" || status === "active" || status === "pass") {
     return "default";
   }
-  if (status === "action_required" || status === "failed" || status === "disconnected") {
+  if (status === "action_required" || status === "failed" || status === "disconnected" || status === "fail") {
     return "destructive";
   }
   return "secondary";
 }
 
-export function MultiCloudOnboardingHub() {
+async function copyToClipboard(value: string): Promise<boolean> {
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // fall through
+  }
+  return false;
+}
+
+function Stepper({ current }: { current: StepId }): JSX.Element {
+  return (
+    <ol className="grid gap-2 md:grid-cols-5">
+      {STEPS.map((step) => {
+        const state =
+          step.id < current ? "done" : step.id === current ? "current" : "upcoming";
+        const dotClasses =
+          state === "done"
+            ? "bg-green-600 text-white border-green-600"
+            : state === "current"
+              ? "bg-blue-600 text-white border-blue-600"
+              : "bg-white text-[hsl(var(--muted-foreground))] border-[hsl(var(--border))]";
+        return (
+          <li key={step.id} className="flex items-start gap-2">
+            <div
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${dotClasses}`}
+              aria-current={state === "current" ? "step" : undefined}
+            >
+              {state === "done" ? "✓" : step.id}
+            </div>
+            <div className="min-w-0">
+              <div
+                className={`text-sm font-medium ${
+                  state === "upcoming" ? "text-[hsl(var(--muted-foreground))]" : ""
+                }`}
+              >
+                {step.title}
+              </div>
+              <div className="text-xs text-[hsl(var(--muted-foreground))]">
+                {step.description}
+              </div>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+interface CopyButtonProps {
+  value: string;
+  label?: string;
+}
+
+function CopyButton({ value, label = "Copy" }: CopyButtonProps): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      type="button"
+      onClick={async () => {
+        const ok = await copyToClipboard(value);
+        if (ok) {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }
+      }}
+    >
+      {copied ? "Copied!" : label}
+    </Button>
+  );
+}
+
+function ArtifactRow({ name, value }: { name: string; value: string }): JSX.Element {
+  const isUrl = URL_ARTIFACT_KEYS.has(name) && /^https?:\/\//i.test(value);
+  const isLong = LONG_ARTIFACT_KEYS.has(name) || value.length > 120;
+
+  return (
+    <div className="rounded border bg-white p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-medium">{artifactLabel(name)}</div>
+          <div className="text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
+            {name}
+          </div>
+        </div>
+        <div className="flex gap-2">
+          {isUrl && (
+            <a
+              href={value}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Open
+            </a>
+          )}
+          <CopyButton value={value} />
+        </div>
+      </div>
+      {isLong ? (
+        <textarea
+          value={value}
+          readOnly
+          rows={Math.min(8, Math.max(3, Math.ceil(value.length / 90)))}
+          className="mt-2 w-full resize-y rounded border p-2 font-mono text-xs"
+        />
+      ) : (
+        <div className="mt-2 break-all rounded border bg-[hsl(var(--muted))]/30 p-2 font-mono text-xs">
+          {value}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AzureInstructions({ artifacts }: { artifacts: Record<string, string> }): JSX.Element {
+  const deployUrl = artifacts.deploy_url;
+  return (
+    <ol className="list-decimal space-y-2 pl-5 text-sm">
+      <li>
+        Click <strong>Open</strong> next to <em>Deploy to Azure</em> below. The Azure Portal
+        opens a deployment blade pre-filled with the CloudGuardIQ principal ID.
+      </li>
+      <li>
+        Select the subscription you want to enroll, accept the terms, and click{" "}
+        <strong>Create</strong>. This assigns the <code>Reader</code> role to CloudGuardIQ at
+        the subscription scope.
+      </li>
+      <li>
+        Wait for the Azure deployment to report <strong>Succeeded</strong>, then return here
+        and continue to <strong>Verify</strong>.
+      </li>
+      {!deployUrl && (
+        <li className="text-amber-700">
+          Deploy URL is not available yet. Click <strong>Generate Artifacts</strong> above.
+        </li>
+      )}
+    </ol>
+  );
+}
+
+function AwsInstructions({ artifacts }: { artifacts: Record<string, string> }): JSX.Element {
+  const cfnUrl = artifacts.cloudformation_template_url;
+  return (
+    <ol className="list-decimal space-y-2 pl-5 text-sm">
+      <li>
+        Sign in to the AWS account you are enrolling. Open the{" "}
+        {cfnUrl ? (
+          <a
+            href={cfnUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="font-medium text-blue-700 underline"
+          >
+            CloudFormation Launch Stack
+          </a>
+        ) : (
+          <span className="font-medium">CloudFormation Launch Stack</span>
+        )}{" "}
+        link.
+      </li>
+      <li>
+        On the CloudFormation page, paste the <strong>External ID</strong> from the artifacts
+        below into the stack parameter. The stack creates the IAM role{" "}
+        <code>{artifacts.role_name ?? "CloudGuardIQReadOnlyRole"}</code> with read-only access.
+      </li>
+      <li>
+        If you prefer manual setup, create an IAM role with the trust policy shown below and
+        attach the AWS managed <code>SecurityAudit</code> and <code>ReadOnlyAccess</code>{" "}
+        policies.
+      </li>
+      <li>
+        Once the role exists, return here and continue to <strong>Verify</strong>.
+      </li>
+    </ol>
+  );
+}
+
+function GcpInstructions({ artifacts }: { artifacts: Record<string, string> }): JSX.Element {
+  return (
+    <ol className="list-decimal space-y-2 pl-5 text-sm">
+      <li>
+        Open Google Cloud Shell or a terminal with <code>gcloud</code> authenticated against
+        the project you are enrolling.
+      </li>
+      <li>
+        Run the <strong>gcloud command</strong> shown below. It binds CloudGuardIQ's Workload
+        Identity Pool principal to impersonate the read-only service account{" "}
+        <code>{artifacts.service_account_email ?? "cloudguardiq-reader@…"}</code>.
+      </li>
+      <li>
+        Grant the service account the <code>roles/viewer</code> and{" "}
+        <code>roles/iam.securityReviewer</code> roles on the project (or run the additional
+        commands listed by the generator).
+      </li>
+      <li>
+        Return here and continue to <strong>Verify</strong>.
+      </li>
+    </ol>
+  );
+}
+
+function ProviderInstructions({
+  provider,
+  artifacts,
+}: {
+  provider: CloudProvider;
+  artifacts: Record<string, string>;
+}): JSX.Element {
+  if (provider === "AZURE") return <AzureInstructions artifacts={artifacts} />;
+  if (provider === "AWS") return <AwsInstructions artifacts={artifacts} />;
+  return <GcpInstructions artifacts={artifacts} />;
+}
+
+export function MultiCloudOnboardingHub(): JSX.Element {
+  const [step, setStep] = useState<StepId>(1);
+
   const [provider, setProvider] = useState<CloudProvider>("AZURE");
   const [displayName, setDisplayName] = useState("");
   const [tenantId, setTenantId] = useState("");
@@ -132,6 +428,17 @@ export function MultiCloudOnboardingHub() {
     }
   }
 
+  function resetWizard(): void {
+    setStep(1);
+    setSession(null);
+    setSelectedScopeIds([]);
+    setDisplayName("");
+    setTenantId("");
+    setAccountId("");
+    setProjectId("");
+    setNotice(null);
+  }
+
   async function startSession(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setNotice(null);
@@ -151,9 +458,10 @@ export function MultiCloudOnboardingHub() {
         target_scope: targetScope,
       });
       setSession(created);
+      setStep(2);
       setNotice({
-        kind: "info",
-        message: "Onboarding session created. Continue with artifacts, verify, and connect.",
+        kind: "success",
+        message: "Session created. Generate the artifacts and apply them in your provider.",
       });
     } catch (error) {
       setNotice({
@@ -194,8 +502,9 @@ export function MultiCloudOnboardingHub() {
       const updated = await generateOnboardingArtifactsV1(session.session_id);
       setSession(updated);
       setNotice({
-        kind: "info",
-        message: "Artifacts generated. Apply trust and permission steps in your provider.",
+        kind: "success",
+        message:
+          "Artifacts generated. Follow the steps below in your provider console, then continue to Verify.",
       });
     } catch (error) {
       setNotice({
@@ -216,10 +525,26 @@ export function MultiCloudOnboardingHub() {
     try {
       const updated = await verifyOnboardingSessionV1(session.session_id);
       setSession(updated);
-      setNotice({
-        kind: "info",
-        message: "Verification completed. Select scopes to connect.",
-      });
+      const allPassed = updated.verification_checks.every((c) => c.status === "pass");
+      if (allPassed && updated.discovered_scopes.length > 0) {
+        setStep(4);
+        setNotice({
+          kind: "success",
+          message: "Verification passed. Select the scopes you want CloudGuardIQ to monitor.",
+        });
+      } else if (allPassed) {
+        setNotice({
+          kind: "info",
+          message:
+            "Verification passed but no scopes were discovered yet. Check your trust setup and re-run Verify.",
+        });
+      } else {
+        setNotice({
+          kind: "error",
+          message:
+            "One or more verification checks failed. Re-check the trust setup steps above, then re-run Verify.",
+        });
+      }
     } catch (error) {
       setNotice({
         kind: "error",
@@ -235,14 +560,11 @@ export function MultiCloudOnboardingHub() {
       return;
     }
 
-    const scopeIds = selectedScopeIds.length > 0
-      ? selectedScopeIds
-      : discoveredScopeIds;
-
+    const scopeIds = selectedScopeIds.length > 0 ? selectedScopeIds : discoveredScopeIds;
     if (scopeIds.length === 0) {
       setNotice({
         kind: "error",
-        message: "No scopes selected. Run verify first and choose at least one scope.",
+        message: "No scopes selected. Run Verify first and choose at least one scope.",
       });
       return;
     }
@@ -252,9 +574,10 @@ export function MultiCloudOnboardingHub() {
     try {
       const updated = await connectOnboardingSessionV1(session.session_id, scopeIds);
       setSession(updated);
+      setStep(5);
       setNotice({
-        kind: "info",
-        message: `Connected successfully with connection ID ${updated.connection_id}.`,
+        kind: "success",
+        message: `Connected. Connection ID: ${updated.connection_id}.`,
       });
       await loadConnections();
     } catch (error) {
@@ -273,10 +596,7 @@ export function MultiCloudOnboardingHub() {
     try {
       await refreshCloudConnectionV1(connectionId);
       await loadConnections();
-      setNotice({
-        kind: "info",
-        message: "Connection refresh completed.",
-      });
+      setNotice({ kind: "info", message: "Connection refresh completed." });
     } catch (error) {
       setNotice({
         kind: "error",
@@ -294,16 +614,12 @@ export function MultiCloudOnboardingHub() {
     if (!confirmed) {
       return;
     }
-
     setBusyAction(`connection-delete-${connectionId}`);
     setNotice(null);
     try {
       await disconnectCloudConnectionV1(connectionId);
       await loadConnections();
-      setNotice({
-        kind: "info",
-        message: "Cloud connection disconnected.",
-      });
+      setNotice({ kind: "info", message: "Cloud connection disconnected." });
     } catch (error) {
       setNotice({
         kind: "error",
@@ -322,7 +638,12 @@ export function MultiCloudOnboardingHub() {
     );
   }
 
-  const isCreating = busyAction === "create";
+  const hasArtifacts = !!session && Object.keys(session.artifacts).length > 0;
+  const hasVerification = !!session && session.verification_checks.length > 0;
+  const hasScopes = !!session && session.discovered_scopes.length > 0;
+
+  const noticeVariant: "default" | "destructive" =
+    notice?.kind === "error" ? "destructive" : "default";
 
   return (
     <div className="space-y-6">
@@ -330,208 +651,354 @@ export function MultiCloudOnboardingHub() {
         <CardHeader>
           <CardTitle className="text-lg">Multi-Cloud Onboarding</CardTitle>
           <CardDescription>
-            Create a provider onboarding session, generate artifacts, verify trust and permissions, then connect discovered scopes.
+            Enroll a cloud account in five guided steps. Works the same way for Azure, AWS, and
+            GCP.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-6">
+          <Stepper current={step} />
+
           {notice && (
-            <Alert variant={notice.kind === "error" ? "destructive" : "default"}>
+            <Alert variant={noticeVariant}>
               <AlertDescription>{notice.message}</AlertDescription>
             </Alert>
           )}
 
-          <form className="grid gap-3 md:grid-cols-2" onSubmit={startSession}>
-            <div className="space-y-1">
-              <label className="text-sm font-medium" htmlFor="provider-select">
-                Provider
-              </label>
-              <select
-                id="provider-select"
-                className="h-10 w-full rounded border px-2 text-sm"
-                value={provider}
-                onChange={(event) => setProvider(event.target.value as CloudProvider)}
-              >
-                <option value="AZURE">Azure</option>
-                <option value="AWS">AWS</option>
-                <option value="GCP">GCP</option>
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium" htmlFor="display-name">
-                Display Name
-              </label>
-              <input
-                id="display-name"
-                className="h-10 w-full rounded border px-2 text-sm"
-                placeholder="Contoso Production"
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-              />
-            </div>
-
-            {provider === "AZURE" && (
-              <div className="space-y-1 md:col-span-2">
-                <label className="text-sm font-medium" htmlFor="tenant-id">
-                  Customer Tenant ID
-                </label>
-                <input
-                  id="tenant-id"
-                  className="h-10 w-full rounded border px-2 font-mono text-sm"
-                  placeholder="11111111-2222-3333-4444-555555555555"
-                  value={tenantId}
-                  onChange={(event) => setTenantId(event.target.value)}
-                  required
-                />
+          {step === 1 && (
+            <section className="space-y-4">
+              <div className="rounded border bg-[hsl(var(--muted))]/30 p-3 text-sm">
+                <p>
+                  Choose the cloud provider you want to onboard and identify the account.
+                  CloudGuardIQ never receives long-lived credentials — trust is granted by you
+                  in the provider console in the next step.
+                </p>
               </div>
-            )}
+              <form className="grid gap-3 md:grid-cols-2" onSubmit={startSession}>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium" htmlFor="provider-select">
+                    Provider
+                  </label>
+                  <select
+                    id="provider-select"
+                    className="h-10 w-full rounded border px-2 text-sm"
+                    value={provider}
+                    onChange={(event) =>
+                      setProvider(event.target.value as CloudProvider)
+                    }
+                  >
+                    <option value="AZURE">Microsoft Azure</option>
+                    <option value="AWS">Amazon Web Services</option>
+                    <option value="GCP">Google Cloud Platform</option>
+                  </select>
+                </div>
 
-            {provider === "AWS" && (
-              <div className="space-y-1 md:col-span-2">
-                <label className="text-sm font-medium" htmlFor="account-id">
-                  AWS Account ID
-                </label>
-                <input
-                  id="account-id"
-                  className="h-10 w-full rounded border px-2 font-mono text-sm"
-                  placeholder="123456789012"
-                  value={accountId}
-                  onChange={(event) => setAccountId(event.target.value)}
-                  required
-                />
-              </div>
-            )}
+                <div className="space-y-1">
+                  <label className="text-sm font-medium" htmlFor="display-name">
+                    Display name
+                  </label>
+                  <input
+                    id="display-name"
+                    className="h-10 w-full rounded border px-2 text-sm"
+                    placeholder="Contoso Production"
+                    value={displayName}
+                    onChange={(event) => setDisplayName(event.target.value)}
+                  />
+                </div>
 
-            {provider === "GCP" && (
-              <div className="space-y-1 md:col-span-2">
-                <label className="text-sm font-medium" htmlFor="project-id">
-                  GCP Project ID
-                </label>
-                <input
-                  id="project-id"
-                  className="h-10 w-full rounded border px-2 font-mono text-sm"
-                  placeholder="my-prod-project"
-                  value={projectId}
-                  onChange={(event) => setProjectId(event.target.value)}
-                  required
-                />
-              </div>
-            )}
+                {provider === "AZURE" && (
+                  <div className="space-y-1 md:col-span-2">
+                    <label className="text-sm font-medium" htmlFor="tenant-id">
+                      Customer tenant ID
+                    </label>
+                    <input
+                      id="tenant-id"
+                      className="h-10 w-full rounded border px-2 font-mono text-sm"
+                      placeholder="11111111-2222-3333-4444-555555555555"
+                      value={tenantId}
+                      onChange={(event) => setTenantId(event.target.value)}
+                      required
+                    />
+                    <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                      Find this in Azure Portal → Microsoft Entra ID → Overview.
+                    </p>
+                  </div>
+                )}
 
-            <div className="md:col-span-2 flex justify-end">
-              <Button type="submit" disabled={isCreating}>
-                {isCreating ? "Creating..." : "Create Session"}
-              </Button>
-            </div>
-          </form>
+                {provider === "AWS" && (
+                  <div className="space-y-1 md:col-span-2">
+                    <label className="text-sm font-medium" htmlFor="account-id">
+                      AWS account ID
+                    </label>
+                    <input
+                      id="account-id"
+                      className="h-10 w-full rounded border px-2 font-mono text-sm"
+                      placeholder="123456789012"
+                      value={accountId}
+                      onChange={(event) => setAccountId(event.target.value)}
+                      required
+                    />
+                    <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                      12-digit account number from AWS Console → My Account.
+                    </p>
+                  </div>
+                )}
 
-          {session && (
-            <div className="space-y-4 rounded border p-4">
+                {provider === "GCP" && (
+                  <div className="space-y-1 md:col-span-2">
+                    <label className="text-sm font-medium" htmlFor="project-id">
+                      GCP project ID
+                    </label>
+                    <input
+                      id="project-id"
+                      className="h-10 w-full rounded border px-2 font-mono text-sm"
+                      placeholder="my-prod-project"
+                      value={projectId}
+                      onChange={(event) => setProjectId(event.target.value)}
+                      required
+                    />
+                    <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                      Project ID (not project number) from Google Cloud Console.
+                    </p>
+                  </div>
+                )}
+
+                <div className="md:col-span-2 flex justify-end">
+                  <Button type="submit" disabled={busyAction === "create"}>
+                    {busyAction === "create" ? "Creating..." : "Create session & continue"}
+                  </Button>
+                </div>
+              </form>
+            </section>
+          )}
+
+          {step >= 2 && session && (
+            <section className="space-y-3 rounded border bg-white p-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">Session</span>
+                <Badge variant="outline">{PROVIDER_LABELS[session.provider]}</Badge>
+                <span className="font-medium">{displayName || "(no name)"}</span>
+                <span className="text-[hsl(var(--muted-foreground))]">·</span>
+                <span className="text-[hsl(var(--muted-foreground))]">Session</span>
                 <span className="font-mono text-xs">{session.session_id}</span>
                 <Badge variant={statusVariant(session.status)}>{session.status}</Badge>
-                {session.connection_id && (
-                  <Badge variant="secondary">connection: {session.connection_id}</Badge>
-                )}
+                <div className="ml-auto">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void refreshSession()}
+                    disabled={busyAction.length > 0}
+                  >
+                    Refresh
+                  </Button>
+                </div>
               </div>
+            </section>
+          )}
+
+          {step === 2 && session && (
+            <section className="space-y-4">
+              <h3 className="text-base font-semibold">
+                Step 2 — Grant trust in {PROVIDER_LABELS[session.provider]}
+              </h3>
+              {!hasArtifacts && (
+                <Alert>
+                  <AlertDescription>
+                    Click <strong>Generate Artifacts</strong> to produce the provider-specific
+                    instructions and links for this session.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               <div className="flex flex-wrap gap-2">
                 <Button
-                  variant="outline"
                   onClick={() => void generateArtifacts()}
                   disabled={busyAction.length > 0}
                 >
-                  Generate Artifacts
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void verifySession()}
-                  disabled={busyAction.length > 0}
-                >
-                  Verify
-                </Button>
-                <Button
-                  onClick={() => void connectScopes()}
-                  disabled={busyAction.length > 0 || discoveredScopeIds.length === 0}
-                >
-                  Connect Selected Scopes
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => void refreshSession()}
-                  disabled={busyAction.length > 0}
-                >
-                  Refresh Session
+                  {busyAction === "artifacts"
+                    ? "Generating..."
+                    : hasArtifacts
+                      ? "Regenerate Artifacts"
+                      : "Generate Artifacts"}
                 </Button>
               </div>
 
-              {Object.keys(session.artifacts).length > 0 && (
-                <div className="space-y-2 rounded border bg-[hsl(var(--muted))]/30 p-3">
-                  <div className="text-sm font-medium">Artifact Instructions</div>
+              {hasArtifacts && (
+                <>
+                  <div className="rounded border border-blue-200 bg-blue-50 p-3">
+                    <div className="text-sm font-semibold text-blue-900">
+                      Apply these steps in {PROVIDER_LABELS[session.provider]}
+                    </div>
+                    <div className="mt-2 text-blue-900">
+                      <ProviderInstructions
+                        provider={session.provider}
+                        artifacts={session.artifacts}
+                      />
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
-                    {Object.entries(session.artifacts).map(([key, value]) => (
-                      <div key={key} className="rounded border bg-white p-2">
-                        <div className="text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
-                          {key}
+                    <div className="text-sm font-medium">Artifacts</div>
+                    <div className="grid gap-2">
+                      {Object.entries(session.artifacts).map(([key, value]) => (
+                        <ArtifactRow key={key} name={key} value={value} />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between">
+                    <Button variant="ghost" onClick={() => setStep(1)}>
+                      Back
+                    </Button>
+                    <Button onClick={() => setStep(3)}>
+                      I've applied the trust — continue to Verify
+                    </Button>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+
+          {step === 3 && session && (
+            <section className="space-y-4">
+              <h3 className="text-base font-semibold">Step 3 — Verify access</h3>
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                CloudGuardIQ will authenticate to {PROVIDER_LABELS[session.provider]} and run
+                three checks: token exchange, permission probe, and scope discovery.
+              </p>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() => void verifySession()}
+                  disabled={busyAction.length > 0}
+                >
+                  {busyAction === "verify" ? "Verifying..." : "Run Verification"}
+                </Button>
+              </div>
+
+              {hasVerification && (
+                <div className="grid gap-2 md:grid-cols-3">
+                  {session.verification_checks.map((check) => (
+                    <div key={check.check} className="rounded border bg-white p-3">
+                      <div className="text-sm font-medium">
+                        {check.check.replace(/_/g, " ")}
+                      </div>
+                      <Badge
+                        variant={statusVariant(check.status)}
+                        className="mt-2"
+                      >
+                        {check.status}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex justify-between">
+                <Button variant="ghost" onClick={() => setStep(2)}>
+                  Back to Trust Setup
+                </Button>
+                <Button
+                  onClick={() => setStep(4)}
+                  disabled={!hasScopes}
+                >
+                  Continue to Connect Scopes
+                </Button>
+              </div>
+            </section>
+          )}
+
+          {step === 4 && session && (
+            <section className="space-y-4">
+              <h3 className="text-base font-semibold">Step 4 — Connect scopes</h3>
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                Select which {session.provider === "AZURE"
+                  ? "subscriptions"
+                  : session.provider === "AWS"
+                    ? "accounts"
+                    : "projects"}{" "}
+                CloudGuardIQ should monitor. You can change this later in the Linked
+                Subscriptions list.
+              </p>
+
+              {hasScopes ? (
+                <div className="space-y-2 rounded border p-3">
+                  {session.discovered_scopes.map((scope) => (
+                    <label
+                      key={scope.id}
+                      className="flex cursor-pointer items-center justify-between rounded border p-2"
+                    >
+                      <div>
+                        <div className="text-sm font-medium">
+                          {scope.display_name || scope.id}
                         </div>
-                        <textarea
-                          value={value}
-                          readOnly
-                          rows={Math.min(6, Math.max(2, Math.ceil(value.length / 90)))}
-                          className="mt-1 w-full resize-y rounded border p-2 font-mono text-xs"
+                        <div className="font-mono text-xs text-[hsl(var(--muted-foreground))]">
+                          {scope.id}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">{scope.kind}</Badge>
+                        <input
+                          type="checkbox"
+                          checked={selectedScopeIds.includes(scope.id)}
+                          onChange={() => toggleScope(scope.id)}
                         />
                       </div>
-                    ))}
-                  </div>
+                    </label>
+                  ))}
                 </div>
+              ) : (
+                <Alert>
+                  <AlertDescription>
+                    No scopes were discovered yet. Go back to Verify and re-run after trust is
+                    applied.
+                  </AlertDescription>
+                </Alert>
               )}
 
-              {session.verification_checks.length > 0 && (
-                <div className="space-y-2 rounded border p-3">
-                  <div className="text-sm font-medium">Verification Checks</div>
-                  <div className="grid gap-2 md:grid-cols-3">
-                    {session.verification_checks.map((check) => (
-                      <div key={check.check} className="rounded border p-2 text-sm">
-                        <div className="font-medium">{check.check}</div>
-                        <Badge variant={statusVariant(check.status)} className="mt-1">
-                          {check.status}
-                        </Badge>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <div className="flex justify-between">
+                <Button variant="ghost" onClick={() => setStep(3)}>
+                  Back to Verify
+                </Button>
+                <Button
+                  onClick={() => void connectScopes()}
+                  disabled={
+                    busyAction.length > 0 ||
+                    !hasScopes ||
+                    selectedScopeIds.length === 0
+                  }
+                >
+                  {busyAction === "connect"
+                    ? "Connecting..."
+                    : `Connect ${selectedScopeIds.length || ""} scope${selectedScopeIds.length === 1 ? "" : "s"}`}
+                </Button>
+              </div>
+            </section>
+          )}
 
-              {session.discovered_scopes.length > 0 && (
-                <div className="space-y-2 rounded border p-3">
-                  <div className="text-sm font-medium">Discovered Scopes</div>
-                  <div className="space-y-2">
-                    {session.discovered_scopes.map((scope) => (
-                      <label
-                        key={scope.id}
-                        className="flex cursor-pointer items-center justify-between rounded border p-2"
-                      >
-                        <div>
-                          <div className="text-sm font-medium">{scope.display_name || scope.id}</div>
-                          <div className="font-mono text-xs text-[hsl(var(--muted-foreground))]">
-                            {scope.id}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline">{scope.kind}</Badge>
-                          <input
-                            type="checkbox"
-                            checked={selectedScopeIds.includes(scope.id)}
-                            onChange={() => toggleScope(scope.id)}
-                          />
-                        </div>
-                      </label>
-                    ))}
-                  </div>
+          {step === 5 && session && (
+            <section className="space-y-4">
+              <h3 className="text-base font-semibold">Step 5 — Done</h3>
+              <Alert>
+                <AlertDescription>
+                  {PROVIDER_LABELS[session.provider]} is now connected. CloudGuardIQ will
+                  start scanning on the next cycle. You can manage this connection below.
+                </AlertDescription>
+              </Alert>
+              <div className="rounded border bg-white p-3 text-sm">
+                <div>
+                  <span className="text-[hsl(var(--muted-foreground))]">Connection ID:</span>{" "}
+                  <span className="font-mono">{session.connection_id ?? "(pending)"}</span>
                 </div>
-              )}
-            </div>
+                <div>
+                  <span className="text-[hsl(var(--muted-foreground))]">Scopes connected:</span>{" "}
+                  {selectedScopeIds.length}
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={resetWizard}>
+                  Onboard another provider
+                </Button>
+              </div>
+            </section>
           )}
         </CardContent>
       </Card>
@@ -575,7 +1042,9 @@ export function MultiCloudOnboardingHub() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={statusVariant(connection.status)}>{connection.status}</Badge>
+                    <Badge variant={statusVariant(connection.status)}>
+                      {connection.status}
+                    </Badge>
                   </TableCell>
                   <TableCell>{connection.linked_scopes.length}</TableCell>
                   <TableCell>{isoToLocal(connection.last_verified_at)}</TableCell>
@@ -585,7 +1054,9 @@ export function MultiCloudOnboardingHub() {
                         size="sm"
                         variant="outline"
                         onClick={() => void refreshConnection(connection.connection_id)}
-                        disabled={busyAction === `connection-refresh-${connection.connection_id}`}
+                        disabled={
+                          busyAction === `connection-refresh-${connection.connection_id}`
+                        }
                       >
                         Refresh
                       </Button>
@@ -593,7 +1064,9 @@ export function MultiCloudOnboardingHub() {
                         size="sm"
                         variant="destructive"
                         onClick={() => void disconnectConnection(connection.connection_id)}
-                        disabled={busyAction === `connection-delete-${connection.connection_id}`}
+                        disabled={
+                          busyAction === `connection-delete-${connection.connection_id}`
+                        }
                       >
                         Disconnect
                       </Button>
