@@ -104,14 +104,36 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Deploy to Container App
+        # Wrap ARM-touching commands in a retry: Azure Resource Manager
+        # occasionally throttles (HTTP 429) when infra apply + deploy run
+        # back-to-back. Five attempts with exponential backoff (2s -> 32s)
+        # absorb transient throttling without masking real failures.
         run: |
-          az containerapp registry set \
+          set -euo pipefail
+          retry() {
+            local n=1 max=5 delay=2
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if [ $n -ge $max ]; then
+                echo "::error::Command failed after $n attempts: $*"
+                return 1
+              fi
+              echo "::warning::Attempt $n/$max failed; retrying in ${delay}s..."
+              sleep $delay
+              n=$((n + 1))
+              delay=$((delay * 2))
+            done
+          }
+
+          retry az containerapp registry set \
             --name ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-api \
             --resource-group ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-rg \
             --server ${{ env.ACR_NAME }}.azurecr.io \
             --identity system
 
-          az containerapp update \
+          retry az containerapp update \
             --name ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-api \
             --resource-group ${{ env.PREFIX }}-${{ github.event.inputs.environment }}-rg \
             --image ${{ env.ACR_NAME }}.azurecr.io/cloudguardiq:${{ github.sha }}

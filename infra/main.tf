@@ -72,7 +72,13 @@ resource "azuread_application" "cloudguardiq" {
   sign_in_audience = "AzureADMultipleOrgs"
 
   web {
-    redirect_uris = var.environment == "dev" ? [] : []
+    # Phase 3.3: Azure AD redirects the customer admin here after
+    # they grant tenant-wide admin consent. The path is consumed by
+    # GET /subscriptions/consent-callback in the FastAPI backend.
+    redirect_uris = concat(
+      ["https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"],
+      var.consent_redirect_uris,
+    )
 
     implicit_grant {
       access_token_issuance_enabled = false
@@ -94,6 +100,21 @@ resource "azuread_application" "cloudguardiq" {
     resource_access {
       id   = "41094075-9dad-400e-a0bd-54e686782033" # user_impersonation
       type = "Scope"
+    }
+  }
+
+  required_resource_access {
+    # Microsoft Graph -- application permission used by the onboarding
+    # wizard to resolve the customer-tenant SP object id via
+    # GET /v1.0/servicePrincipals(appId='<cgiq-client-id>'). Required so
+    # the wizard can surface the correct principal id per tenant.
+    # Permission id reference:
+    # https://learn.microsoft.com/graph/permissions-reference#applicationreadall
+    resource_app_id = "00000003-0000-0000-c000-000000000000" # Microsoft Graph
+
+    resource_access {
+      id   = "9a5d68dd-52b0-4cc2-bd40-abcf44ac3a30" # Application.Read.All (Application)
+      type = "Role"
     }
   }
 
@@ -199,6 +220,25 @@ resource "azurerm_cosmosdb_sql_container" "subscriptions" {
   account_name        = azurerm_cosmosdb_account.cloudguardiq.name
   database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
   partition_key_paths = ["/tenant_id"]
+}
+
+resource "azurerm_cosmosdb_sql_container" "tenant_consents" {
+  # Phase 3.3: one document per customer Entra tenant whose admin
+  # has granted consent to the multi-tenant CloudGuardIQ app.
+  name                = "tenant_consents"
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
+  partition_key_paths = ["/customer_tenant_id"]
+}
+
+resource "azurerm_cosmosdb_sql_container" "onboarding_sessions" {
+  # Phase 4.0: session-based onboarding workflow state.
+  name                = "onboarding_sessions"
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
+  partition_key_paths = ["/operator_tenant_id"]
 }
 
 # ==========================================================================
@@ -486,14 +526,48 @@ resource "azurerm_container_app" "api" {
         value = azurerm_cosmosdb_sql_container.subscriptions.name
       }
       env {
+        name  = "CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS"
+        value = azurerm_cosmosdb_sql_container.tenant_consents.name
+      }
+      env {
+        name  = "CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS"
+        value = azurerm_cosmosdb_sql_container.onboarding_sessions.name
+      }
+      env {
+        name  = "CLOUDGUARDIQ_AZURE_CLIENT_SECRET"
+        value = azuread_application_password.cloudguardiq.value
+      }
+      env {
+        name  = "CLOUDGUARDIQ_CONSENT_REDIRECT_URI"
+        value = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
+      }
+      env {
+        name  = "CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI"
+        value = var.onboarding_template_uri
+      }
+      env {
+        # Public base URL of this container app. Used by
+        # /subscriptions/onboarding-template to emit a parameters_uri the
+        # Azure Portal Deploy-to-Azure blade fetches to pre-populate the
+        # cloudGuardIQPrincipalId ARM parameter.
+        name  = "CLOUDGUARDIQ_PUBLIC_API_BASE_URL"
+        value = "https://${var.prefix}-${var.environment}-api.${azurerm_container_app_environment.cloudguardiq.default_domain}"
+      }
+      env {
         name  = "CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS"
         value = "10"
       }
-      # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID is intentionally NOT injected here:
-      # referencing the container app's own identity from inside its own
-      # block creates a self-referential dependency cycle. The app
-      # discovers its principal id at runtime via cloudguardiq.core.
-      # identity_resolver (oid claim of an MSI token).
+      # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID is the home-tenant service-principal
+      # object id of the CloudGuardIQ multi-tenant app registration. This is
+      # the value the onboarding wizard surfaces so customers can grant it
+      # Reader on their subscriptions. It is a different directory object
+      # from the Container App's managed identity (which is used for backend
+      # -> Azure service auth like Cosmos and OpenAI) so there is no
+      # self-reference / dependency cycle here.
+      env {
+        name  = "CLOUDGUARDIQ_AZURE_PRINCIPAL_ID"
+        value = azuread_service_principal.cloudguardiq.object_id
+      }
       env {
         name  = "CLOUDGUARDIQ_STRIPE_PRICE_FREE"
         value = var.stripe_price_free
@@ -641,12 +715,17 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_AZURE_CLIENT_ID = azuread_application.cloudguardiq.client_id
 
     # Billing
-    CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING       = azurerm_cosmosdb_sql_container.billing.name
-    CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS = azurerm_cosmosdb_sql_container.subscriptions.name
-    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS          = "10"
-    # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID intentionally omitted: referencing
-    # the function app's own identity here is a self-reference. Resolved
-    # at runtime by cloudguardiq.core.identity_resolver.
+    CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING             = azurerm_cosmosdb_sql_container.billing.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS       = azurerm_cosmosdb_sql_container.subscriptions.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS     = azurerm_cosmosdb_sql_container.tenant_consents.name
+    CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS = azurerm_cosmosdb_sql_container.onboarding_sessions.name
+    CLOUDGUARDIQ_AZURE_CLIENT_SECRET                  = azuread_application_password.cloudguardiq.value
+    CLOUDGUARDIQ_CONSENT_REDIRECT_URI                 = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
+    CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI              = var.onboarding_template_uri
+    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS                = "10"
+    # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID = home-tenant SP object id of the
+    # CloudGuardIQ multi-tenant app registration (NOT the function app's MI).
+    CLOUDGUARDIQ_AZURE_PRINCIPAL_ID      = azuread_service_principal.cloudguardiq.object_id
     CLOUDGUARDIQ_STRIPE_PRICE_FREE       = var.stripe_price_free
     CLOUDGUARDIQ_STRIPE_PRICE_PRO        = var.stripe_price_pro
     CLOUDGUARDIQ_STRIPE_PRICE_ENTERPRISE = var.stripe_price_enterprise
@@ -728,5 +807,6 @@ locals {
     managed_by  = "terraform"
   }
 }
+
 
 

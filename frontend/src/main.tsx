@@ -6,6 +6,30 @@ import { msalConfig } from "./auth/msalConfig";
 import App from "./App";
 import "./index.css";
 
+// Capture the Entra ID admin-consent redirect query params BEFORE MSAL
+// initialises. MSAL's login redirect dance rewrites window.location, which
+// strips these params and breaks the consent-callback round-trip when the
+// returning user is not yet authenticated to the SWA. We persist them in
+// sessionStorage so Settings.tsx can read them after MSAL settles.
+export const PENDING_CONSENT_CALLBACK_KEY = "cguardiq.pendingConsentCallback";
+(function capturePendingConsentCallback(): void {
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("consent") !== "callback") return;
+    const payload = {
+      tenant: url.searchParams.get("tenant") ?? "",
+      admin_consent: url.searchParams.get("admin_consent") ?? "",
+      error: url.searchParams.get("error") ?? "",
+      error_description: url.searchParams.get("error_description") ?? "",
+      state: url.searchParams.get("state") ?? "",
+      capturedAt: new Date().toISOString(),
+    };
+    sessionStorage.setItem(PENDING_CONSENT_CALLBACK_KEY, JSON.stringify(payload));
+  } catch {
+    /* sessionStorage unavailable or URL parse failure -- nothing to do. */
+  }
+})();
+
 export const msalInstance = new PublicClientApplication(msalConfig);
 
 async function startApp() {
@@ -47,3 +71,4 @@ async function startApp() {
 }
 
 startApp();
+

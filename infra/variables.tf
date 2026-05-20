@@ -93,3 +93,15 @@ variable "stripe_webhook_secret" {
   default     = ""
   sensitive   = true
 }
+
+variable "consent_redirect_uris" {
+  description = "Additional Reply URLs for the Azure AD admin-consent callback (e.g. localhost for dev)."
+  type        = list(string)
+  default     = ["http://localhost:3000/settings?consent=callback"]
+}
+
+variable "onboarding_template_uri" {
+  description = "Public HTTPS URL hosting infra/templates/cloudguardiq-reader.json. Used to build the Azure Portal Deploy-to-Azure link in the simpler one-click onboarding flow. Empty disables the button (falls back to az CLI command)."
+  type        = string
+  default     = ""
+}

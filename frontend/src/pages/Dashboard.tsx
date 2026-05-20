@@ -6,6 +6,7 @@ import { ActivityFeed } from "../components/dashboard/ActivityFeed";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { EmptyState } from "../components/common/EmptyState";
+import { Alert, AlertDescription } from "../components/ui/alert";
 import { DefenderAutoBadge } from "../components/common/DefenderAutoBadge";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
@@ -61,7 +62,17 @@ export function Dashboard() {
       await triggerScan({ subscription_id: subId, include_cost: true });
       await refresh();
     } catch (err) {
-      setScanError(err instanceof Error ? err.message : "Scan failed");
+      const statusCode = (
+        err as { response?: { status?: number } }
+      )?.response?.status;
+
+      if (statusCode === 429) {
+        setScanError(
+          "Scan is cooling down for your plan. Free: once every 24 hours, Starter: once per hour, Enterprise: every 15 minutes. Please try again after the cooldown.",
+        );
+      } else {
+        setScanError(err instanceof Error ? err.message : "Scan failed");
+      }
     } finally {
       setScanning(false);
       scanInFlight.current = false;
@@ -111,7 +122,9 @@ export function Dashboard() {
           primaryDisabled={scanning}
           secondary={
             scanError ? (
-              <p className="text-sm text-red-600">{scanError}</p>
+              <Alert className="mx-auto mt-2 max-w-3xl border-amber-300 bg-amber-50 text-amber-900">
+                <AlertDescription className="text-sm font-medium">{scanError}</AlertDescription>
+              </Alert>
             ) : null
           }
         />
@@ -193,5 +206,3 @@ export function Dashboard() {
     </div>
   );
 }
-
-

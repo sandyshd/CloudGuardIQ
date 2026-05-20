@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         """Parse cors_origins as JSON array or comma-separated string."""
+
         v = self.cors_origins.strip()
         if v.startswith("["):
             return _json.loads(v)
@@ -41,6 +42,11 @@ class Settings(BaseSettings):
     cosmos_container_system: str = "system"
     cosmos_container_billing: str = "billing"
     cosmos_container_subscriptions: str = "subscriptions"
+    cosmos_container_tenant_consents: str = "tenant_consents"
+    cosmos_container_onboarding_sessions: str = "onboarding_sessions"
+    cosmos_container_cloud_connections: str = "cloud_connections"
+    cosmos_container_credential_refs: str = "credential_refs"
+    cosmos_container_audit_events: str = "audit_events"
 
     # Azure OpenAI
     azure_openai_endpoint: str = ""
@@ -49,6 +55,29 @@ class Settings(BaseSettings):
     # Azure AD
     azure_tenant_id: str = ""
     azure_client_id: str = ""
+    # Cross-tenant credentials (Phase 3.2). Either supply a certificate
+    # (preferred) via ``azure_certificate_path`` *or* fall back to the
+    # client secret already provisioned by Phase 2 Terraform.
+    azure_certificate_path: str = ""
+    azure_client_secret: str = ""
+
+    # Frontend redirect URI used by the admin-consent flow. The customer
+    # admin is bounced back here after granting consent so we can record
+    # the tenant and complete the cross-tenant onboarding handshake.
+    consent_redirect_uri: str = "http://localhost:3000/settings?consent=callback"
+
+    # Public HTTPS URL hosting the CloudGuardIQ Reader ARM template. Used
+    # to build the Azure Portal "Deploy to Azure" link returned by
+    # GET /subscriptions/onboarding-template. Empty string disables the
+    # one-click flow (the manual `az role assignment` command still works).
+    onboarding_template_uri: str = ""
+
+    # Public, externally-resolvable base URL for the CloudGuardIQ API. When
+    # set, /subscriptions/onboarding-template returns a parameters_uri that
+    # the Azure Portal Deploy-to-Azure blade can fetch to pre-populate the
+    # cloudGuardIQPrincipalId ARM parameter. Leave empty to disable
+    # parameter prefill (the user will type the principal id manually).
+    public_api_base_url: str = ""
 
     # Authentication
     auth_disabled: bool = False
@@ -86,4 +115,5 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Return a cached Settings instance."""
+
     return Settings()

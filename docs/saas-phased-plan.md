@@ -303,6 +303,8 @@ Entra tenant.
 **Exit criteria:** a customer in tenant B can self-onboard, consent, assign
 Reader, and start getting findings within 15 minutes.
 
+**Status:** ✓ Implemented. Multi-tenant app registration (already in Phase 1 TF), `CustomerCredentialFactory`, `TenantConsentRepository` (`tenant_consents` Cosmos container), `/subscriptions/consent-url` & `/subscriptions/consent-callback` endpoints, `customer_tenant_id` on `SubscriptionRecord`, multi-tenant JWT validation, cross-tenant probe in `POST /subscriptions`, and per-customer-tenant credential in `function_app.scan_trigger` (with auto-disable on 401/403). All 483 tests pass; ruff clean. Pre-existing two event-loop tests in `tests/policy/test_engine.py` remain out of scope.
+
 ---
 
 ## Phase 4 — Scale & operational hardening
@@ -360,6 +362,8 @@ Reader, and start getting findings within 15 minutes.
 ---
 
 ## Phase 6 — Multi-cloud (AWS + GCP)
+
+Execution spec: [multicloud-onboarding-design.md](./multicloud-onboarding-design.md)
 
 **Goal:** customers can link AWS accounts and GCP projects from the same
 Settings page. Cloud-agnostic from `DataTier` down to `ResourceSnapshot`;
@@ -531,3 +535,4 @@ rule from each provider produces a finding end-to-end.
 
 Ship **Phase 1 + 2 together** to unlock the Settings UI. Treat **Phase 3**
 as its own epic — don't let it block the Settings UI launch.
+

@@ -12,25 +12,50 @@ logger = logging.getLogger(__name__)
 app = func.FunctionApp()
 
 
-async def _build_scan_pipeline(subscription_id: str, db, async_credential):
+async def _build_scan_pipeline(
+    subscription_id: str,
+    db,
+    async_credential,
+    *,
+    customer_tenant_id: str = "",
+):
     """Build a ScanPipeline bound to a single Azure subscription.
 
     The pipeline is wired with billing + usage repositories so the producer
     side of the Service Bus path respects per-tenant AI quotas (Phase 2.6):
-    a capped tenant\'s lowest-priority findings are not queued at all
+    a capped tenant's lowest-priority findings are not queued at all
     instead of being queued and then dropped by the consumer worker.
+
+    For Phase 3 cross-tenant scans, when *customer_tenant_id* is
+    supplied and a customer credential factory is configured, the
+    synchronous credential targets the customer's Entra tenant.
+    Failure to build a per-tenant credential falls back to
+    DefaultAzureCredential (single-tenant path).
     """
     from azure.identity import DefaultAzureCredential as SyncDefaultAzureCredential
     from azure.servicebus.aio import ServiceBusClient
 
     from cloudguardiq.adapters.azure_adapter import AzureAdapter
+    from cloudguardiq.auth.customer_credential import build_default_factory
     from cloudguardiq.billing.repository import BillingRepository
     from cloudguardiq.billing.usage import UsageRepository
     from cloudguardiq.core.config import get_settings
     from cloudguardiq.pipeline.scan_pipeline import ScanPipeline
     from cloudguardiq.policy.engine import PolicyEngine
 
-    sync_credential = SyncDefaultAzureCredential()
+    sync_credential = None
+    if customer_tenant_id:
+        factory = build_default_factory(get_settings())
+        if factory is not None:
+            try:
+                sync_credential = factory.for_tenant(customer_tenant_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Customer credential build failed tenant=%s: %s",
+                    customer_tenant_id, exc,
+                )
+    if sync_credential is None:
+        sync_credential = SyncDefaultAzureCredential()
 
     adapter = AzureAdapter(
         credential=sync_credential,
@@ -221,6 +246,9 @@ async def scan_trigger(timer: func.TimerRequest) -> None:
             try:
                 pipeline = await _build_scan_pipeline(
                     subscription_id, db, async_credential,
+                    customer_tenant_id=(
+                        rec.customer_tenant_id or rec.tenant_id
+                    ),
                 )
                 result = await pipeline.run(subscription_id, tenant_id=tenant_id)
                 logger.info(
@@ -238,10 +266,38 @@ async def scan_trigger(timer: func.TimerRequest) -> None:
                         tenant_id, subscription_id, exc,
                     )
             except Exception as exc:  # noqa: BLE001
+                # Phase 3.6: when the customer-tenant credential is
+                # rejected (consent revoked, app deleted, or service
+                # principal removed) we mark the subscription Disabled
+                # so we stop hammering ARM on every tick. The owner
+                # can re-enable it from the Settings UI after fixing
+                # the grant.
+                msg = str(exc)
+                auth_failed = any(
+                    code in msg
+                    for code in (
+                        "AADSTS", "401", "403", "Forbidden",
+                        "Unauthorized", "AuthenticationFailed",
+                    )
+                )
                 logger.error(
                     "Scan failed for tenant %s sub %s: %s",
                     tenant_id, subscription_id, exc,
                 )
+                if auth_failed:
+                    try:
+                        rec.state = "Disabled"
+                        await subs_repo.upsert(rec)
+                        logger.warning(
+                            "Disabled subscription tenant=%s sub=%s due "
+                            "to auth failure (consent likely revoked)",
+                            tenant_id, subscription_id,
+                        )
+                    except Exception as inner:  # noqa: BLE001
+                        logger.error(
+                            "Failed to disable sub %s/%s: %s",
+                            tenant_id, subscription_id, inner,
+                        )
         logger.info(
             "Timer scan done: scanned=%d skipped_for_cooldown=%d total=%d",
             scanned, skipped, len(records),

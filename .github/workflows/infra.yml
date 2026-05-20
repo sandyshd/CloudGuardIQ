@@ -80,6 +80,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_onboarding_template_uri: ${{ secrets.ONBOARDING_TEMPLATE_URI }}
 
       - name: Terraform Format Check
         if: github.event.inputs.action != 'import'
@@ -100,6 +101,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_onboarding_template_uri: ${{ secrets.ONBOARDING_TEMPLATE_URI }}
 
       - name: Terraform Plan
         if: github.event.inputs.action != 'import'
@@ -114,6 +116,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_onboarding_template_uri: ${{ secrets.ONBOARDING_TEMPLATE_URI }}
 
       - name: Terraform Apply
         if: github.event.inputs.action == 'apply'
@@ -123,3 +126,4 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_onboarding_template_uri: ${{ secrets.ONBOARDING_TEMPLATE_URI }}

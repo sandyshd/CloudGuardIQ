@@ -1,28 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Alert, AlertDescription } from "../ui/alert";
 import { useSubscriptions } from "../../hooks/useSubscriptions";
-import { getBillingStatus, type BillingStatus } from "../../api/billing";
-import { getOnboardingInfo, type OnboardingInfo } from "../../api/onboarding";
 import { LoadingSpinner } from "../common/LoadingSpinner";
 import type { Subscription } from "../../types";
 
-const TIER_CAPS: Record<string, number> = {
-  FREE: 1,
-  PRO: 3,
-  ENTERPRISE: -1,
-};
-
 const GUID_RE =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-
-interface UpgradeRequiredDetail {
-  error: string;
-  current_tier?: string;
-  cap?: number;
-  current?: number;
-}
 
 interface ApiErrorShape {
   response?: { status?: number; data?: { detail?: unknown } };
@@ -57,32 +42,9 @@ function formatApiError(err: unknown, fallback: string): string {
 }
 
 export function SubscriptionList() {
-  const { subscriptions, loading, add, remove, toggle, replace } =
-    useSubscriptions();
-  const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null);
-  const [onboarding, setOnboarding] = useState<OnboardingInfo | null>(null);
-  const [accessDenied, setAccessDenied] = useState<{
-    message: string;
-    az_command: string;
-  } | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getBillingStatus()
-      .then((s) => { if (!cancelled) setBillingStatus(s); })
-      .catch(() => { if (!cancelled) setBillingStatus(null); });
-    getOnboardingInfo()
-      .then((info) => { if (!cancelled) setOnboarding(info); })
-      .catch(() => { if (!cancelled) setOnboarding(null); });
-    return () => { cancelled = true; };
-  }, []);
-  const tier = billingStatus?.tier ?? "FREE";
-  const cap = TIER_CAPS[tier] ?? 1;
+  const { subscriptions, loading, remove, toggle, replace } = useSubscriptions();
 
-  const [newId, setNewId] = useState("");
-  const [newName, setNewName] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [upgradeMsg, setUpgradeMsg] = useState<string | null>(null);
 
   // Edit-in-place state: the subscription_id of the row currently being
   // edited, plus the working copy of its fields.
@@ -93,62 +55,10 @@ export function SubscriptionList() {
 
   const counter = useMemo(() => {
     const total = subscriptions.length;
-    if (cap < 0) return `${total} of unlimited used (${tier})`;
-    return `${total} of ${cap} used (${tier})`;
-  }, [subscriptions.length, cap, tier]);
+    return `${total} linked`;
+  }, [subscriptions.length]);
 
   if (loading) return <LoadingSpinner />;
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setUpgradeMsg(null);
-    setAccessDenied(null);
-    if (!GUID_RE.test(newId)) {
-      setError("Subscription ID must be a valid Azure GUID.");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await add(newId, newName);
-      setNewId("");
-      setNewName("");
-    } catch (err) {
-      const e = err as ApiErrorShape & {
-        response?: { status?: number; data?: { detail?: UpgradeRequiredDetail | string } };
-      };
-      if (e.response?.status === 402) {
-        const detail = e.response.data?.detail;
-        if (typeof detail === "object" && detail?.error === "upgrade_required") {
-          setUpgradeMsg(
-            `You're on the ${detail.current_tier ?? tier} plan (${detail.current}/${detail.cap}). ` +
-              "Upgrade to add more subscriptions.",
-          );
-        } else {
-          setUpgradeMsg("Upgrade required to add more subscriptions.");
-        }
-      } else if (e.response?.status === 400) {
-        const detail = e.response.data?.detail as
-          | { error?: string; message?: string; az_command?: string }
-          | string
-          | undefined;
-        if (typeof detail === "object" && detail?.error === "access_denied") {
-          setAccessDenied({
-            message:
-              detail.message ??
-              "CloudGuardIQ does not have Reader access on this subscription.",
-            az_command: detail.az_command ?? "",
-          });
-        } else {
-          setError(formatApiError(err, "Failed to add subscription"));
-        }
-      } else {
-        setError(formatApiError(err, "Failed to add subscription"));
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const handleRemove = async (id: string, displayName: string) => {
     setError(null);
@@ -178,7 +88,6 @@ export function SubscriptionList() {
 
   const startEdit = (sub: Subscription) => {
     setError(null);
-    setUpgradeMsg(null);
     setEditingId(sub.subscription_id);
     setEditId(sub.subscription_id);
     setEditName(sub.display_name);
@@ -192,7 +101,6 @@ export function SubscriptionList() {
 
   const saveEdit = async (originalId: string) => {
     setError(null);
-    setUpgradeMsg(null);
     const trimmedId = editId.trim().toLowerCase();
     if (!GUID_RE.test(trimmedId)) {
       setError("Subscription ID must be a valid Azure GUID.");
@@ -219,81 +127,28 @@ export function SubscriptionList() {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-base">Azure Subscriptions</CardTitle>
+        <CardTitle className="text-base">Linked Subscriptions</CardTitle>
         <span className="text-xs text-[hsl(var(--muted-foreground))]">{counter}</span>
       </CardHeader>
       <CardContent className="space-y-4">
-        {upgradeMsg && (
-          <Alert>
-            <AlertDescription>
-              {upgradeMsg}{" "}
-              <a
-                href="/settings?tab=billing"
-                className="font-semibold text-blue-600 underline"
-              >
-                Upgrade plan
-              </a>
-            </AlertDescription>
-          </Alert>
-        )}
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
-        {accessDenied && (
-          <Alert variant="destructive">
-            <AlertDescription>
-              <div className="font-medium">Access denied</div>
-              <p className="mt-1 text-xs">{accessDenied.message}</p>
-              {accessDenied.az_command && (
-                <pre className="mt-2 overflow-x-auto rounded bg-black/80 p-2 text-xs text-emerald-300">{accessDenied.az_command}</pre>
-              )}
-            </AlertDescription>
-          </Alert>
-        )}
 
-        <form onSubmit={handleAdd} className="space-y-2 rounded border p-3">
-          <div className="text-sm font-medium">Link a new Azure subscription</div>
-          <p className="text-xs text-[hsl(var(--muted-foreground))]">
-            Grant the CloudGuardIQ managed identity{" "}
-            <span className="font-mono">Reader</span> on the subscription, then enter
-            its ID below.
+        {subscriptions.length === 0 ? (
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            No subscriptions linked yet. Use{" "}
+            <span className="font-medium">Multi-Cloud Onboarding</span> above to
+            connect an Azure tenant, AWS account, or GCP project.
           </p>
-          {onboarding && onboarding.azure_principal_id &&
-            !onboarding.azure_principal_id.startsWith("<") && (
-            <details className="text-xs">
-              <summary className="cursor-pointer text-blue-600 underline">
-                Show grant command
-              </summary>
-              <pre className="mt-1 overflow-x-auto rounded bg-black/80 p-2 text-emerald-300">{onboarding.az_command_template}</pre>
-              <p className="mt-1 text-[hsl(var(--muted-foreground))]">
-                Replace <span className="font-mono">&lt;your-subscription-id&gt;</span>{" "}
-                with the GUID, run from a shell signed in as a subscription Owner.
-              </p>
-            </details>
-          )}
-          <div className="flex flex-col gap-2 md:flex-row">
-            <input
-              type="text"
-              placeholder="00000000-0000-0000-0000-000000000000"
-              value={newId}
-              onChange={(e) => setNewId(e.target.value.trim())}
-              className="flex-1 rounded border px-2 py-1 text-sm font-mono"
-              required
-            />
-            <input
-              type="text"
-              placeholder="Display name (optional)"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              className="flex-1 rounded border px-2 py-1 text-sm"
-            />
-            <Button type="submit" disabled={submitting}>
-              {submitting ? "Adding…" : "Add"}
-            </Button>
-          </div>
-        </form>
+        ) : (
+          <p className="text-xs text-[hsl(var(--muted-foreground))]">
+            To add a new subscription, account, or project use{" "}
+            <span className="font-medium">Multi-Cloud Onboarding</span> above.
+          </p>
+        )}
 
         <div className="space-y-2">
           {subscriptions.map((sub) =>
@@ -389,11 +244,6 @@ export function SubscriptionList() {
                 </div>
               </div>
             ),
-          )}
-          {subscriptions.length === 0 && (
-            <p className="text-sm text-[hsl(var(--muted-foreground))]">
-              No subscriptions linked yet. Add one above to start scanning.
-            </p>
           )}
         </div>
       </CardContent>

@@ -39,6 +39,7 @@ from cloudguardiq.adapters.rules.storage import (
 from cloudguardiq.api import billing as billing_module
 from cloudguardiq.api import subscriptions as subscriptions_module
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
+from cloudguardiq.auth.customer_credential import build_default_factory
 from cloudguardiq.billing.middleware import TierEnforcementMiddleware
 from cloudguardiq.billing.pricing import (
     PricingService,
@@ -67,9 +68,16 @@ from cloudguardiq.core.observability import (
     bind_context,
     install_context_filter,
 )
+from cloudguardiq.onboarding.audit_event_repository import AuditEventRepository
+from cloudguardiq.onboarding.cloud_connection_repository import CloudConnectionRepository
+from cloudguardiq.onboarding.credential_ref_repository import CredentialRefRepository
 from cloudguardiq.pipeline.scan_pipeline import ScanResult
 from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
 from cloudguardiq.subscriptions.repository import SubscriptionsRepository
+from cloudguardiq.tenants.consent_repository import TenantConsentRepository
+from cloudguardiq.tenants.onboarding_session_repository import (
+    OnboardingSessionRepository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +94,11 @@ _auth = Depends(verify_token)
 _repo: CosmosRepository | None = None
 _billing_repo: BillingRepository | None = None
 _subs_repo: SubscriptionsRepository | None = None
+_consent_repo: TenantConsentRepository | None = None
+_onboarding_session_repo: OnboardingSessionRepository | None = None
+_cloud_connection_repo: CloudConnectionRepository | None = None
+_credential_ref_repo: CredentialRefRepository | None = None
+_audit_event_repo: AuditEventRepository | None = None
 _tier_middleware: TierEnforcementMiddleware | None = None
 
 
@@ -162,8 +175,29 @@ async def lifespan(
         ),
     )
 
-    global _subs_repo  # noqa: PLW0603
+    global _subs_repo, _consent_repo, _onboarding_session_repo  # noqa: PLW0603
+    global _cloud_connection_repo, _credential_ref_repo, _audit_event_repo  # noqa: PLW0603
     _subs_repo = SubscriptionsRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
+    _consent_repo = TenantConsentRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
+    _onboarding_session_repo = OnboardingSessionRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
+    _cloud_connection_repo = CloudConnectionRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
+    _credential_ref_repo = CredentialRefRepository(
+        settings,
+        cosmos_db=_repo._db if _repo is not None else None,
+    )
+    _audit_event_repo = AuditEventRepository(
         settings,
         cosmos_db=_repo._db if _repo is not None else None,
     )
@@ -171,6 +205,17 @@ async def lifespan(
         repository=_subs_repo,
         billing_repository=_billing_repo,
         settings=settings,
+        consent_repository=_consent_repo,
+        onboarding_session_repository=_onboarding_session_repo,
+        credential_factory=build_default_factory(settings),
+    )
+    from cloudguardiq.api import onboarding_v1 as onboarding_v1_module
+
+    onboarding_v1_module.configure(
+        settings=settings,
+        cloud_connection_repository=_cloud_connection_repo,
+        credential_ref_repository=_credential_ref_repo,
+        audit_event_repository=_audit_event_repo,
     )
 
     # Wire the Azure Retail Prices service. Warmup pulls the last-known
@@ -228,10 +273,21 @@ billing_module.configure(
 # Bootstrap subscriptions repo (in-memory) so tests that never run lifespan
 # still work. The lifespan hook later swaps in the Cosmos-backed repo.
 _bootstrap_subs_repo = SubscriptionsRepository(get_settings(), cosmos_db=None)
+_bootstrap_consent_repo = TenantConsentRepository(
+    get_settings(), cosmos_db=None,
+)
+_bootstrap_onboarding_session_repo = OnboardingSessionRepository(
+    get_settings(), cosmos_db=None,
+)
+_bootstrap_cloud_connection_repo = CloudConnectionRepository(get_settings(), cosmos_db=None)
+_bootstrap_credential_ref_repo = CredentialRefRepository(get_settings(), cosmos_db=None)
+_bootstrap_audit_event_repo = AuditEventRepository(get_settings(), cosmos_db=None)
 subscriptions_module.configure(
     repository=_bootstrap_subs_repo,
     billing_repository=_bootstrap_billing_repo,
     settings=get_settings(),
+    consent_repository=_bootstrap_consent_repo,
+    onboarding_session_repository=_bootstrap_onboarding_session_repo,
 )
 
 # Billing routes
@@ -240,8 +296,18 @@ app.include_router(billing_module.router)
 app.include_router(subscriptions_module.router)
 # Onboarding info (Phase 2.8 -- surfaces MSI principal id for RBAC grant)
 from cloudguardiq.api import onboarding as onboarding_module  # noqa: E402
+from cloudguardiq.api import onboarding_v1 as onboarding_v1_module  # noqa: E402
+
+onboarding_v1_module.configure(
+    settings=get_settings(),
+    cloud_connection_repository=_bootstrap_cloud_connection_repo,
+    credential_ref_repository=_bootstrap_credential_ref_repo,
+    audit_event_repository=_bootstrap_audit_event_repo,
+)
 
 app.include_router(onboarding_module.router)
+app.include_router(onboarding_v1_module.router)
+app.include_router(onboarding_v1_module.cloud_connections_router)
 
 
 # ------------------------------------------------------------------
@@ -1228,4 +1294,9 @@ async def get_finding_terraform(
 
 
 # /subscriptions endpoints are now served by subscriptions_module.router
+
+
+
+
+
 

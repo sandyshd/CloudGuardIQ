@@ -10,6 +10,7 @@ the rest of the stack working without Azure dependencies.
 
 from __future__ import annotations
 
+import builtins
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -26,6 +27,11 @@ class SubscriptionRecord(BaseModel):
 
     tenant_id: str
     subscription_id: str
+    # The Azure tenant that owns this subscription. For self-service in
+    # the operator's own tenant this matches ``tenant_id``; for true
+    # cross-tenant SaaS onboarding (Phase 3) ``customer_tenant_id`` is
+    # the *customer's* Entra tenant whose admin granted consent.
+    customer_tenant_id: str = ""
     display_name: str = ""
     state: str = "Enabled"  # "Enabled" | "Disabled" | "Removed"
     added_at: datetime = Field(
@@ -49,6 +55,7 @@ class SubscriptionRecord(BaseModel):
             "id": self.doc_id,
             "tenant_id": self.tenant_id,
             "subscription_id": self.subscription_id,
+            "customer_tenant_id": self.customer_tenant_id or self.tenant_id,
             "display_name": self.display_name,
             "state": self.state,
             "added_at": self.added_at.isoformat(),
@@ -80,6 +87,7 @@ class SubscriptionRecord(BaseModel):
         return cls(
             tenant_id=str(doc.get("tenant_id", "")),
             subscription_id=str(doc.get("subscription_id", "")),
+            customer_tenant_id=str(doc.get("customer_tenant_id", "") or ""),
             display_name=str(doc.get("display_name", "")),
             state=str(doc.get("state", "Enabled")),
             added_at=added,
@@ -151,6 +159,52 @@ class SubscriptionsRepository:
             logger.warning("Subscriptions list failed: %s", exc)
         return items
 
+    async def list_by_customer_tenant(
+        self, customer_tenant_id: str, *, include_removed: bool = False,
+    ) -> builtins.list[SubscriptionRecord]:
+        """Return subscriptions visible to *customer_tenant_id*.
+
+        Used as a backwards-compatible bridge for legacy rows created when an
+        operator linked customer subscriptions under the operator tenant_id.
+        """
+        container = self._container()
+        customer_tid = customer_tenant_id.strip().lower()
+        if container is None:
+            recs = [
+                rec
+                for rec in self._memory.values()
+                if (rec.customer_tenant_id or rec.tenant_id).strip().lower()
+                == customer_tid
+                and rec.tenant_id.strip().lower() != customer_tid
+                and (include_removed or rec.state != "Removed")
+            ]
+            return sorted(recs, key=lambda r: r.added_at)
+
+        items: list[SubscriptionRecord] = []
+        try:
+            if include_removed:
+                query = (
+                    "SELECT * FROM c WHERE "
+                    "LOWER(c.customer_tenant_id) = @customer_tid "
+                    "AND LOWER(c.tenant_id) != @customer_tid "
+                    "ORDER BY c.added_at ASC"
+                )
+            else:
+                query = (
+                    "SELECT * FROM c WHERE "
+                    "LOWER(c.customer_tenant_id) = @customer_tid "
+                    "AND LOWER(c.tenant_id) != @customer_tid "
+                    "AND (NOT IS_DEFINED(c.state) OR c.state != 'Removed') "
+                    "ORDER BY c.added_at ASC"
+                )
+            async for item in container.query_items(
+                query=query,
+                parameters=[{"name": "@customer_tid", "value": customer_tid}],
+            ):
+                items.append(SubscriptionRecord.from_document(item))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Subscriptions list_by_customer_tenant failed: %s", exc)
+        return items
     async def count(self, tenant_id: str) -> int:
         """Return the number of *active* subscriptions for *tenant_id*.
 
@@ -254,7 +308,7 @@ class SubscriptionsRepository:
 
     async def list_expired_removed(
         self, retention_days: int,
-    ) -> list[SubscriptionRecord]:
+    ) -> builtins.list[SubscriptionRecord]:
         """Return tombstoned records older than *retention_days*.
 
         Used by the purge timer to find subscriptions whose findings can
