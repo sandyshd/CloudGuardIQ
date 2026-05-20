@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { SubscriptionList } from "../components/settings/SubscriptionList";
+import { MultiCloudOnboardingHub } from "../components/settings/MultiCloudOnboardingHub";
 import { NotificationSettings } from "../components/settings/NotificationSettings";
+import { SubscriptionList } from "../components/settings/SubscriptionList";
 import { TierSelector } from "../components/settings/TierSelector";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { recordConsentCallback } from "../api/subscriptions";
@@ -125,6 +126,7 @@ export function Settings() {
         <NotificationSettings />
       </div>
       <SubscriptionList />
+      <MultiCloudOnboardingHub />
     </div>
   );
 }

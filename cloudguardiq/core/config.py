@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         """Parse cors_origins as JSON array or comma-separated string."""
+
         v = self.cors_origins.strip()
         if v.startswith("["):
             return _json.loads(v)
@@ -43,6 +44,9 @@ class Settings(BaseSettings):
     cosmos_container_subscriptions: str = "subscriptions"
     cosmos_container_tenant_consents: str = "tenant_consents"
     cosmos_container_onboarding_sessions: str = "onboarding_sessions"
+    cosmos_container_cloud_connections: str = "cloud_connections"
+    cosmos_container_credential_refs: str = "credential_refs"
+    cosmos_container_audit_events: str = "audit_events"
 
     # Azure OpenAI
     azure_openai_endpoint: str = ""
@@ -60,7 +64,8 @@ class Settings(BaseSettings):
     # Frontend redirect URI used by the admin-consent flow. The customer
     # admin is bounced back here after granting consent so we can record
     # the tenant and complete the cross-tenant onboarding handshake.
-    consent_redirect_uri: str = "http://localhost:3000/settings?consent=callback"
+    consent_redirect_uri: str = "http://localhost:3000/settings?consent=callback"
+
     # Public HTTPS URL hosting the CloudGuardIQ Reader ARM template. Used
     # to build the Azure Portal "Deploy to Azure" link returned by
     # GET /subscriptions/onboarding-template. Empty string disables the
@@ -103,7 +108,5 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Return a cached Settings instance."""
+
     return Settings()
-
-
-

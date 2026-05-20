@@ -363,6 +363,8 @@ Reader, and start getting findings within 15 minutes.
 
 ## Phase 6 — Multi-cloud (AWS + GCP)
 
+Execution spec: [multicloud-onboarding-design.md](./multicloud-onboarding-design.md)
+
 **Goal:** customers can link AWS accounts and GCP projects from the same
 Settings page. Cloud-agnostic from `DataTier` down to `ResourceSnapshot`;
 no Azure-specific assumptions in the read path.
@@ -533,3 +535,4 @@ rule from each provider produces a finding end-to-end.
 
 Ship **Phase 1 + 2 together** to unlock the Settings UI. Treat **Phase 3**
 as its own epic — don't let it block the Settings UI launch.
+
