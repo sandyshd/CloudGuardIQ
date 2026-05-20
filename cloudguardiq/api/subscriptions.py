@@ -1277,16 +1277,3 @@ async def get_onboarding_template(
         scope=scope,
     )
 
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -29,6 +29,7 @@ from cloudguardiq.onboarding.credential_ref_repository import (
     CredentialRefRecord,
     CredentialRefRepository,
 )
+from cloudguardiq.subscriptions.repository import SubscriptionRecord
 
 logger = logging.getLogger(__name__)
 
@@ -577,6 +578,51 @@ async def _upsert_connection_and_credentials(
     return saved
 
 
+async def _mirror_connected_scopes_for_operator(
+    *,
+    user: TokenPayload,
+    scopes: list[str],
+    customer_tenant_id: str,
+) -> None:
+    """Mirror connected Azure scopes into caller-tenant subscriptions for UI visibility."""
+
+    try:
+        repo = subscriptions_module._get_repo()  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Subscriptions repository unavailable for mirror step: %s", exc)
+        return
+
+    caller_tenant_id = get_tenant_id(user)
+    for raw_scope in scopes:
+        sub_id = raw_scope.strip().lower()
+        if not sub_id:
+            continue
+        try:
+            existing = await repo.get(caller_tenant_id, sub_id)
+            if existing is None:
+                await repo.upsert(
+                    SubscriptionRecord(
+                        tenant_id=caller_tenant_id,
+                        subscription_id=sub_id,
+                        customer_tenant_id=customer_tenant_id,
+                        display_name=sub_id,
+                    ),
+                )
+                continue
+            if existing.state == "Removed":
+                existing.state = "Enabled"
+                existing.removed_at = None
+                await repo.upsert(existing)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to mirror connected scope tenant=%s scope=%s: %s",
+                caller_tenant_id,
+                sub_id,
+                exc,
+            )
+
+
+
 @router.post(
     "/sessions",
     response_model=OnboardingSessionResponseV1,
@@ -781,7 +827,7 @@ async def generate_onboarding_artifacts_v1(
     azure_artifacts: dict[str, str] = {"consent_url": legacy.consent_url}
     template = await subscriptions_module.get_onboarding_template(
         tenant_id=legacy.customer_tenant_id,
-        scope="managementGroup",
+        scope="subscription",
         user=user,
     )
     azure_artifacts["template_uri"] = template.template_uri
@@ -911,6 +957,11 @@ async def connect_onboarding_session_v1(
             linked_scopes=scopes,
             target_scope={"tenant_id": legacy.customer_tenant_id},
             display_name="Azure connection",
+        )
+        await _mirror_connected_scopes_for_operator(
+            user=user,
+            scopes=scopes,
+            customer_tenant_id=legacy.customer_tenant_id,
         )
         return _to_v1_response(legacy, connection_id=rec.connection_id)
     except HTTPException as exc:
@@ -1089,5 +1140,4 @@ async def disconnect_cloud_connection(
         result="success",
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
 

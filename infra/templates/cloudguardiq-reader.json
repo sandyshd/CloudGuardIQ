@@ -1,10 +1,10 @@
 {
-  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
     "_generator": {
       "name": "cloudguardiq",
-      "comment": "Assigns the Reader role to the CloudGuardIQ multi-tenant app at the deployment scope. Deploy this once per subscription, or once at the tenant root management group to cover all current and future subscriptions."
+      "comment": "Assigns the Reader role to the CloudGuardIQ multi-tenant app at subscription scope. Deploy once per subscription to grant CloudGuardIQ read access."
     }
   },
   "parameters": {
@@ -45,3 +45,5 @@
     }
   }
 }
+
+
