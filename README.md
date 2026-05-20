@@ -266,6 +266,12 @@ All endpoints except `/health` require a Bearer JWT from Azure AD.
 | `POST` | `/subscriptions/onboarding-sessions/{session_id}/connect` | Connect selected (or all discovered) subscriptions and mark onboarding completed |
 | `GET` | `/subscriptions/discover` | Lists every subscription visible to CloudGuardIQ in the customer tenant (manual/advanced troubleshooting endpoint) |
 | `GET` | `/onboarding/info` | Returns CloudGuardIQ's service-principal object id + the manual `az role assignment` template |
+| `GET` | `/subscriptions/onboarding-parameters/{principal_id}` | Public, unauthenticated ARM `deploymentParameters.json` document echoing the supplied principal id. Referenced by `/uriParameters/...` in the Azure Portal Deploy-to-Azure URL so the customer's deployment blade pre-fills `cloudGuardIQPrincipalId`. |
+| `POST` | `/v1/onboarding/sessions` | Create a multi-cloud onboarding session (Azure / AWS / GCP). |
+| `GET` / `POST` | `/v1/onboarding/sessions/{id}` (+ `/generate-artifacts`, `/verify`, `/connect`) | Provider-agnostic session lifecycle used by the Multi-Cloud Onboarding wizard. |
+| `GET` | `/v1/cloud-connections` | List cloud connections (Azure / AWS / GCP) created by the V1 wizard. |
+| `POST` | `/v1/cloud-connections/{id}/refresh` | Re-run verification for an existing cloud connection. |
+| `DELETE` | `/v1/cloud-connections/{id}` | Disconnect a cloud connection (findings retained per retention policy). |
 | `GET` | `/billing/plans` | Public plan catalog (no auth) |
 | `GET` | `/billing/status` | Current tier, Stripe customer, usage |
 | `POST` | `/billing/checkout` | Create a Stripe checkout session |
@@ -451,21 +457,29 @@ Run these once, before any customer onboards.
       `consent_redirect_uris` in `terraform.tfvars` so admin-consent
       callbacks for those hosts are also accepted.
 
-#### Onboarding wizard (UI-driven, recommended)
+#### Multi-Cloud Onboarding wizard (UI-driven, recommended)
 
-The Settings page renders a **Connect another tenant** card backed by
-[`frontend/src/components/settings/ConnectTenantWizard.tsx`](frontend/src/components/settings/ConnectTenantWizard.tsx).
-Clicking **Start Onboarding** creates one backend onboarding session and
-then advances by status (`pending_consent` → `pending_reader` →
-`pending_discovery` → `subscriptions_discovered` → `completed`).
+The Settings page renders a single **Multi-Cloud Onboarding** card backed by
+[`frontend/src/components/settings/MultiCloudOnboardingHub.tsx`](frontend/src/components/settings/MultiCloudOnboardingHub.tsx).
+The same five-step wizard onboards **Azure**, **AWS**, and **GCP** through
+the unified `/v1/onboarding/sessions` API (see
+[`docs/multicloud-onboarding-design.md`](docs/multicloud-onboarding-design.md)
+for the full spec). The legacy `Linked Subscriptions` card is now
+manage-only (edit / enable / disable / remove) and the previous Azure-only
+"Connect another tenant" wizard has been removed.
 
-| Stage | Primary actor | Action | UI button | Backend endpoint |
-|-------|---------------|--------|-----------|------------------|
-| 1. Start session | **Operator (CloudGuardIQ tenant)** | Enter customer tenant GUID and initialize the workflow. | **Start Onboarding** | `POST /subscriptions/onboarding-sessions` |
-| 2. Grant admin consent | **Customer Global Admin / Privileged Role Admin** | Open the generated consent URL and click **Accept**. | **Open Admin Consent** | `GET /subscriptions/consent-url` (via response `consent_url`) and `GET /subscriptions/consent-callback` (AAD redirect) |
-| 3. Confirm Reader role | **Customer Subscription Owner/User Access Admin** performs RBAC grant; **Operator** acknowledges in wizard | Assign Reader to CloudGuardIQ service principal, then confirm in UI. | **I Granted Reader Role** | `POST /subscriptions/onboarding-sessions/{session_id}/reader-granted` |
-| 4. Discover subscriptions | **Operator** | Query visible subscriptions in customer tenant. | **Discover Subscriptions** | `POST /subscriptions/onboarding-sessions/{session_id}/discover` |
-| 5. Connect subscriptions | **Operator** | Connect discovered subscriptions in one action. Ownership is recorded on the customer tenant, so customer users see them after login. | **Connect All Discovered** | `POST /subscriptions/onboarding-sessions/{session_id}/connect` |
+| Step | UI title | Primary actor | What happens | Backend endpoint |
+|------|----------|----------------|--------------|------------------|
+| 1 | **Choose Provider** | Operator (any signed-in CloudGuardIQ user) | Pick provider (Azure / AWS / GCP), enter display name + provider scope (tenant id, account id, or project id). | `POST /v1/onboarding/sessions` |
+| 2 | **Grant Trust** | Operator clicks **Generate Artifacts**; **customer admin** then applies them in the provider console (Azure ARM deploy / AWS CloudFormation / `gcloud` binding). | Wizard renders provider-specific instructions, clickable "Open" buttons for URL artifacts, and copy buttons for IDs and policy JSON. For Azure the deploy link includes `/uriParameters/...` so `cloudGuardIQPrincipalId` is pre-populated in the ARM blade. | `POST /v1/onboarding/sessions/{id}/generate-artifacts` |
+| 3 | **Verify** | Operator | Runs three checks: `token_exchange`, `permission_probe`, `scope_discovery`. Auto-advances on success. | `POST /v1/onboarding/sessions/{id}/verify` |
+| 4 | **Connect Scopes** | Operator | Selects which discovered subscriptions / accounts / projects to monitor. | `POST /v1/onboarding/sessions/{id}/connect` |
+| 5 | **Done** | -- | Shows the new `connection_id`, refreshes the global subscription context so the Dashboard immediately picks up the new tenant, and offers an **Onboard another provider** reset. | `GET /v1/cloud-connections` |
+
+Underneath, Azure onboarding still calls the legacy
+`/subscriptions/onboarding-sessions/*` handlers documented below, so the
+Reader-role grant path, consent flow, and cross-tenant mirroring all
+behave exactly as before.
 
 #### Actor-to-action quick reference
 
@@ -1021,6 +1035,7 @@ Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
 | `CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS` | No | Cosmos container for cross-tenant admin-consent records (default: `tenant_consents`) |
 | `CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS` | No | Cosmos container for onboarding-session state (default: `onboarding_sessions`) |
 | `CLOUDGUARDIQ_CONSENT_REDIRECT_URI` | Cross-tenant only | Reply URL the Azure AD admin-consent redirect returns to (must match an app-registration Reply URL). Default: `http://localhost:3000/settings?consent=callback`. |
+| `CLOUDGUARDIQ_PUBLIC_API_BASE_URL` | No | Public HTTPS base URL of the CloudGuardIQ API (e.g. `https://cguardiq-dev-api.<region>.azurecontainerapps.io`). When set, `GET /subscriptions/onboarding-template` emits a `parameters_uri` so the Azure Portal Deploy-to-Azure blade pre-populates the `cloudGuardIQPrincipalId` ARM parameter. Wired by Terraform on the Container App from `azurerm_container_app_environment.cloudguardiq.default_domain`. Empty value disables the prefill (the deploy link still works, the customer just types the GUID manually). |
 | `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI` | No | Public HTTPS URL hosting [`infra/templates/cloudguardiq-reader.json`](infra/templates/cloudguardiq-reader.json). Drives the **Deploy to Azure** button returned by `GET /subscriptions/onboarding-template`. Empty disables the one-click button (the `az role assignment` fallback still works). If a `https://github.com/<owner>/<repo>/blob/<ref>/<path>` URL is supplied by mistake, the API rewrites it to the matching `raw.githubusercontent.com` URL so the Azure Portal blade can fetch the JSON. |
 | `SERVICE_BUS_CONNECTION__fullyQualifiedNamespace` | No | Service Bus namespace FQDN (managed identity auth) |
 | `KEY_VAULT_URL` | No | Key Vault URI |
