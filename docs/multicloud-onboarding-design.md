@@ -7,6 +7,15 @@ Related roadmap: [saas-phased-plan.md](./saas-phased-plan.md) (Phase 6)
 
 ---
 
+## 0) Settings UI consolidation
+
+CloudGuardIQ exposes a single onboarding entry point in the Settings page:
+the **Multi-Cloud Onboarding** card. The previous Azure-only "Connect another
+tenant" wizard and "Link a new Azure subscription" form have been removed.
+Onboarding for every provider (Azure, AWS, GCP) flows through the unified
+session-based API documented below. The legacy `Linked Subscriptions` card
+remains read/manage-only for existing Azure subscription links (enable,
+disable, edit, remove).
 ## 1) Scope and guardrails
 
 This document defines the exact onboarding design for linking customer

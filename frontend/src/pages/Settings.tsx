@@ -125,8 +125,8 @@ export function Settings() {
         <TierSelector />
         <NotificationSettings />
       </div>
-      <SubscriptionList />
       <MultiCloudOnboardingHub />
+      <SubscriptionList />
     </div>
   );
 }
