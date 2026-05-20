@@ -140,7 +140,11 @@ export function ConnectTenantWizard({ onClose }: ConnectTenantWizardProps) {
     try {
       const updated = await discoverOnboardingSession(session.session_id);
       setSession(updated);
-      setInfo(`Discovered ${updated.discovered_subscription_ids.length} subscription(s).`);
+      const discovered = updated.discovered_subscription_ids.length;
+      if (discovered === 0) {
+        setError("No subscriptions were discovered. Ensure Reader role is granted to CloudGuardIQ in this tenant, wait up to 5 minutes for RBAC propagation, then retry discovery.");
+      }
+      setInfo(`Discovered ${discovered} subscription(s).`);
     } catch (err) {
       setError(formatErr(err, "Failed to discover subscriptions"));
     } finally {
@@ -223,6 +227,14 @@ export function ConnectTenantWizard({ onClose }: ConnectTenantWizardProps) {
             <div className="text-xs text-[hsl(var(--muted-foreground))]">
               Discovered: {discoveredCount} | Connected: {session.connected_subscription_ids.length}
             </div>
+
+            {session.status === "subscriptions_discovered" && discoveredCount === 0 && (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  No subscriptions were returned by Azure for this tenant. Grant Reader to CloudGuardIQ service principal on target subscriptions, wait for RBAC propagation, and click Discover Subscriptions again.
+                </AlertDescription>
+              </Alert>
+            )}
 
             {session.consent_url && (
               <div className="space-y-2 rounded border bg-[hsl(var(--muted))]/30 p-3">

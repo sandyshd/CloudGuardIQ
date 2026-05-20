@@ -21,6 +21,7 @@ const GUID_RE =
 interface UpgradeRequiredDetail {
   error: string;
   current_tier?: string;
+  limit?: string;
   cap?: number;
   current?: number;
 }
@@ -126,19 +127,35 @@ export function SubscriptionList() {
       if (e.response?.status === 402) {
         const detail = e.response.data?.detail;
         if (typeof detail === "object" && detail?.error === "upgrade_required") {
+          const current = typeof detail.current === "number" ? detail.current : subscriptions.length;
+          const max = typeof detail.cap === "number" ? detail.cap : cap;
+          const tierName = (detail.current_tier ?? tier).toString().toUpperCase();
           setUpgradeMsg(
-            `You're on the ${detail.current_tier ?? tier} plan (${detail.current}/${detail.cap}). ` +
-              "Upgrade to add more subscriptions.",
+            `Your ${tierName} plan allows ${max} subscription(s). You already use ${current}. Upgrade your plan to add more subscriptions.`,
           );
         } else {
-          setUpgradeMsg("Upgrade required to add more subscriptions.");
+          setUpgradeMsg("Your plan has reached its subscription limit. Upgrade your plan to add more subscriptions.");
         }
       } else if (e.response?.status === 400) {
         const detail = e.response.data?.detail as
-          | { error?: string; message?: string; az_command?: string }
+          | {
+              error?: string;
+              message?: string;
+              az_command?: string;
+              current_tier?: string;
+              cap?: number;
+              current?: number;
+            }
           | string
           | undefined;
-        if (typeof detail === "object" && detail?.error === "access_denied") {
+        if (typeof detail === "object" && detail?.error === "upgrade_required") {
+          const current = typeof detail.current === "number" ? detail.current : subscriptions.length;
+          const max = typeof detail.cap === "number" ? detail.cap : cap;
+          const tierName = (detail.current_tier ?? tier).toString().toUpperCase();
+          setUpgradeMsg(
+            `Your ${tierName} plan allows ${max} subscription(s). You already use ${current}. Upgrade your plan to add more subscriptions.`,
+          );
+        } else if (typeof detail === "object" && detail?.error === "access_denied") {
           setAccessDenied({
             message:
               detail.message ??
@@ -428,6 +445,7 @@ export function SubscriptionList() {
     </Card>
   );
 }
+
 
 
 

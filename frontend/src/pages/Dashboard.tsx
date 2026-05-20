@@ -61,7 +61,17 @@ export function Dashboard() {
       await triggerScan({ subscription_id: subId, include_cost: true });
       await refresh();
     } catch (err) {
-      setScanError(err instanceof Error ? err.message : "Scan failed");
+      const statusCode = (
+        err as { response?: { status?: number } }
+      )?.response?.status;
+
+      if (statusCode === 429) {
+        setScanError(
+          "Scan is cooling down for your plan. Free: once every 24 hours, Starter: once per hour, Enterprise: every 15 minutes. Please try again after the cooldown.",
+        );
+      } else {
+        setScanError(err instanceof Error ? err.message : "Scan failed");
+      }
     } finally {
       setScanning(false);
       scanInFlight.current = false;
@@ -193,5 +203,3 @@ export function Dashboard() {
     </div>
   );
 }
-
-
