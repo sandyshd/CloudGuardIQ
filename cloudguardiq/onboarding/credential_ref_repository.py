@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from cloudguardiq.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class CredentialRefRecord(BaseModel):
@@ -88,9 +91,13 @@ class CredentialRefRepository:
 
         if self._db is None:
             return None
-        return self._db.get_container_client(
-            self._settings.cosmos_container_credential_refs,
-        )
+        try:
+            return self._db.get_container_client(
+                self._settings.cosmos_container_credential_refs,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Credential refs container unavailable: %s", exc)
+            return None
 
     async def upsert(self, record: CredentialRefRecord) -> CredentialRefRecord:
         """Insert or update credential reference record."""
@@ -102,8 +109,18 @@ class CredentialRefRepository:
             self._memory[key] = record
             return record
 
-        await container.upsert_item(record.to_document())
-        return record
+        try:
+            await container.upsert_item(record.to_document())
+            return record
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Credential refs upsert fallback to memory tenant=%s connection=%s: %s",
+                record.tenant_id,
+                record.connection_id,
+                exc,
+            )
+            self._memory[key] = record
+            return record
 
     async def get_by_connection(
         self,
@@ -124,13 +141,22 @@ class CredentialRefRepository:
             {"name": "@tid", "value": tenant_id},
             {"name": "@cid", "value": connection_id},
         ]
-        async for doc in container.query_items(
-            query=query,
-            parameters=params,
-            partition_key=tenant_id,
-        ):
-            return CredentialRefRecord.from_document(doc)
-        return None
+        try:
+            async for doc in container.query_items(
+                query=query,
+                parameters=params,
+                partition_key=tenant_id,
+            ):
+                return CredentialRefRecord.from_document(doc)
+            return None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Credential refs query fallback to memory tenant=%s connection=%s: %s",
+                tenant_id,
+                connection_id,
+                exc,
+            )
+            return self._memory.get((tenant_id, connection_id))
 
     async def delete_by_connection(self, tenant_id: str, connection_id: str) -> None:
         """Delete credential ref associated with a cloud connection."""
@@ -141,7 +167,16 @@ class CredentialRefRepository:
             self._memory.pop(key, None)
             return
 
-        rec = await self.get_by_connection(tenant_id, connection_id)
-        if rec is None:
-            return
-        await container.delete_item(item=rec.doc_id, partition_key=tenant_id)
+        try:
+            rec = await self.get_by_connection(tenant_id, connection_id)
+            if rec is None:
+                return
+            await container.delete_item(item=rec.doc_id, partition_key=tenant_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Credential refs delete fallback to memory tenant=%s connection=%s: %s",
+                tenant_id,
+                connection_id,
+                exc,
+            )
+            self._memory.pop(key, None)

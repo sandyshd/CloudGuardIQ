@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from cloudguardiq.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class AuditEventRecord(BaseModel):
@@ -91,9 +94,13 @@ class AuditEventRepository:
 
         if self._db is None:
             return None
-        return self._db.get_container_client(
-            self._settings.cosmos_container_audit_events,
-        )
+        try:
+            return self._db.get_container_client(
+                self._settings.cosmos_container_audit_events,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Audit events container unavailable: %s", exc)
+            return None
 
     async def append(self, record: AuditEventRecord) -> AuditEventRecord:
         """Append an audit event record."""
@@ -104,8 +111,18 @@ class AuditEventRepository:
             self._memory[key] = record
             return record
 
-        await container.upsert_item(record.to_document())
-        return record
+        try:
+            await container.upsert_item(record.to_document())
+            return record
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Audit append fallback to memory tenant=%s event=%s: %s",
+                record.tenant_id,
+                record.event_id,
+                exc,
+            )
+            self._memory[key] = record
+            return record
 
     async def list_recent(self, tenant_id: str, limit: int = 50) -> list[AuditEventRecord]:
         """Return recent audit events for tenant_id (descending by timestamp)."""
@@ -127,10 +144,22 @@ class AuditEventRepository:
             {"name": "@limit", "value": limit},
             {"name": "@tid", "value": tenant_id},
         ]
-        async for doc in container.query_items(
-            query=query,
-            parameters=params,
-            partition_key=tenant_id,
-        ):
-            out.append(AuditEventRecord.from_document(doc))
-        return out
+        try:
+            async for doc in container.query_items(
+                query=query,
+                parameters=params,
+                partition_key=tenant_id,
+            ):
+                out.append(AuditEventRecord.from_document(doc))
+            return out
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Audit list fallback to memory tenant=%s: %s",
+                tenant_id,
+                exc,
+            )
+            rows = [
+                rec for (tid, _eid), rec in self._memory.items() if tid == tenant_id
+            ]
+            rows.sort(key=lambda r: r.timestamp, reverse=True)
+            return rows[:limit]

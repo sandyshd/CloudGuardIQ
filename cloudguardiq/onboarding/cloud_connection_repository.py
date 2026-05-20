@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from cloudguardiq.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class CloudConnectionRecord(BaseModel):
@@ -99,9 +102,13 @@ class CloudConnectionRepository:
 
         if self._db is None:
             return None
-        return self._db.get_container_client(
-            self._settings.cosmos_container_cloud_connections,
-        )
+        try:
+            return self._db.get_container_client(
+                self._settings.cosmos_container_cloud_connections,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Cloud connections container unavailable: %s", exc)
+            return None
 
     async def list(self, tenant_id: str) -> list[CloudConnectionRecord]:
         """Return all cloud connections for tenant_id."""
@@ -113,18 +120,27 @@ class CloudConnectionRepository:
             ]
             return sorted(rows, key=lambda r: r.created_at)
 
-        out: list[CloudConnectionRecord] = []
-        query = (
-            "SELECT * FROM c WHERE c.tenant_id = @tid ORDER BY c.created_at ASC"
-        )
-        params = [{"name": "@tid", "value": tenant_id}]
-        async for doc in container.query_items(
-            query=query,
-            parameters=params,
-            partition_key=tenant_id,
-        ):
-            out.append(CloudConnectionRecord.from_document(doc))
-        return out
+        try:
+            out: list[CloudConnectionRecord] = []
+            query = "SELECT * FROM c WHERE c.tenant_id = @tid ORDER BY c.created_at ASC"
+            params = [{"name": "@tid", "value": tenant_id}]
+            async for doc in container.query_items(
+                query=query,
+                parameters=params,
+                partition_key=tenant_id,
+            ):
+                out.append(CloudConnectionRecord.from_document(doc))
+            return out
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Cloud connections list fallback to memory for tenant=%s: %s",
+                tenant_id,
+                exc,
+            )
+            rows = [
+                rec for (tid, _cid), rec in self._memory.items() if tid == tenant_id
+            ]
+            return sorted(rows, key=lambda r: r.created_at)
 
     async def get(
         self,
@@ -139,9 +155,15 @@ class CloudConnectionRepository:
 
         try:
             doc = await container.read_item(item=connection_id, partition_key=tenant_id)
-        except Exception:
-            return None
-        return CloudConnectionRecord.from_document(doc)
+            return CloudConnectionRecord.from_document(doc)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Cloud connections get fallback to memory tenant=%s connection=%s: %s",
+                tenant_id,
+                connection_id,
+                exc,
+            )
+            return self._memory.get((tenant_id, connection_id))
 
     async def upsert(self, record: CloudConnectionRecord) -> CloudConnectionRecord:
         """Insert or update one cloud connection record."""
@@ -152,5 +174,15 @@ class CloudConnectionRepository:
             self._memory[(record.tenant_id, record.connection_id)] = record
             return record
 
-        await container.upsert_item(record.to_document())
-        return record
+        try:
+            await container.upsert_item(record.to_document())
+            return record
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Cloud connections upsert fallback to memory tenant=%s connection=%s: %s",
+                record.tenant_id,
+                record.connection_id,
+                exc,
+            )
+            self._memory[(record.tenant_id, record.connection_id)] = record
+            return record
