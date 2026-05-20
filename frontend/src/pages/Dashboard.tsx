@@ -6,6 +6,7 @@ import { ActivityFeed } from "../components/dashboard/ActivityFeed";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { EmptyState } from "../components/common/EmptyState";
+import { Alert, AlertDescription } from "../components/ui/alert";
 import { DefenderAutoBadge } from "../components/common/DefenderAutoBadge";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
@@ -121,7 +122,9 @@ export function Dashboard() {
           primaryDisabled={scanning}
           secondary={
             scanError ? (
-              <p className="text-sm text-red-600">{scanError}</p>
+              <Alert className="mx-auto mt-2 max-w-3xl border-amber-300 bg-amber-50 text-amber-900">
+                <AlertDescription className="text-sm font-medium">{scanError}</AlertDescription>
+              </Alert>
             ) : null
           }
         />

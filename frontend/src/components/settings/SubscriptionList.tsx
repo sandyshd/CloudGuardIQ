@@ -247,12 +247,13 @@ export function SubscriptionList() {
       </CardHeader>
       <CardContent className="space-y-4">
         {upgradeMsg && (
-          <Alert>
-            <AlertDescription>
+          <Alert className="border-amber-300 bg-amber-50 text-amber-900">
+            <AlertDescription className="font-medium">
+              <span className="mr-1 uppercase tracking-wide">Warning:</span>
               {upgradeMsg}{" "}
               <a
                 href="/settings?tab=billing"
-                className="font-semibold text-blue-600 underline"
+                className="font-semibold text-amber-900 underline decoration-2 underline-offset-2"
               >
                 Upgrade plan
               </a>
@@ -445,6 +446,7 @@ export function SubscriptionList() {
     </Card>
   );
 }
+
 
 
 
