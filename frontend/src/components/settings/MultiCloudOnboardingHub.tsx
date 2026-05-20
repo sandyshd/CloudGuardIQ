@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "../ui/table";
+import { useSubscriptionContext } from "../../auth/SubscriptionContext";
 import {
   connectOnboardingSessionV1,
   createOnboardingSessionV1,
@@ -382,6 +383,8 @@ function ProviderInstructions({
 export function MultiCloudOnboardingHub(): JSX.Element {
   const [step, setStep] = useState<StepId>(1);
 
+  const { refresh: refreshSubscriptions } = useSubscriptionContext();
+
   const [provider, setProvider] = useState<CloudProvider>("AZURE");
   const [displayName, setDisplayName] = useState("");
   const [tenantId, setTenantId] = useState("");
@@ -580,6 +583,11 @@ export function MultiCloudOnboardingHub(): JSX.Element {
         message: `Connected. Connection ID: ${updated.connection_id}.`,
       });
       await loadConnections();
+      try {
+        await refreshSubscriptions();
+      } catch {
+        // Non-fatal: the dashboard will refresh on next page load.
+      }
     } catch (error) {
       setNotice({
         kind: "error",
