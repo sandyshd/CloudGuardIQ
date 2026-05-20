@@ -546,6 +546,14 @@ resource "azurerm_container_app" "api" {
         value = var.onboarding_template_uri
       }
       env {
+        # Public base URL of this container app. Used by
+        # /subscriptions/onboarding-template to emit a parameters_uri the
+        # Azure Portal Deploy-to-Azure blade fetches to pre-populate the
+        # cloudGuardIQPrincipalId ARM parameter.
+        name  = "CLOUDGUARDIQ_PUBLIC_API_BASE_URL"
+        value = "https://${var.prefix}-${var.environment}-api.${azurerm_container_app_environment.cloudguardiq.default_domain}"
+      }
+      env {
         name  = "CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS"
         value = "10"
       }
@@ -714,12 +722,7 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_AZURE_CLIENT_SECRET                  = azuread_application_password.cloudguardiq.value
     CLOUDGUARDIQ_CONSENT_REDIRECT_URI                 = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
     CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI              = var.onboarding_template_uri
-    # Public base URL of this function app. Used by
-    # /subscriptions/onboarding-template to emit a parameters_uri the
-    # Azure Portal Deploy-to-Azure blade fetches to pre-populate the
-    # cloudGuardIQPrincipalId ARM parameter.
-    CLOUDGUARDIQ_PUBLIC_API_BASE_URL   = "https://${var.prefix}-${var.environment}-func.azurewebsites.net"
-    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS = "10"
+    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS                = "10"
     # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID = home-tenant SP object id of the
     # CloudGuardIQ multi-tenant app registration (NOT the function app's MI).
     CLOUDGUARDIQ_AZURE_PRINCIPAL_ID      = azuread_service_principal.cloudguardiq.object_id
