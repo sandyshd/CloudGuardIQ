@@ -4,6 +4,7 @@ import { Button } from "../ui/button";
 import { ScopePill } from "./ScopePill";
 import { TimeRangeSelector } from "./TimeRangeSelector";
 import { NotificationsMenu } from "./NotificationsMenu";
+import { TopbarUser } from "./TopbarUser";
 
 interface Props {
   onOpenPalette: () => void;
@@ -100,7 +101,10 @@ export function Topbar({ onOpenPalette }: Props) {
             </div>
           )}
         </div>
+        <TopbarUser />
+
       </div>
     </header>
   );
 }
+
