@@ -198,8 +198,10 @@ export function TierSelector() {
           })}
         </div>
         <p className="mt-3 text-xs text-[hsl(var(--muted-foreground))]">
-          All plans auto-detect and use Microsoft Defender for Cloud signals
-          when available — no extra charge, no plan upgrade required.
+          All plans auto-detect and use cloud-native security signals when
+          available — Microsoft Defender for Cloud (Azure), AWS Security Hub /
+          GuardDuty (AWS), and Google Security Command Center (GCP) — at no
+          extra charge, no plan upgrade required.
         </p>
       </CardContent>
     </Card>

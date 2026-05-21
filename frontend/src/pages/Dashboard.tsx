@@ -226,6 +226,13 @@ export function Dashboard() {
     const tier2Active = TIER2_VALUES.some((t) => tiers.has(t));
     const tier3Active = TIER3_VALUES.some((t) => tiers.has(t));
 
+    // Cloud provider presence (excluding Terraform — that's an IaC source, not a cloud).
+    const providersSeen = new Set<string>();
+    resources.forEach((r) => providersSeen.add(r.provider));
+    const azureActive = providersSeen.has("AZURE");
+    const awsActive = providersSeen.has("AWS");
+    const gcpActive = providersSeen.has("GCP");
+
     // Recent activity = most recent findings as a timeline (proxy for scan/remediation events).
     const recent = [...findings]
       .sort((a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime())
@@ -247,6 +254,9 @@ export function Dashboard() {
       topRisks,
       tier2Active,
       tier3Active,
+      azureActive,
+      awsActive,
+      gcpActive,
       recent,
     };
   }, [findings]);
@@ -695,24 +705,50 @@ export function Dashboard() {
             <CardTitle>Data source health</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            <p className="text-[11px] text-[hsl(var(--muted-foreground))]">
+              Cloud-agnostic tiers — same signal model across Azure, AWS, and GCP.
+            </p>
             <DataSourceRow
               label="Tier 1 — Native"
-              hint="Azure Resource Manager"
+              hint="Resource Graph · AWS Config · GCP Asset Inventory"
               status="connected"
             />
             <DataSourceRow
-              label="Tier 2 — Free CSPM"
-              hint="Defender for Cloud (free)"
+              label="Tier 2 — Enriched (free CSPM)"
+              hint="Defender for Cloud · Security Hub · Security Command Center"
               status={metrics.tier2Active ? "connected" : "not_connected"}
             />
             <DataSourceRow
-              label="Tier 3 — Defender (paid)"
-              hint="Deep telemetry"
+              label="Tier 3 — Deep (paid)"
+              hint="Defender paid · GuardDuty / Inspector · SCC Premium"
               status={metrics.tier3Active ? "connected" : "not_connected"}
             />
+            <div className="border-t border-[hsl(var(--border))] pt-3">
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
+                Providers
+              </div>
+              <div className="space-y-2">
+                <DataSourceRow
+                  label="Azure"
+                  hint="Resource Manager · Cost Management"
+                  status={metrics.azureActive ? "connected" : "not_connected"}
+                />
+                <DataSourceRow
+                  label="AWS"
+                  hint="Config · Cost Explorer"
+                  status={metrics.awsActive ? "connected" : "not_connected"}
+                />
+                <DataSourceRow
+                  label="GCP"
+                  hint="Asset Inventory · Billing"
+                  status={metrics.gcpActive ? "connected" : "not_connected"}
+                />
+              </div>
+            </div>
             <p className="pt-1 text-[11px] text-[hsl(var(--muted-foreground))]">
-              Tier 2 / 3 are optional. CloudGuardIQ never errors when these are
-              unavailable — it gracefully degrades to native signals.
+              Vendor security services (Tier 2 / 3) are never required.
+              CloudGuardIQ auto-detects them on every plan at no extra charge
+              and gracefully degrades to native signals when unavailable.
             </p>
           </CardContent>
         </Card>
