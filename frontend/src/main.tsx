@@ -5,6 +5,7 @@ import { MsalProvider } from "@azure/msal-react";
 import { msalConfig } from "./auth/msalConfig";
 import App from "./App";
 import { ThemeProvider } from "./components/layout/ThemeProvider";
+import { DensityProvider } from "./components/layout/DensityProvider";
 import { ToastProvider } from "./components/ui/toast";
 import "./index.css";
 
@@ -61,9 +62,11 @@ async function startApp() {
       <StrictMode>
         <MsalProvider instance={msalInstance}>
           <ThemeProvider>
-            <ToastProvider>
+            <DensityProvider>
+              <ToastProvider>
               <App />
             </ToastProvider>
+            </DensityProvider>
           </ThemeProvider>
         </MsalProvider>
       </StrictMode>
@@ -72,3 +75,4 @@ async function startApp() {
 }
 
 startApp();
+

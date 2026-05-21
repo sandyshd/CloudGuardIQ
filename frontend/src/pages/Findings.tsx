@@ -6,6 +6,7 @@ import { triggerScan } from "../api/scans";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { PageHeader } from "../components/common/PageHeader";
+import { EmptyState } from "../components/common/EmptyState";
 import { useToast } from "../components/ui/toast";
 import { Button } from "../components/ui/button";
 import { Alert, AlertDescription } from "../components/ui/alert";
@@ -115,7 +116,7 @@ export function Findings() {
         ? subscriptionFilter
         : selectedSub?.subscription_id;
 
-  const { findings, loading, error, refresh } = useFindings(effectiveSub);
+  const { findings, loading, error, refresh, applyUpdate } = useFindings(effectiveSub);
   const navigate = useNavigate();
   const [selected, setSelected] = useState<FindingResult | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Severity | "ALL">("ALL");
@@ -423,37 +424,46 @@ export function Findings() {
 
       {findings.length === 0 && !error ? (
         subscriptions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--card))] p-12 text-center">
-            <Link2 className="mb-4 h-12 w-12 text-[hsl(var(--muted-foreground))]" />
-            <h2 className="text-lg font-semibold">Link a subscription to start scanning</h2>
-            <p className="mb-4 mt-1 max-w-md text-sm text-[hsl(var(--muted-foreground))]">
-              Connect an Azure subscription on the Settings page before running your first scan.
-            </p>
-            <Button onClick={() => navigate("/settings")}>Go to Settings</Button>
-          </div>
+          <EmptyState
+            icon={<Link2 className="h-7 w-7" />}
+            title="Link a subscription to start scanning"
+            message="Connect an Azure subscription on the Settings page before running your first scan."
+            primaryLabel="Go to Settings"
+            primaryTo="/settings"
+          />
         ) : (
-          <div className="flex flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--card))] p-12 text-center">
-            <Scan className="mb-4 h-12 w-12 text-[hsl(var(--muted-foreground))]" />
-            <h2 className="text-lg font-semibold">No findings yet</h2>
-            <p className="mb-4 mt-1 text-sm text-[hsl(var(--muted-foreground))]">
-              Run your first scan to discover security issues and cost waste.
-            </p>
-            {scanError && (
-              <p className="mb-2 text-sm text-[hsl(var(--severity-critical))]">{scanError}</p>
-            )}
-            <Button onClick={handleRunScan} disabled={scanning}>
-              {scanning ? "Scanning..." : "Run your first scan"}
-            </Button>
-          </div>
+          <EmptyState
+            icon={<Scan className="h-7 w-7" />}
+            title="No findings yet"
+            message="Run your first scan to discover security issues and cost waste."
+            primaryLabel={scanning ? "Scanning..." : "Run your first scan"}
+            primaryOnClick={handleRunScan}
+            primaryDisabled={scanning}
+            secondary={
+              scanError ? (
+                <p className="text-sm text-[hsl(var(--severity-critical))]">{scanError}</p>
+              ) : null
+            }
+          />
         )
       ) : (
         <FindingTable findings={filtered} onSelect={setSelected} />
       )}
 
       {selected && (
-        <FindingDetailPanel finding={selected} onClose={() => setSelected(null)} />
+        <FindingDetailPanel
+          finding={selected}
+          onClose={() => setSelected(null)}
+          onUpdate={(next) => {
+            applyUpdate(next);
+            setSelected(next);
+          }}
+        />
       )}
     </div>
   );
 }
+
+
+
 

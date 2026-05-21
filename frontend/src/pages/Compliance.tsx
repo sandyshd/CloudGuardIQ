@@ -7,7 +7,7 @@ import { FrameworkScorecard } from "../components/compliance/FrameworkScorecard"
 import { ControlList } from "../components/compliance/ControlList";
 import { ReportHistory } from "../components/compliance/ReportHistory";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
-import { LoadingSpinner } from "../components/common/LoadingSpinner";
+import { PageSkeleton } from "../components/common/PageSkeleton";
 import { EmptyState } from "../components/common/EmptyState";
 import { PageHeader } from "../components/common/PageHeader";
 import { Link2, ClipboardCheck } from "lucide-react";
@@ -26,7 +26,7 @@ export function Compliance() {
   const [framework, setFramework] = useState<string | null>(null);
   const [selected, setSelected] = useState<FindingResult | null>(null);
 
-  if (loading || subsLoading) return <LoadingSpinner />;
+  if (loading || subsLoading) return <PageSkeleton />;
 
   const subtitle = selectedSub
     ? `Posture across linked frameworks · ${selectedSub.display_name || selectedSub.subscription_id}`
@@ -168,3 +168,4 @@ export function Compliance() {
     </div>
   );
 }
+

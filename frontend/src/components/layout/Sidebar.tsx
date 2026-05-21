@@ -114,7 +114,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "relative z-20 flex h-screen flex-col border-r border-[hsl(var(--sidebar-border))] bg-[hsl(var(--sidebar-background))] text-[hsl(var(--sidebar-foreground))] transition-[width] duration-200 ease-out",
+        "relative z-20 hidden h-screen flex-col border-r md:flex border-[hsl(var(--sidebar-border))] bg-[hsl(var(--sidebar-background))] text-[hsl(var(--sidebar-foreground))] transition-[width] duration-200 ease-out",
         width,
       )}
     >
@@ -271,3 +271,4 @@ export function Sidebar() {
     </aside>
   );
 }
+

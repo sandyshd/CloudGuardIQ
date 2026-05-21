@@ -2,7 +2,7 @@ import { Skeleton } from "../ui/skeleton";
 
 export function PageSkeleton({ withStats = true }: { withStats?: boolean }) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" role="status" aria-live="polite" aria-label="Loading page">
       {/* PageHeader */}
       <div className="flex items-end justify-between gap-4 border-b border-[hsl(var(--border))] pb-5">
         <div className="space-y-2">
@@ -29,6 +29,7 @@ export function PageSkeleton({ withStats = true }: { withStats?: boolean }) {
       )}
 
       <TableSkeleton rows={6} />
+      <span className="sr-only">Loading content…</span>
     </div>
   );
 }
@@ -50,6 +51,52 @@ export function TableSkeleton({ rows = 6 }: { rows?: number }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Skeleton mirroring the AIFix / detail layout (two-column with sidebar). */
+export function DetailSkeleton() {
+  return (
+    <div className="space-y-6" role="status" aria-live="polite" aria-label="Loading details">
+      <div className="flex items-end justify-between gap-4 border-b border-[hsl(var(--border))] pb-5">
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-72" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <Skeleton className="h-9 w-32" />
+      </div>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="space-y-4">
+          <div className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 space-y-3">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-5/6" />
+            <Skeleton className="h-4 w-3/4" />
+          </div>
+          <div className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 space-y-3">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-28 w-full" />
+          </div>
+          <div className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 space-y-3">
+            <Skeleton className="h-5 w-44" />
+            <Skeleton className="h-40 w-full" />
+          </div>
+        </div>
+        <div className="space-y-4">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 space-y-2"
+            >
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-6 w-36" />
+              <Skeleton className="h-4 w-full" />
+            </div>
+          ))}
+        </div>
+      </div>
+      <span className="sr-only">Loading…</span>
     </div>
   );
 }

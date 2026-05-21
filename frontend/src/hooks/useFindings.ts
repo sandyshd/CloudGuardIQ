@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { FindingResult } from "../types";
 import { getFindings } from "../api/findings";
 
@@ -24,5 +24,16 @@ export function useFindings(subscriptionId?: string) {
     refresh();
   }, [refresh]);
 
-  return { findings, loading, error, refresh };
+  /**
+   * Merge an updated finding into local state without a network round-trip.
+   * Used by optimistic mutations (acknowledge / snooze / resolve) so the list
+   * reflects changes immediately, with refresh() acting as eventual consistency.
+   */
+  const applyUpdate = useCallback((updated: FindingResult) => {
+    setFindings((current) =>
+      current.map((f) => (f.finding_id === updated.finding_id ? updated : f)),
+    );
+  }, []);
+
+  return { findings, loading, error, refresh, applyUpdate };
 }

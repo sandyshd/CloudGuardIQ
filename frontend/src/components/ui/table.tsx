@@ -36,7 +36,8 @@ export const TableRow = forwardRef<HTMLTableRowElement, HTMLAttributes<HTMLTable
     <tr
       ref={ref}
       className={cn(
-        "border-b border-[hsl(var(--border))] transition-colors hover:bg-[hsl(var(--muted)/0.45)] data-[state=selected]:bg-[hsl(var(--muted))]",
+        // Active-row styling is driven by data-active set by keyboard nav (j/k).
+        "cgq-row border-b border-[hsl(var(--border))] transition-colors hover:bg-[hsl(var(--muted)/0.45)] data-[state=selected]:bg-[hsl(var(--muted))]",
         className,
       )}
       {...props}
@@ -50,7 +51,7 @@ export const TableHead = forwardRef<HTMLTableCellElement, ThHTMLAttributes<HTMLT
     <th
       ref={ref}
       className={cn(
-        "h-10 px-3 text-left align-middle text-[11px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]",
+        "cgq-th h-10 px-3 text-left align-middle text-[11px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]",
         className,
       )}
       {...props}
@@ -61,7 +62,11 @@ TableHead.displayName = "TableHead";
 
 export const TableCell = forwardRef<HTMLTableCellElement, TdHTMLAttributes<HTMLTableCellElement>>(
   ({ className, ...props }, ref) => (
-    <td ref={ref} className={cn("px-3 py-3 align-middle", className)} {...props} />
+    <td
+      ref={ref}
+      className={cn("cgq-td px-3 py-3 align-middle", className)}
+      {...props}
+    />
   )
 );
 TableCell.displayName = "TableCell";

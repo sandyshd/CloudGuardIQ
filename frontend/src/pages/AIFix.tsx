@@ -13,7 +13,7 @@ import {
 import { EmptyState } from "../components/common/EmptyState";
 import { PageHeader } from "../components/common/PageHeader";
 import { useSubscriptions } from "../hooks/useSubscriptions";
-import { LoadingSpinner } from "../components/common/LoadingSpinner";
+import { DetailSkeleton } from "../components/common/PageSkeleton";
 import { SeverityBadge } from "../components/common/SeverityBadge";
 import { DataTierBadge } from "../components/common/DataTierBadge";
 import { Alert, AlertDescription } from "../components/ui/alert";
@@ -175,7 +175,7 @@ export function AIFix() {
     );
   }
 
-  if (loading && !finding) return <LoadingSpinner />;
+  if (loading && !finding) return <DetailSkeleton />;
   if (error) {
     return (
       <Alert variant="destructive">
@@ -443,4 +443,5 @@ export function AIFix() {
     </div>
   );
 }
+
 
