@@ -37,7 +37,7 @@ import { useSubscriptions } from "../hooks/useSubscriptions";
 import { triggerScan } from "../api/scans";
 import { TIER2_VALUES, TIER3_VALUES } from "../types";
 import type { FindingResult, Severity, DataTier } from "../types";
-import { cn } from "../lib/utils";
+import { cn, isOpenFinding } from "../lib/utils";
 
 const SEV_WEIGHT: Record<Severity, number> = {
   CRITICAL: 10,
@@ -59,7 +59,7 @@ const SEV_COLOR: Record<Severity, string> = {
 function postureScore(findings: FindingResult[]): number {
   // Dampened severity-weighted score so a handful of findings does not crush
   // the gauge. 0 findings -> 100; large penalty asymptotically approaches ~40.
-  const open = findings.filter((f) => (f.status ?? "OPEN") === "OPEN");
+  const open = findings.filter(isOpenFinding);
   const penalty = open.reduce((s, f) => s + (SEV_WEIGHT[f.severity] ?? 0), 0);
   const damped = penalty <= 0 ? 0 : 12 * Math.log10(1 + penalty);
   return Math.max(0, Math.min(100, Math.round(100 - damped)));
@@ -151,7 +151,7 @@ export function Dashboard() {
 
   // ── Derived metrics ────────────────────────────────────────────────────
   const metrics = useMemo(() => {
-    const open = findings.filter((f) => (f.status ?? "OPEN") === "OPEN");
+    const open = findings.filter(isOpenFinding);
     const score = postureScore(findings);
     const spark = postureSparkline(findings);
     const trend = spark.length >= 2 ? spark[spark.length - 1] - spark[0] : 0;
@@ -297,7 +297,14 @@ export function Dashboard() {
   }
 
   const scorecardScore = postureScoreFromScorecard(scorecard);
-  const displayedScore = scorecardScore ?? metrics.score;
+  // Defence in depth: if the scorecard reports a higher score than the
+  // heuristic, the scorecard is likely undercounting failed controls (e.g.
+  // findings without a mapped compliance tag). Take the lower of the two
+  // so a 100% scorecard can never hide real open findings.
+  const displayedScore =
+    scorecardScore == null
+      ? metrics.score
+      : Math.min(scorecardScore, metrics.score);
   const scoreColor =
     displayedScore >= 80
       ? "hsl(var(--success))"
