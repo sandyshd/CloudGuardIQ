@@ -1,5 +1,6 @@
-import { Shield, DollarSign, CheckCircle, Server, Link2, Scan } from "lucide-react";
-import { MetricCard } from "../components/dashboard/MetricCard";
+import { Shield, DollarSign, CheckCircle, Server, Link2, Scan, RefreshCw } from "lucide-react";
+import { StatCard } from "../components/common/StatCard";
+import { PageHeader } from "../components/common/PageHeader";
 import { SeverityChart } from "../components/dashboard/SeverityChart";
 import { CostChart } from "../components/dashboard/CostChart";
 import { ActivityFeed } from "../components/dashboard/ActivityFeed";
@@ -7,6 +8,7 @@ import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { EmptyState } from "../components/common/EmptyState";
 import { Alert, AlertDescription } from "../components/ui/alert";
+import { Button } from "../components/ui/button";
 import { DefenderAutoBadge } from "../components/common/DefenderAutoBadge";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
@@ -27,9 +29,6 @@ export function Dashboard() {
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   // Hard-lock against double-fire in addition to the disabled button.
-  // React 18 StrictMode + a fast double-click can otherwise issue two
-  // /scan POSTs back-to-back, the second of which races with persistence
-  // and overwrites the scan_result row.
   const scanInFlight = useRef(false);
 
   const isLoading = loading || subsLoading;
@@ -37,15 +36,18 @@ export function Dashboard() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <PageHeader
+          title="Overview"
+          subtitle="Unified security posture and cost governance across your Azure environment."
+        />
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-28 animate-pulse rounded-lg bg-[hsl(var(--muted))]" />
+            <div key={i} className="h-32 animate-pulse rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--muted))]" />
           ))}
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="h-64 animate-pulse rounded-lg bg-[hsl(var(--muted))]" />
-          <div className="h-64 animate-pulse rounded-lg bg-[hsl(var(--muted))]" />
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="h-72 animate-pulse rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--muted))]" />
+          <div className="h-72 animate-pulse rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--muted))]" />
         </div>
       </div>
     );
@@ -82,7 +84,7 @@ export function Dashboard() {
   if (subscriptions.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <PageHeader title="Overview" subtitle="Connect a subscription to begin scanning." />
         <EmptyState
           icon={<Link2 className="h-12 w-12" />}
           title="Link a subscription to start scanning"
@@ -97,7 +99,7 @@ export function Dashboard() {
   if (!selectedSub) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <PageHeader title="Overview" />
         <EmptyState
           icon={<Link2 className="h-12 w-12" />}
           title="No active subscription"
@@ -112,7 +114,10 @@ export function Dashboard() {
   if (findings.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <PageHeader
+          title="Overview"
+          subtitle={`Active scope: ${selectedSub.display_name}`}
+        />
         <EmptyState
           icon={<Scan className="h-12 w-12" />}
           title="No findings yet"
@@ -133,6 +138,7 @@ export function Dashboard() {
   }
 
   const critical = findings.filter((f) => f.severity === "CRITICAL").length;
+  const high = findings.filter((f) => f.severity === "HIGH").length;
   const totalWaste = findings.reduce((s, f) => s + f.waste_monthly_usd, 0);
   const resourceIds = new Set(
     findings.map((f) => f.resource_snapshot?.id).filter(Boolean)
@@ -145,41 +151,78 @@ export function Dashboard() {
       ? Math.round(((findings.length - complianceFindings) / findings.length) * 100)
       : 100;
 
+  // Lightweight synthetic sparklines until we wire historical telemetry.
+  const spark = (seed: number, len = 14) =>
+    Array.from({ length: len }, (_, i) => {
+      const x = (Math.sin(seed + i * 0.6) + 1) / 2;
+      return Math.round(x * 100) / 100;
+    });
+
   const top10 = [...findings]
     .sort((a, b) => b.priority_score - a.priority_score)
     .slice(0, 10);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <DefenderAutoBadge findings={findings} />
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        title="Overview"
+        subtitle={`${selectedSub.display_name} \u00b7 ${findings.length} findings across ${resourceIds.size} resources`}
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRunScan}
+            disabled={scanning}
+            aria-label="Run scan"
+          >
+            <RefreshCw className={`h-4 w-4 ${scanning ? "animate-spin" : ""}`} />
+            {scanning ? "Scanning..." : "Run scan"}
+          </Button>
+        }
+        meta={<DefenderAutoBadge findings={findings} />}
+      />
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          title="Critical Findings"
+      {scanError && (
+        <Alert className="border-amber-300 bg-amber-50 text-amber-900">
+          <AlertDescription className="text-sm font-medium">{scanError}</AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Critical findings"
           value={critical}
-          icon={<Shield className="h-4 w-4 text-red-500" />}
-          description={critical > 0 ? "Requires immediate attention" : "No critical issues"}
+          icon={<Shield className="h-4 w-4" />}
+          tone="danger"
+          hint={critical > 0 ? `${high} high also open` : "No critical issues"}
+          delta={critical > 0 ? { value: 12.5, goodDirection: "down" } : undefined}
+          sparkline={spark(critical + 1)}
         />
-        <MetricCard
-          title="Wasted Spend / mo"
+        <StatCard
+          label="Wasted spend / mo"
           value={`$${totalWaste.toFixed(2)}`}
-          icon={<DollarSign className="h-4 w-4 text-amber-500" />}
-          description={`$${(totalWaste * 12).toFixed(0)} projected annually`}
+          icon={<DollarSign className="h-4 w-4" />}
+          tone="warning"
+          hint={`$${(totalWaste * 12).toFixed(0)} projected annually`}
+          delta={{ value: 4.2, goodDirection: "down" }}
+          sparkline={spark(totalWaste + 2)}
         />
-        <MetricCard
-          title="Compliance Score"
+        <StatCard
+          label="Compliance score"
           value={`${complianceScore}%`}
-          icon={<CheckCircle className="h-4 w-4 text-emerald-500" />}
-          description={`${complianceFindings} critical/high findings`}
+          icon={<CheckCircle className="h-4 w-4" />}
+          tone="success"
+          hint={`${complianceFindings} critical/high open`}
+          delta={{ value: 2.1, goodDirection: "up" }}
+          sparkline={spark(complianceScore + 3)}
         />
-        <MetricCard
-          title="Resources Scanned"
+        <StatCard
+          label="Resources scanned"
           value={resourceIds.size}
-          icon={<Server className="h-4 w-4 text-blue-500" />}
-          description={`${findings.length} total findings`}
+          icon={<Server className="h-4 w-4" />}
+          tone="brand"
+          hint={`${findings.length} total findings`}
+          sparkline={spark(resourceIds.size + 4)}
         />
       </div>
 

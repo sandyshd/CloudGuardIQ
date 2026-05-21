@@ -46,8 +46,6 @@ function buildStats(findings: FindingResult[]): FrameworkStats[] {
       stat.bySeverity[f.severity] += 1;
     });
   });
-  // Compute score after counts settle: % of findings that are NOT
-  // critical/high. Same formula used by ComplianceKpis + Dashboard.
   for (const stat of map.values()) {
     const failing = stat.bySeverity.CRITICAL + stat.bySeverity.HIGH;
     stat.score =
@@ -55,25 +53,24 @@ function buildStats(findings: FindingResult[]): FrameworkStats[] {
         ? 100
         : Math.round(((stat.total - failing) / stat.total) * 100);
   }
-  // Sort: worst posture first, then alphabetically.
   return [...map.values()].sort(
     (a, b) => a.score - b.score || a.name.localeCompare(b.name),
   );
 }
 
-function scoreColour(score: number): string {
-  if (score >= 90) return "#10b981"; // emerald
-  if (score >= 75) return "#f59e0b"; // amber
-  if (score >= 50) return "#f97316"; // orange
-  return "#dc2626"; // red
+function scoreColor(score: number): string {
+  if (score >= 90) return "hsl(var(--success))";
+  if (score >= 75) return "hsl(var(--warning))";
+  if (score >= 50) return "hsl(var(--severity-high))";
+  return "hsl(var(--severity-critical))";
 }
 
-const SEV_COLOURS: Record<Severity, string> = {
-  CRITICAL: "#dc2626",
-  HIGH: "#f97316",
-  MEDIUM: "#eab308",
-  LOW: "#3b82f6",
-  INFORMATIONAL: "#9ca3af",
+const SEV_VAR: Record<Severity, string> = {
+  CRITICAL: "hsl(var(--severity-critical))",
+  HIGH: "hsl(var(--severity-high))",
+  MEDIUM: "hsl(var(--severity-medium))",
+  LOW: "hsl(var(--severity-low))",
+  INFORMATIONAL: "hsl(var(--severity-info))",
 };
 
 const SEV_ORDER: Severity[] = [
@@ -95,7 +92,7 @@ function SeverityStrip({ stat }: { stat: FrameworkStats }) {
   }
   return (
     <div className="space-y-2">
-      <div className="flex h-2 w-full overflow-hidden rounded-full bg-[hsl(var(--muted))]">
+      <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-[hsl(var(--muted))]">
         {SEV_ORDER.map((sev) => {
           const c = stat.bySeverity[sev];
           if (c === 0) return null;
@@ -103,23 +100,25 @@ function SeverityStrip({ stat }: { stat: FrameworkStats }) {
           return (
             <div
               key={sev}
-              style={{ width: `${pct}%`, backgroundColor: SEV_COLOURS[sev] }}
+              style={{ width: `${pct}%`, backgroundColor: SEV_VAR[sev] }}
               title={`${sev}: ${c}`}
             />
           );
         })}
       </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
         {SEV_ORDER.filter((sev) => stat.bySeverity[sev] > 0).map((sev) => (
           <span key={sev} className="flex items-center gap-1">
             <span
               className="inline-block h-2 w-2 rounded-full"
-              style={{ backgroundColor: SEV_COLOURS[sev] }}
+              style={{ backgroundColor: SEV_VAR[sev] }}
             />
             <span className="text-[hsl(var(--muted-foreground))]">
               {sev[0] + sev.slice(1).toLowerCase()}
             </span>
-            <span className="font-semibold">{stat.bySeverity[sev]}</span>
+            <span className="font-semibold text-[hsl(var(--foreground))]">
+              {stat.bySeverity[sev]}
+            </span>
           </span>
         ))}
       </div>
@@ -136,23 +135,27 @@ function FrameworkCard({
   active: boolean;
   onClick: () => void;
 }) {
-  const colour = scoreColour(stat.score);
-  const data = [{ name: "score", value: stat.score, fill: colour }];
+  const color = scoreColor(stat.score);
+  const data = [{ name: "score", value: stat.score, fill: color }];
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "group flex w-full flex-col rounded-lg border bg-[hsl(var(--background))] p-4 text-left cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500",
+        "group flex w-full flex-col rounded-[var(--radius)] border bg-[hsl(var(--card))] p-4 text-left transition-all",
+        "hover:border-[hsl(var(--primary)/0.4)] hover:shadow-sm",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]",
         active
-          ? "border-blue-500 ring-1 ring-blue-500 shadow-sm"
+          ? "border-[hsl(var(--primary))] ring-1 ring-[hsl(var(--primary)/0.3)] shadow-sm"
           : "border-[hsl(var(--border))]",
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold">{stat.name}</div>
+          <div className="truncate text-sm font-semibold text-[hsl(var(--foreground))]">
+            {stat.name}
+          </div>
           <div className="mt-0.5 text-xs text-[hsl(var(--muted-foreground))]">
             {stat.total} open control{stat.total === 1 ? "" : "s"}
           </div>
@@ -162,7 +165,7 @@ function FrameworkCard({
             <RadialBarChart
               cx="50%"
               cy="50%"
-              innerRadius="70%"
+              innerRadius="72%"
               outerRadius="100%"
               barSize={8}
               data={data}
@@ -183,8 +186,8 @@ function FrameworkCard({
             </RadialBarChart>
           </ResponsiveContainer>
           <div
-            className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm font-bold"
-            style={{ color: colour }}
+            className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm font-bold tabular-nums"
+            style={{ color }}
           >
             {stat.score}%
           </div>
@@ -192,9 +195,6 @@ function FrameworkCard({
       </div>
       <div className="mt-3">
         <SeverityStrip stat={stat} />
-      </div>
-      <div className="mt-3 text-xs text-[hsl(var(--muted-foreground))] opacity-0 transition-opacity group-hover:opacity-100">
-        {active ? "Click to clear filter" : "Click to filter controls"}
       </div>
     </button>
   );
@@ -211,7 +211,7 @@ export function FrameworkScorecard({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Frameworks</CardTitle>
+          <CardTitle>Frameworks</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-[hsl(var(--muted-foreground))]">
@@ -223,18 +223,18 @@ export function FrameworkScorecard({
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
+        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
           Frameworks
         </h2>
         {selected && (
           <button
             type="button"
             onClick={() => onSelect(null)}
-            className="text-xs font-medium text-blue-600 hover:underline"
+            className="text-xs font-medium text-[hsl(var(--primary))] hover:underline"
           >
-            Clear framework filter
+            Clear filter
           </button>
         )}
       </div>

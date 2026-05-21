@@ -4,6 +4,7 @@ import { PublicClientApplication, EventType } from "@azure/msal-browser";
 import { MsalProvider } from "@azure/msal-react";
 import { msalConfig } from "./auth/msalConfig";
 import App from "./App";
+import { ThemeProvider } from "./components/layout/ThemeProvider";
 import "./index.css";
 
 // Capture the Entra ID admin-consent redirect query params BEFORE MSAL
@@ -63,7 +64,9 @@ async function startApp() {
     createRoot(root).render(
       <StrictMode>
         <MsalProvider instance={msalInstance}>
-          <App />
+          <ThemeProvider>
+            <App />
+          </ThemeProvider>
         </MsalProvider>
       </StrictMode>
     );
@@ -71,4 +74,6 @@ async function startApp() {
 }
 
 startApp();
+
+
 
