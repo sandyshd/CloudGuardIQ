@@ -182,9 +182,9 @@ function Stepper({ current }: { current: StepId }): JSX.Element {
           step.id < current ? "done" : step.id === current ? "current" : "upcoming";
         const dotClasses =
           state === "done"
-            ? "bg-green-600 text-white border-green-600"
+            ? "bg-[hsl(var(--success))] text-[hsl(var(--success-foreground,0_0%_100%))] border-[hsl(var(--success))]"
             : state === "current"
-              ? "bg-blue-600 text-white border-blue-600"
+              ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-[hsl(var(--primary))]"
               : "bg-white text-[hsl(var(--muted-foreground))] border-[hsl(var(--border))]";
         return (
           <li key={step.id} className="flex items-start gap-2">
@@ -257,7 +257,7 @@ function ArtifactRow({ name, value }: { name: string; value: string }): JSX.Elem
               href={value}
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700"
+              className="inline-flex h-9 items-center justify-center rounded-md bg-[hsl(var(--primary))] px-3 text-sm font-medium text-[hsl(var(--primary-foreground))] hover:bg-[hsl(var(--primary)/0.9)]"
             >
               Open
             </a>
@@ -299,7 +299,7 @@ function AzureInstructions({ artifacts }: { artifacts: Record<string, string> })
         and continue to <strong>Verify</strong>.
       </li>
       {!deployUrl && (
-        <li className="text-amber-700">
+        <li className="text-[hsl(var(--warning))]">
           Deploy URL is not available yet. Click <strong>Generate Artifacts</strong> above.
         </li>
       )}
@@ -318,7 +318,7 @@ function AwsInstructions({ artifacts }: { artifacts: Record<string, string> }): 
             href={cfnUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="font-medium text-blue-700 underline"
+            className="font-medium text-[hsl(var(--primary))] underline"
           >
             CloudFormation Launch Stack
           </a>
@@ -655,7 +655,7 @@ export function MultiCloudOnboardingHub(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      <Card className="border-blue-200">
+      <Card className="border-[hsl(var(--primary)/0.3)]">
         <CardHeader>
           <CardTitle className="text-lg">Multi-Cloud Onboarding</CardTitle>
           <CardDescription>
@@ -831,11 +831,11 @@ export function MultiCloudOnboardingHub(): JSX.Element {
 
               {hasArtifacts && (
                 <>
-                  <div className="rounded border border-blue-200 bg-blue-50 p-3">
-                    <div className="text-sm font-semibold text-blue-900">
+                  <div className="rounded border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.06)] p-3">
+                    <div className="text-sm font-semibold text-[hsl(var(--foreground))]">
                       Apply these steps in {PROVIDER_LABELS[session.provider]}
                     </div>
-                    <div className="mt-2 text-blue-900">
+                    <div className="mt-2 text-[hsl(var(--foreground))]">
                       <ProviderInstructions
                         provider={session.provider}
                         artifacts={session.artifacts}

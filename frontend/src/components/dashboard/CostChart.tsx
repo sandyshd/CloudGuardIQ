@@ -1,4 +1,11 @@
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import type { FindingResult } from "../../types";
 
@@ -12,17 +19,9 @@ const CATEGORY_MAP: Record<string, string> = {
   snapshots: "Snapshots",
 };
 
-// Distinct, colour-blind-friendly palette for waste categories.
-const PALETTE = [
-  "#f59e0b",
-  "#0ea5e9",
-  "#10b981",
-  "#8b5cf6",
-  "#ef4444",
-  "#ec4899",
-  "#14b8a6",
-  "#f43f5e",
-];
+function chartColor(idx: number): string {
+  return `hsl(var(--chart-${(idx % 6) + 1}))`;
+}
 
 function categorize(resourceType: string): string {
   const short = resourceType.split("/").pop() || resourceType;
@@ -50,8 +49,8 @@ export function CostChart({ findings }: { findings: FindingResult[] }) {
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">Waste by Category</CardTitle>
+      <CardHeader>
+        <CardTitle>Waste by category</CardTitle>
       </CardHeader>
       <CardContent>
         {total === 0 ? (
@@ -65,20 +64,24 @@ export function CostChart({ findings }: { findings: FindingResult[] }) {
                 data={data}
                 dataKey="value"
                 nameKey="name"
-                innerRadius={55}
-                outerRadius={90}
+                innerRadius={58}
+                outerRadius={92}
                 paddingAngle={2}
-                stroke="hsl(var(--background))"
+                stroke="hsl(var(--card))"
                 strokeWidth={2}
               >
                 {data.map((entry, idx) => (
-                  <Cell
-                    key={entry.name}
-                    fill={PALETTE[idx % PALETTE.length]}
-                  />
+                  <Cell key={entry.name} fill={chartColor(idx)} />
                 ))}
               </Pie>
               <Tooltip
+                contentStyle={{
+                  background: "hsl(var(--card))",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  color: "hsl(var(--foreground))",
+                }}
                 formatter={(value: number, _name, ctx) => {
                   const pct = total > 0 ? Math.round((value / total) * 100) : 0;
                   return [`$${value} (${pct}%)`, ctx.payload.name];
@@ -88,7 +91,7 @@ export function CostChart({ findings }: { findings: FindingResult[] }) {
                 verticalAlign="bottom"
                 height={32}
                 iconType="circle"
-                wrapperStyle={{ fontSize: 12 }}
+                wrapperStyle={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}
               />
             </PieChart>
           </ResponsiveContainer>

@@ -2,6 +2,10 @@ import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Alert, AlertDescription } from "../ui/alert";
+import { Badge } from "../ui/badge";
+import { ConfirmDialog } from "../ui/confirm-dialog";
+import { useToast } from "../ui/toast";
+import { Cloud, Pencil, Power, Trash2 } from "lucide-react";
 import { useSubscriptions } from "../../hooks/useSubscriptions";
 import { LoadingSpinner } from "../common/LoadingSpinner";
 import type { Subscription } from "../../types";
@@ -31,9 +35,7 @@ function formatApiError(err: unknown, fallback: string): string {
     return `Request failed with status ${status}`;
   }
   if (e?.code === "ERR_NETWORK") {
-    return (
-      "Could not reach the CloudGuardIQ API. Check your connection or sign in again, then retry."
-    );
+    return "Could not reach the CloudGuardIQ API. Check your connection or sign in again, then retry.";
   }
   if (e?.code === "ECONNABORTED") {
     return "Request timed out. Please retry.";
@@ -41,38 +43,44 @@ function formatApiError(err: unknown, fallback: string): string {
   return e?.message ?? fallback;
 }
 
+const inputClass =
+  "h-9 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 text-sm text-[hsl(var(--foreground))] placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:border-[hsl(var(--ring))]";
+
 export function SubscriptionList() {
   const { subscriptions, loading, remove, toggle, replace } = useSubscriptions();
+  const { toast } = useToast();
 
   const [error, setError] = useState<string | null>(null);
-
-  // Edit-in-place state: the subscription_id of the row currently being
-  // edited, plus the working copy of its fields.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editId, setEditId] = useState("");
   const [editName, setEditName] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
 
-  const counter = useMemo(() => {
-    const total = subscriptions.length;
-    return `${total} linked`;
-  }, [subscriptions.length]);
+  const [confirmTarget, setConfirmTarget] = useState<Subscription | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  const counter = useMemo(() => `${subscriptions.length} linked`, [subscriptions.length]);
 
   if (loading) return <LoadingSpinner />;
 
-  const handleRemove = async (id: string, displayName: string) => {
-    setError(null);
-    const confirmed = window.confirm(
-      `Remove subscription "${displayName || id}"?\n\n` +
-        "Stops scans immediately. Existing findings are kept for 30 days " +
-        "so re-linking the same subscription restores your history. After " +
-        "that they are permanently deleted.",
-    );
-    if (!confirmed) return;
+  const handleRemoveConfirmed = async () => {
+    if (!confirmTarget) return;
+    setRemoving(true);
     try {
-      await remove(id);
+      await remove(confirmTarget.subscription_id);
+      toast({
+        tone: "success",
+        title: "Subscription removed",
+        description:
+          confirmTarget.display_name || confirmTarget.subscription_id,
+      });
+      setConfirmTarget(null);
     } catch (err) {
-      setError(formatApiError(err, "Failed to remove subscription"));
+      const msg = formatApiError(err, "Failed to remove subscription");
+      setError(msg);
+      toast({ tone: "error", title: "Remove failed", description: msg });
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -81,8 +89,14 @@ export function SubscriptionList() {
     const next = currentState === "Enabled" ? "Disabled" : "Enabled";
     try {
       await toggle(id, next);
+      toast({
+        tone: "success",
+        title: next === "Enabled" ? "Subscription enabled" : "Subscription disabled",
+      });
     } catch (err) {
-      setError(formatApiError(err, "Failed to update subscription"));
+      const msg = formatApiError(err, "Failed to update subscription");
+      setError(msg);
+      toast({ tone: "error", title: "Update failed", description: msg });
     }
   };
 
@@ -116,9 +130,12 @@ export function SubscriptionList() {
     setEditSubmitting(true);
     try {
       await replace(originalId, trimmedId, editName);
+      toast({ tone: "success", title: "Subscription updated" });
       cancelEdit();
     } catch (err) {
-      setError(formatApiError(err, "Failed to update subscription"));
+      const msg = formatApiError(err, "Failed to update subscription");
+      setError(msg);
+      toast({ tone: "error", title: "Update failed", description: msg });
     } finally {
       setEditSubmitting(false);
     }
@@ -126,9 +143,13 @@ export function SubscriptionList() {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-base">Linked Subscriptions</CardTitle>
-        <span className="text-xs text-[hsl(var(--muted-foreground))]">{counter}</span>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>Linked subscriptions</CardTitle>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
+            {counter}
+          </span>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {error && (
@@ -138,15 +159,23 @@ export function SubscriptionList() {
         )}
 
         {subscriptions.length === 0 ? (
-          <p className="text-sm text-[hsl(var(--muted-foreground))]">
-            No subscriptions linked yet. Use{" "}
-            <span className="font-medium">Multi-Cloud Onboarding</span> above to
-            connect an Azure tenant, AWS account, or GCP project.
-          </p>
+          <div className="flex items-start gap-3 rounded-md border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted)/0.4)] p-4 text-sm text-[hsl(var(--muted-foreground))]">
+            <Cloud className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--primary))]" />
+            <p>
+              No subscriptions linked yet. Use{" "}
+              <span className="font-medium text-[hsl(var(--foreground))]">
+                Multi-Cloud Onboarding
+              </span>{" "}
+              above to connect an Azure tenant, AWS account, or GCP project.
+            </p>
+          </div>
         ) : (
           <p className="text-xs text-[hsl(var(--muted-foreground))]">
             To add a new subscription, account, or project use{" "}
-            <span className="font-medium">Multi-Cloud Onboarding</span> above.
+            <span className="font-medium text-[hsl(var(--foreground))]">
+              Multi-Cloud Onboarding
+            </span>{" "}
+            above.
           </p>
         )}
 
@@ -155,19 +184,23 @@ export function SubscriptionList() {
             editingId === sub.subscription_id ? (
               <div
                 key={sub.subscription_id}
-                className="space-y-2 rounded border border-blue-300 bg-blue-50/40 p-3"
+                className="space-y-3 rounded-[var(--radius)] border border-[hsl(var(--primary)/0.4)] bg-[hsl(var(--primary)/0.05)] p-4"
               >
-                <div className="text-sm font-medium">Edit subscription</div>
-                <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                  Fix a wrong subscription ID or rename the link. Changing the ID
-                  re-creates the link with the new GUID.
-                </p>
+                <div>
+                  <div className="text-sm font-semibold text-[hsl(var(--foreground))]">
+                    Edit subscription
+                  </div>
+                  <p className="mt-0.5 text-xs text-[hsl(var(--muted-foreground))]">
+                    Fix a wrong subscription ID or rename the link. Changing the
+                    ID re-creates the link with the new GUID.
+                  </p>
+                </div>
                 <div className="flex flex-col gap-2 md:flex-row">
                   <input
                     type="text"
                     value={editId}
                     onChange={(e) => setEditId(e.target.value.trim())}
-                    className="flex-1 rounded border px-2 py-1 text-sm font-mono"
+                    className={`${inputClass} flex-1 font-mono`}
                     placeholder="00000000-0000-0000-0000-000000000000"
                     required
                   />
@@ -175,7 +208,7 @@ export function SubscriptionList() {
                     type="text"
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
-                    className="flex-1 rounded border px-2 py-1 text-sm"
+                    className={`${inputClass} flex-1`}
                     placeholder="Display name (optional)"
                   />
                   <div className="flex gap-2">
@@ -202,29 +235,33 @@ export function SubscriptionList() {
             ) : (
               <div
                 key={sub.subscription_id}
-                className="flex items-center justify-between rounded border p-3"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 transition-colors hover:border-[hsl(var(--primary)/0.4)]"
               >
-                <div>
-                  <div className="font-medium text-sm">{sub.display_name}</div>
-                  <div className="text-xs font-mono text-[hsl(var(--muted-foreground))]">
-                    {sub.subscription_id}
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]">
+                    <Cloud className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-[hsl(var(--foreground))]">
+                      {sub.display_name || "Unnamed subscription"}
+                    </div>
+                    <div className="truncate font-mono text-[11px] text-[hsl(var(--muted-foreground))]">
+                      {sub.subscription_id}
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={
-                      sub.state === "Enabled"
-                        ? "text-xs text-emerald-600"
-                        : "text-xs text-amber-600"
-                    }
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    variant={sub.state === "Enabled" ? "success" : "secondary"}
                   >
                     {sub.state}
-                  </span>
+                  </Badge>
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
                     onClick={() => startEdit(sub)}
                   >
+                    <Pencil className="h-3.5 w-3.5" />
                     Edit
                   </Button>
                   <Button
@@ -232,13 +269,15 @@ export function SubscriptionList() {
                     size="sm"
                     onClick={() => handleToggle(sub.subscription_id, sub.state)}
                   >
+                    <Power className="h-3.5 w-3.5" />
                     {sub.state === "Enabled" ? "Disable" : "Enable"}
                   </Button>
                   <Button
                     variant="destructive"
                     size="sm"
-                    onClick={() => handleRemove(sub.subscription_id, sub.display_name)}
+                    onClick={() => setConfirmTarget(sub)}
                   >
+                    <Trash2 className="h-3.5 w-3.5" />
                     Remove
                   </Button>
                 </div>
@@ -246,6 +285,24 @@ export function SubscriptionList() {
             ),
           )}
         </div>
+
+        <ConfirmDialog
+          open={confirmTarget !== null}
+          tone="destructive"
+          title={`Remove "${confirmTarget?.display_name || confirmTarget?.subscription_id || ""}"?`}
+          description={
+            <p>
+              Stops scans immediately. Existing findings are kept for{" "}
+              <strong className="text-[hsl(var(--foreground))]">30 days</strong>{" "}
+              so re-linking the same subscription restores your history. After
+              that they are permanently deleted.
+            </p>
+          }
+          confirmLabel="Remove subscription"
+          busy={removing}
+          onConfirm={handleRemoveConfirmed}
+          onCancel={() => setConfirmTarget(null)}
+        />
       </CardContent>
     </Card>
   );

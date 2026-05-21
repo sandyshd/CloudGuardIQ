@@ -34,11 +34,15 @@ export function EmptyState({
   };
 
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 text-center">
+    <div className="flex flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted)/0.3)] p-12 text-center">
       {icon ? (
-        <div className="mb-4 text-[hsl(var(--muted-foreground))]">{icon}</div>
+        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-[hsl(var(--primary)/0.12)] to-[hsl(var(--accent)/0.12)] text-[hsl(var(--primary))] ring-1 ring-[hsl(var(--primary)/0.2)]">
+          {icon}
+        </div>
       ) : null}
-      <h2 className="text-lg font-semibold">{title}</h2>
+      <h2 className="text-lg font-semibold text-[hsl(var(--foreground))]">
+        {title}
+      </h2>
       <p className="mt-1 mb-4 max-w-md text-sm text-[hsl(var(--muted-foreground))]">
         {message}
       </p>

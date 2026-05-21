@@ -4,13 +4,10 @@ import { PublicClientApplication, EventType } from "@azure/msal-browser";
 import { MsalProvider } from "@azure/msal-react";
 import { msalConfig } from "./auth/msalConfig";
 import App from "./App";
+import { ThemeProvider } from "./components/layout/ThemeProvider";
+import { ToastProvider } from "./components/ui/toast";
 import "./index.css";
 
-// Capture the Entra ID admin-consent redirect query params BEFORE MSAL
-// initialises. MSAL's login redirect dance rewrites window.location, which
-// strips these params and breaks the consent-callback round-trip when the
-// returning user is not yet authenticated to the SWA. We persist them in
-// sessionStorage so Settings.tsx can read them after MSAL settles.
 export const PENDING_CONSENT_CALLBACK_KEY = "cguardiq.pendingConsentCallback";
 (function capturePendingConsentCallback(): void {
   try {
@@ -34,8 +31,7 @@ export const msalInstance = new PublicClientApplication(msalConfig);
 
 async function startApp() {
   await msalInstance.initialize();
-  
-  // Process the auth code returned by Azure AD after redirect login
+
   try {
     const response = await msalInstance.handleRedirectPromise();
     if (response?.account) {
@@ -45,7 +41,6 @@ async function startApp() {
     console.error("Redirect error:", error);
   }
 
-  // Set active account if one exists
   const accounts = msalInstance.getAllAccounts();
   if (accounts.length > 0 && !msalInstance.getActiveAccount()) {
     msalInstance.setActiveAccount(accounts[0]);
@@ -53,7 +48,9 @@ async function startApp() {
 
   msalInstance.addEventCallback((event) => {
     if (event.eventType === EventType.LOGIN_SUCCESS && event.payload) {
-      const payload = event.payload as { account: Parameters<typeof msalInstance.setActiveAccount>[0] };
+      const payload = event.payload as {
+        account: Parameters<typeof msalInstance.setActiveAccount>[0];
+      };
       msalInstance.setActiveAccount(payload.account);
     }
   });
@@ -63,7 +60,11 @@ async function startApp() {
     createRoot(root).render(
       <StrictMode>
         <MsalProvider instance={msalInstance}>
-          <App />
+          <ThemeProvider>
+            <ToastProvider>
+              <App />
+            </ToastProvider>
+          </ThemeProvider>
         </MsalProvider>
       </StrictMode>
     );
@@ -71,4 +72,3 @@ async function startApp() {
 }
 
 startApp();
-

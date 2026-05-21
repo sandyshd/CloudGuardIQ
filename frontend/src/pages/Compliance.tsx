@@ -8,6 +8,7 @@ import { ReportHistory } from "../components/compliance/ReportHistory";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { LoadingSpinner } from "../components/common/LoadingSpinner";
 import { EmptyState } from "../components/common/EmptyState";
+import { PageHeader } from "../components/common/PageHeader";
 import { Link2, ClipboardCheck } from "lucide-react";
 import type { FindingResult } from "../types";
 
@@ -23,10 +24,14 @@ export function Compliance() {
 
   if (loading || subsLoading) return <LoadingSpinner />;
 
+  const subtitle = selectedSub
+    ? `Posture across linked frameworks · ${selectedSub.display_name || selectedSub.subscription_id}`
+    : "Posture across CIS, NIST, SOC 2, and other frameworks.";
+
   if (subscriptions.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Compliance</h1>
+        <PageHeader title="Compliance" subtitle={subtitle} />
         <EmptyState
           icon={<Link2 className="h-12 w-12" />}
           title="Link a subscription to start scanning"
@@ -41,7 +46,7 @@ export function Compliance() {
   if (findings.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Compliance</h1>
+        <PageHeader title="Compliance" subtitle={subtitle} />
         <EmptyState
           icon={<ClipboardCheck className="h-12 w-12" />}
           title="No compliance data yet"
@@ -56,14 +61,7 @@ export function Compliance() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Compliance</h1>
-        {selectedSub && (
-          <span className="text-sm text-[hsl(var(--muted-foreground))]">
-            {selectedSub.display_name || selectedSub.subscription_id}
-          </span>
-        )}
-      </div>
+      <PageHeader title="Compliance" subtitle={subtitle} />
 
       <ComplianceKpis findings={findings} />
 

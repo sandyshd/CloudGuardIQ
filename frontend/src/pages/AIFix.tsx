@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Sparkles, Link2 } from "lucide-react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  Sparkles,
+  Link2,
+  ArrowLeft,
+  AlertTriangle,
+  ShieldCheck,
+  Wrench,
+  CheckCircle2,
+  Clock,
+} from "lucide-react";
 import { EmptyState } from "../components/common/EmptyState";
+import { PageHeader } from "../components/common/PageHeader";
 import { useSubscriptions } from "../hooks/useSubscriptions";
-
 import { LoadingSpinner } from "../components/common/LoadingSpinner";
 import { SeverityBadge } from "../components/common/SeverityBadge";
 import { DataTierBadge } from "../components/common/DataTierBadge";
@@ -11,6 +20,7 @@ import { Alert, AlertDescription } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { useToast } from "../components/ui/toast";
 import { CLIBlock } from "../components/remediation/CLIBlock";
 import { ComplianceImpact } from "../components/remediation/ComplianceImpact";
 import { SimilarFindings } from "../components/remediation/SimilarFindings";
@@ -42,6 +52,7 @@ export function AIFix() {
   const findingId = routeId ?? queryId ?? null;
   const navigate = useNavigate();
   const { subscriptions, selected: selectedSub } = useSubscriptions();
+  const { toast } = useToast();
 
   const [finding, setFinding] = useState<FindingResult | null>(null);
   const [card, setCard] = useState<RemediationCard | null>(null);
@@ -49,7 +60,6 @@ export function AIFix() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<ActionState>("idle");
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
 
@@ -60,7 +70,9 @@ export function AIFix() {
     try {
       const [f, all] = await Promise.all([
         getFinding(findingId, selectedSub?.subscription_id),
-        getFindings(selectedSub?.subscription_id).catch(() => [] as FindingResult[]),
+        getFindings(selectedSub?.subscription_id).catch(
+          () => [] as FindingResult[],
+        ),
       ]);
       setFinding(f);
       setSimilar(all.filter((x) => x.finding_id !== findingId).slice(0, 3));
@@ -75,9 +87,6 @@ export function AIFix() {
     load();
   }, [load]);
 
-  // Auto-generate (or fetch cached) AI remediation as soon as the finding loads.
-  // The backend POST returns the existing card immediately when one is cached,
-  // so this is safe and idempotent.
   const runGenerate = useCallback(async () => {
     if (!findingId) return;
     setGenerating(true);
@@ -130,15 +139,19 @@ export function AIFix() {
     return parts.join(" ") || "No material business impact detected yet.";
   }, [finding]);
 
+  // No finding selected
   if (!findingId) {
     if (subscriptions.length === 0) {
       return (
         <div className="space-y-6">
-          <h1 className="text-2xl font-bold">AI Fix</h1>
+          <PageHeader
+            title="AI Remediation"
+            subtitle="Generate Terraform and CLI fix plans for any finding."
+          />
           <EmptyState
             icon={<Link2 className="h-12 w-12" />}
             title="Link a subscription to start scanning"
-            message="AI Fix generates Terraform and CLI remediation plans for findings produced by a scan. Connect an Azure subscription on the Settings page to begin."
+            message="AI Remediation generates Terraform and CLI plans for findings produced by a scan. Connect an Azure subscription on the Settings page to begin."
             primaryLabel="Go to Settings"
             primaryTo="/settings"
           />
@@ -147,7 +160,10 @@ export function AIFix() {
     }
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">AI Fix</h1>
+        <PageHeader
+          title="AI Remediation"
+          subtitle="Generate Terraform and CLI fix plans for any finding."
+        />
         <EmptyState
           icon={<Sparkles className="h-12 w-12" />}
           title="Select a finding"
@@ -171,106 +187,140 @@ export function AIFix() {
 
   const onApply = async () => {
     setAction("applying");
-    setActionMessage(null);
-    await applyTerraformFix(finding.finding_id, finding.resource_snapshot?.subscription_id ?? "");
+    await applyTerraformFix(
+      finding.finding_id,
+      finding.resource_snapshot?.subscription_id ?? "",
+    );
     setAction("idle");
-    setActionMessage("Terraform apply requested. Tracking in Self-Heal.");
+    toast({ tone: "success", title: "Terraform apply requested", description: "Tracking in Self-Heal." });
   };
   const onResolve = async () => {
     setAction("resolving");
-    setActionMessage(null);
-    await markFindingResolved(finding.finding_id, finding.resource_snapshot?.subscription_id ?? "");
+    await markFindingResolved(
+      finding.finding_id,
+      finding.resource_snapshot?.subscription_id ?? "",
+    );
     setAction("idle");
-    setActionMessage("Marked as resolved.");
+    toast({ tone: "success", title: "Finding resolved" });
     navigate("/findings");
   };
   const onSnooze = async () => {
     setAction("snoozing");
-    setActionMessage(null);
-    await snoozeFinding(finding.finding_id, finding.resource_snapshot?.subscription_id ?? "", 7);
+    await snoozeFinding(
+      finding.finding_id,
+      finding.resource_snapshot?.subscription_id ?? "",
+      7,
+    );
     setAction("idle");
-    setActionMessage("Snoozed for 7 days.");
+    toast({ tone: "default", title: "Snoozed for 7 days" });
   };
 
   const snap = finding.resource_snapshot;
   const savings =
-    card?.estimated_savings_usd ??
-    finding.waste_monthly_usd ??
-    0;
+    card?.estimated_savings_usd ?? finding.waste_monthly_usd ?? 0;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">AI Fix</h1>
-        <Link
-          to="/findings"
-          className="text-sm text-[hsl(var(--muted-foreground))] hover:underline"
-        >
-          &larr; Back to findings
-        </Link>
-      </div>
+      <PageHeader
+        title="AI Remediation"
+        subtitle={snap?.resource_name ?? finding.rule_name ?? finding.rule_id}
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate("/findings")}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to findings
+          </Button>
+        }
+        meta={
+          <div className="flex flex-wrap items-center gap-2">
+            <SeverityBadge severity={finding.severity} />
+            <Badge variant="outline">{finding.finding_type}</Badge>
+            {snap && <DataTierBadge tier={snap.data_tier} />}
+            <Badge variant="secondary">
+              Priority {finding.priority_score.toFixed(0)}
+            </Badge>
+            {snap?.resource_type && (
+              <span className="font-mono text-xs text-[hsl(var(--muted-foreground))]">
+                {snap.resource_type}
+              </span>
+            )}
+          </div>
+        }
+      />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         {/* LEFT COLUMN */}
         <div className="space-y-4">
           <Card>
             <CardHeader>
-              <div className="space-y-2">
-                <CardTitle className="text-xl">
-                  {snap?.resource_name ?? finding.rule_name ?? finding.rule_id}
-                </CardTitle>
-                <div className="flex flex-wrap items-center gap-2">
-                  <SeverityBadge severity={finding.severity} />
-                  {snap && <DataTierBadge tier={snap.data_tier} />}
-                  <Badge variant="outline">
-                    Priority {finding.priority_score.toFixed(0)}
-                  </Badge>
-                  <Badge variant="secondary">{finding.finding_type}</Badge>
-                  {snap?.resource_type && (
-                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
-                      {snap.resource_type}
-                    </span>
-                  )}
-                </div>
-              </div>
+              <CardTitle>Finding</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm">{finding.description}</p>
+              <p className="text-sm text-[hsl(var(--foreground))]">
+                {finding.description}
+              </p>
+              {snap && (
+                <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
+                  <div>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
+                      Region
+                    </dt>
+                    <dd className="text-[13px]">{snap.region || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
+                      Resource group
+                    </dt>
+                    <dd className="text-[13px]">{snap.resource_group || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
+                      Monthly cost
+                    </dt>
+                    <dd className="text-[13px] tabular-nums">
+                      ${(snap.cost_monthly ?? 0).toFixed(2)}
+                    </dd>
+                  </div>
+                </dl>
+              )}
             </CardContent>
           </Card>
 
           {/* AI narrative */}
-          <Card className="border-blue-200 bg-blue-50/60">
+          <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base text-blue-900">
-                  AI Narrative
-                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-[hsl(var(--primary))]" />
+                  <CardTitle>AI narrative</CardTitle>
+                </div>
                 {card?.confidence_qualifier && (
                   <Badge variant="outline">{card.confidence_qualifier}</Badge>
                 )}
               </div>
             </CardHeader>
-            <CardContent className="space-y-2 text-sm text-blue-950">
+            <CardContent className="space-y-2 text-sm leading-relaxed text-[hsl(var(--foreground))]">
               {narrativeParagraphs.length > 0 ? (
                 narrativeParagraphs.map((p, i) => <p key={i}>{p}</p>)
               ) : generating ? (
-                <p className="italic text-blue-900/70">
+                <div className="flex items-center gap-2 text-[hsl(var(--muted-foreground))]">
+                  <Sparkles className="h-4 w-4 animate-pulse text-[hsl(var(--primary))]" />
                   Generating AI remediation… this can take a few seconds.
-                </p>
+                </div>
               ) : generationError ? (
                 <>
-                  <p className="text-blue-900/80 mb-2">{generationError}</p>
-                  <Button
-                    size="sm"
-                    onClick={runGenerate}
-                    disabled={generating}
-                  >
-                    Retry AI Remediation
+                  <p className="text-[hsl(var(--severity-critical))]">
+                    {generationError}
+                  </p>
+                  <Button size="sm" onClick={runGenerate} disabled={generating}>
+                    Retry generation
                   </Button>
                 </>
               ) : (
-                <p className="italic text-blue-900/70">
+                <p className="italic text-[hsl(var(--muted-foreground))]">
                   Preparing AI remediation…
                 </p>
               )}
@@ -278,52 +328,53 @@ export function AIFix() {
           </Card>
 
           {/* Business risk */}
-          <Card className="border-amber-200 bg-amber-50/60">
+          <Card>
             <CardHeader>
-              <CardTitle className="text-base text-amber-900">
-                Business Risk
-              </CardTitle>
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-[hsl(var(--warning))]" />
+                <CardTitle>Business risk</CardTitle>
+              </div>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-amber-950">{businessRisk}</p>
+              <p className="text-sm text-[hsl(var(--foreground))]">
+                {businessRisk}
+              </p>
             </CardContent>
           </Card>
 
           {/* Fix plan */}
-          <Card className="border-emerald-200 bg-emerald-50/60">
-            <CardHeader>
-              <CardTitle className="text-base text-emerald-900">
-                Fix Plan
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {card?.narrative ? (
-                <ol className="list-decimal space-y-1 pl-5 text-sm text-emerald-950">
+          {narrativeParagraphs.length > 0 && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Wrench className="h-4 w-4 text-[hsl(var(--success))]" />
+                  <CardTitle>Fix plan</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ol className="list-decimal space-y-1.5 pl-5 text-sm text-[hsl(var(--foreground))]">
                   {narrativeParagraphs.slice(0, 5).map((step, i) => (
                     <li key={i}>{step}</li>
                   ))}
                 </ol>
-              ) : (
-                <p className="text-sm italic text-emerald-900/70">
-                  A step-by-step plan will appear once AI remediation has run.
-                </p>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
 
           {card?.terraform_fix && (
-            <TerraformBlock code={card.terraform_fix} title="Terraform Fix" />
+            <TerraformBlock code={card.terraform_fix} title="Terraform fix" />
           )}
           {card?.cli_fix && (
-            <CLIBlock command={card.cli_fix} title="Azure CLI Equivalent" />
+            <CLIBlock command={card.cli_fix} title="Azure CLI equivalent" />
           )}
 
-          {/* Action buttons */}
-          <div className="flex flex-wrap gap-2">
+          {/* Actions */}
+          <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 shadow-sm">
             <Button
               onClick={onApply}
               disabled={action !== "idle" || !card?.terraform_fix}
             >
+              <Wrench className="h-4 w-4" />
               {action === "applying" ? "Applying…" : "Apply Terraform"}
             </Button>
             <Button
@@ -331,6 +382,7 @@ export function AIFix() {
               onClick={onResolve}
               disabled={action !== "idle"}
             >
+              <CheckCircle2 className="h-4 w-4" />
               {action === "resolving" ? "Resolving…" : "Mark resolved"}
             </Button>
             <Button
@@ -338,62 +390,57 @@ export function AIFix() {
               onClick={onSnooze}
               disabled={action !== "idle"}
             >
+              <Clock className="h-4 w-4" />
               {action === "snoozing" ? "Snoozing…" : "Snooze 7 days"}
             </Button>
           </div>
-          {actionMessage && (
-            <Alert>
-              <AlertDescription>{actionMessage}</AlertDescription>
-            </Alert>
-          )}
         </div>
 
         {/* RIGHT COLUMN */}
         <div className="space-y-4">
-          <ComplianceImpact frameworks={finding.compliance_frameworks} />
-
+          {/* Savings hero */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Cost Savings Projection</CardTitle>
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-[hsl(var(--success))]" />
+                <CardTitle>Cost savings projection</CardTitle>
+              </div>
             </CardHeader>
             <CardContent>
-              <table className="w-full text-sm">
-                <tbody>
-                  <tr className="border-b">
-                    <td className="py-2 text-[hsl(var(--muted-foreground))]">
-                      Monthly savings
-                    </td>
-                    <td className="py-2 text-right font-semibold text-emerald-600">
-                      ${savings.toFixed(2)}
-                    </td>
-                  </tr>
-                  <tr className="border-b">
-                    <td className="py-2 text-[hsl(var(--muted-foreground))]">
-                      Annualised
-                    </td>
-                    <td className="py-2 text-right font-semibold text-emerald-600">
-                      ${(savings * 12).toFixed(2)}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="py-2 text-[hsl(var(--muted-foreground))]">
-                      Current monthly cost
-                    </td>
-                    <td className="py-2 text-right">
-                      ${(snap?.cost_monthly ?? 0).toFixed(2)}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <div className="rounded-md border border-[hsl(var(--success)/0.3)] bg-[hsl(var(--success)/0.06)] p-4">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[hsl(var(--success))]">
+                  Monthly savings if applied
+                </div>
+                <div className="mt-1 text-2xl font-semibold tabular-nums text-[hsl(var(--foreground))]">
+                  ${savings.toFixed(2)}
+                </div>
+              </div>
+              <dl className="mt-3 space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <dt className="text-[hsl(var(--muted-foreground))]">
+                    Annualized
+                  </dt>
+                  <dd className="font-semibold tabular-nums text-[hsl(var(--success))]">
+                    ${(savings * 12).toFixed(2)}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <dt className="text-[hsl(var(--muted-foreground))]">
+                    Current monthly cost
+                  </dt>
+                  <dd className="tabular-nums">
+                    ${(snap?.cost_monthly ?? 0).toFixed(2)}
+                  </dd>
+                </div>
+              </dl>
             </CardContent>
           </Card>
 
+          <ComplianceImpact frameworks={finding.compliance_frameworks} />
           <SimilarFindings findings={similar} />
         </div>
       </div>
     </div>
   );
 }
-
-
 

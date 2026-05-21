@@ -55,7 +55,7 @@ export function DefenderAutoBadge({ findings }: { findings: FindingResult[] }) {
 
   return (
     <div
-      className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800"
+      className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--success)/0.4)] bg-[hsl(var(--success)/0.08)] px-3 py-1 text-xs font-medium text-[hsl(var(--success))]"
       title="CloudGuardIQ auto-detected your cloud's native security service and is using it to enrich findings at no extra charge."
     >
       <Shield className="h-3.5 w-3.5" />
@@ -63,3 +63,4 @@ export function DefenderAutoBadge({ findings }: { findings: FindingResult[] }) {
     </div>
   );
 }
+

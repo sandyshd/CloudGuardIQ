@@ -1,17 +1,23 @@
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import type { FindingResult } from "../../types";
 
-const COLORS: Record<string, string> = {
-  CRITICAL: "#dc2626",
-  HIGH: "#f97316",
-  MEDIUM: "#eab308",
-  LOW: "#3b82f6",
-  INFORMATIONAL: "#9ca3af",
+const SEV_VAR: Record<string, string> = {
+  CRITICAL: "hsl(var(--severity-critical))",
+  HIGH: "hsl(var(--severity-high))",
+  MEDIUM: "hsl(var(--severity-medium))",
+  LOW: "hsl(var(--severity-low))",
+  INFORMATIONAL: "hsl(var(--severity-info))",
 };
 
 const ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL"];
-
 const LABELS: Record<string, string> = {
   CRITICAL: "Critical",
   HIGH: "High",
@@ -25,19 +31,17 @@ export function SeverityChart({ findings }: { findings: FindingResult[] }) {
   findings.forEach((f) => {
     counts[f.severity] = (counts[f.severity] || 0) + 1;
   });
-
   const data = ORDER.filter((s) => counts[s]).map((sev) => ({
     name: LABELS[sev] ?? sev,
     severity: sev,
     value: counts[sev],
   }));
-
   const total = data.reduce((s, d) => s + d.value, 0);
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">Findings by Severity</CardTitle>
+      <CardHeader>
+        <CardTitle>Findings by severity</CardTitle>
       </CardHeader>
       <CardContent>
         {total === 0 ? (
@@ -51,20 +55,27 @@ export function SeverityChart({ findings }: { findings: FindingResult[] }) {
                 data={data}
                 dataKey="value"
                 nameKey="name"
-                innerRadius={55}
-                outerRadius={90}
+                innerRadius={58}
+                outerRadius={92}
                 paddingAngle={2}
-                stroke="hsl(var(--background))"
+                stroke="hsl(var(--card))"
                 strokeWidth={2}
               >
                 {data.map((entry) => (
                   <Cell
                     key={entry.severity}
-                    fill={COLORS[entry.severity] || "#6b7280"}
+                    fill={SEV_VAR[entry.severity] ?? "hsl(var(--muted-foreground))"}
                   />
                 ))}
               </Pie>
               <Tooltip
+                contentStyle={{
+                  background: "hsl(var(--card))",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  color: "hsl(var(--foreground))",
+                }}
                 formatter={(value: number, _name, ctx) => {
                   const pct = total > 0 ? Math.round((value / total) * 100) : 0;
                   return [`${value} (${pct}%)`, ctx.payload.name];
@@ -74,7 +85,7 @@ export function SeverityChart({ findings }: { findings: FindingResult[] }) {
                 verticalAlign="bottom"
                 height={32}
                 iconType="circle"
-                wrapperStyle={{ fontSize: 12 }}
+                wrapperStyle={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}
               />
             </PieChart>
           </ResponsiveContainer>

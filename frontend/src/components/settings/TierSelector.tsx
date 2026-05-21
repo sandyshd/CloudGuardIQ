@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Alert, AlertDescription } from "../ui/alert";
+import { Check, Sparkles } from "lucide-react";
 import {
   type BillingStatus,
   type BillingTier,
@@ -16,13 +17,9 @@ interface PlanDef {
   price: string;
   cadence: string;
   features: string[];
+  highlight?: boolean;
 }
 
-// Plan rank used to choose Upgrade vs Downgrade verb. Higher number == richer
-// plan. Pricing axes are intentionally cloud-agnostic: subscriptions,
-// resources, scan frequency, AI usage. No vendor capability (Defender,
-// GuardDuty, Security Command Center) is gated behind a paywall -- those
-// signals are auto-detected and used to enrich findings on every plan.
 const TIER_RANK: Record<BillingTier, number> = {
   FREE: 0,
   PRO: 1,
@@ -48,8 +45,9 @@ const PLANS: PlanDef[] = [
     name: "Starter",
     price: "$49",
     cadence: "/mo",
+    highlight: true,
     features: [
-      "Up to 3 cloud subscriptions / accounts",
+      "Up to 3 cloud subscriptions",
       "Up to 1,000 resources per scan",
       "Hourly scans",
       "100 AI remediation plans / month",
@@ -62,7 +60,7 @@ const PLANS: PlanDef[] = [
     price: "$299",
     cadence: "/mo",
     features: [
-      "Unlimited subscriptions / accounts",
+      "Unlimited subscriptions",
       "Unlimited resources per scan",
       "15-minute continuous scans",
       "Unlimited AI remediation plans",
@@ -109,7 +107,7 @@ export function TierSelector() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Billing Plan</CardTitle>
+        <CardTitle>Billing plan</CardTitle>
       </CardHeader>
       <CardContent>
         {error && (
@@ -122,24 +120,31 @@ export function TierSelector() {
             const isCurrent = plan.tier === current;
             const cmp = TIER_RANK[plan.tier] - TIER_RANK[current];
             const isUpgrade = cmp > 0;
-            // Self-service downgrade is not yet wired up (Stripe Customer
-            // Portal endpoint is pending). Show the verb but keep the button
-            // disabled with an explanatory tooltip until the portal lands.
             const downgradeReady = false;
             return (
               <div
                 key={plan.tier}
                 className={cn(
-                  "flex flex-col rounded-lg border p-4 transition-shadow",
+                  "relative flex flex-col rounded-[var(--radius)] border bg-[hsl(var(--card))] p-4 transition-shadow",
                   isCurrent
-                    ? "border-blue-500 shadow-md ring-1 ring-blue-500"
-                    : "border-[hsl(var(--border))]",
+                    ? "border-[hsl(var(--primary))] ring-1 ring-[hsl(var(--primary)/0.3)] shadow-sm"
+                    : plan.highlight
+                      ? "border-[hsl(var(--primary)/0.4)]"
+                      : "border-[hsl(var(--border))]",
                 )}
               >
+                {plan.highlight && !isCurrent && (
+                  <span className="absolute -top-2 right-3 inline-flex items-center gap-1 rounded-full bg-[hsl(var(--primary))] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[hsl(var(--primary-foreground))]">
+                    <Sparkles className="h-3 w-3" />
+                    Popular
+                  </span>
+                )}
                 <div className="flex items-baseline justify-between">
                   <div>
-                    <div className="text-sm font-semibold">{plan.name}</div>
-                    <div className="text-2xl font-bold">
+                    <div className="text-sm font-semibold text-[hsl(var(--foreground))]">
+                      {plan.name}
+                    </div>
+                    <div className="mt-1 text-2xl font-bold tabular-nums text-[hsl(var(--foreground))]">
                       {plan.price}
                       <span className="text-sm font-normal text-[hsl(var(--muted-foreground))]">
                         {plan.cadence}
@@ -147,20 +152,23 @@ export function TierSelector() {
                     </div>
                   </div>
                   {isCurrent && (
-                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                    <span className="rounded-full bg-[hsl(var(--primary)/0.14)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[hsl(var(--primary))]">
                       Current
                     </span>
                   )}
                 </div>
-                <ul className="mt-3 space-y-1 text-xs text-[hsl(var(--muted-foreground))]">
+                <ul className="mt-3 space-y-1.5 text-xs text-[hsl(var(--muted-foreground))]">
                   {plan.features.map((f) => (
-                    <li key={f}>• {f}</li>
+                    <li key={f} className="flex items-start gap-1.5">
+                      <Check className="mt-0.5 h-3 w-3 shrink-0 text-[hsl(var(--success))]" />
+                      <span>{f}</span>
+                    </li>
                   ))}
                 </ul>
                 <div className="mt-auto pt-4">
                   {isCurrent ? (
                     <Button variant="outline" className="w-full" disabled>
-                      Current Plan
+                      Current plan
                     </Button>
                   ) : isUpgrade ? (
                     <Button
@@ -190,7 +198,7 @@ export function TierSelector() {
           })}
         </div>
         <p className="mt-3 text-xs text-[hsl(var(--muted-foreground))]">
-          ✨ All plans auto-detect and use Microsoft Defender for Cloud signals
+          All plans auto-detect and use Microsoft Defender for Cloud signals
           when available — no extra charge, no plan upgrade required.
         </p>
       </CardContent>

@@ -4,6 +4,7 @@ import { NotificationSettings } from "../components/settings/NotificationSetting
 import { SubscriptionList } from "../components/settings/SubscriptionList";
 import { TierSelector } from "../components/settings/TierSelector";
 import { Alert, AlertDescription } from "../components/ui/alert";
+import { PageHeader } from "../components/common/PageHeader";
 import { recordConsentCallback } from "../api/subscriptions";
 import { PENDING_CONSENT_CALLBACK_KEY } from "../main";
 
@@ -115,7 +116,10 @@ export function Settings() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Settings</h1>
+      <PageHeader
+        title="Settings"
+        subtitle="Connect cloud subscriptions, configure plans, and manage notifications."
+      />
       {banner && (
         <Alert variant={banner.kind === "error" ? "destructive" : "default"}>
           <AlertDescription>{banner.message}</AlertDescription>
