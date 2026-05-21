@@ -57,9 +57,27 @@ const SEV_COLOR: Record<Severity, string> = {
 
 
 function postureScore(findings: FindingResult[]): number {
+  // Dampened severity-weighted score so a handful of findings does not crush
+  // the gauge. 0 findings -> 100; large penalty asymptotically approaches ~40.
   const open = findings.filter((f) => (f.status ?? "OPEN") === "OPEN");
   const penalty = open.reduce((s, f) => s + (SEV_WEIGHT[f.severity] ?? 0), 0);
-  return Math.max(0, Math.min(100, Math.round(100 - penalty)));
+  const damped = penalty <= 0 ? 0 : 12 * Math.log10(1 + penalty);
+  return Math.max(0, Math.min(100, Math.round(100 - damped)));
+}
+
+function postureScoreFromScorecard(
+  scorecard: { controls_passed: number; controls_total: number }[],
+): number | null {
+  const totals = scorecard.reduce(
+    (acc, fw) => {
+      acc.passed += fw.controls_passed;
+      acc.total += fw.controls_total;
+      return acc;
+    },
+    { passed: 0, total: 0 },
+  );
+  if (totals.total === 0) return null;
+  return Math.round((totals.passed / totals.total) * 100);
 }
 
 function postureSparkline(findings: FindingResult[], days = 30): number[] {
@@ -268,10 +286,12 @@ export function Dashboard() {
     );
   }
 
+  const scorecardScore = postureScoreFromScorecard(scorecard);
+  const displayedScore = scorecardScore ?? metrics.score;
   const scoreColor =
-    metrics.score >= 80
+    displayedScore >= 80
       ? "hsl(var(--success))"
-      : metrics.score >= 60
+      : displayedScore >= 60
         ? "hsl(var(--severity-medium))"
         : "hsl(var(--severity-critical))";
 
@@ -313,7 +333,7 @@ export function Dashboard() {
                     className="text-4xl font-semibold leading-none"
                     style={{ color: scoreColor }}
                   >
-                    {metrics.score}
+                    {displayedScore}
                   </span>
                   <span className="text-sm text-[hsl(var(--muted-foreground))]">/ 100</span>
                 </div>
@@ -390,12 +410,25 @@ export function Dashboard() {
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
                   Monthly Cloud Spend
                 </div>
-                <div className="mt-2 text-4xl font-semibold leading-none text-[hsl(var(--foreground))]">
-                  {fmtMoney(metrics.mtd)}
-                </div>
-                <div className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
-                  Forecast {fmtMoney(metrics.forecast)} / mo
-                </div>
+                {metrics.forecast > 0 ? (
+                  <>
+                    <div className="mt-2 text-4xl font-semibold leading-none text-[hsl(var(--foreground))]">
+                      {fmtMoney(metrics.mtd)}
+                    </div>
+                    <div className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
+                      Forecast {fmtMoney(metrics.forecast)} / mo
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-2 text-2xl font-semibold leading-none text-[hsl(var(--muted-foreground))]">
+                      Not available
+                    </div>
+                    <div className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
+                      Cost data unavailable. Grant Cost Management Reader on the subscription.
+                    </div>
+                  </>
+                )}
               </div>
               <DollarSign className="h-5 w-5 text-[hsl(var(--muted-foreground))]" />
             </div>
