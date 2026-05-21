@@ -6,6 +6,7 @@ import { triggerScan } from "../api/scans";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { PageHeader } from "../components/common/PageHeader";
+import { useToast } from "../components/ui/toast";
 import { Button } from "../components/ui/button";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import {
@@ -105,6 +106,7 @@ const TYPE_OPTIONS: { id: FindingType | "ALL"; label: string }[] = [
 export function Findings() {
   const [subscriptionFilter, setSubscriptionFilter] = useState<string | "ALL" | "">("");
   const { subscriptions, selected: selectedSub } = useSubscriptions();
+  const { toast } = useToast();
 
   const effectiveSub =
     subscriptionFilter === "ALL"
@@ -163,8 +165,11 @@ export function Findings() {
     try {
       await triggerScan({ subscription_id: subId, include_cost: true });
       await refresh();
+      toast({ tone: "success", title: "Scan complete" });
     } catch (err) {
-      setScanError(formatScanError(err));
+      const msg = formatScanError(err);
+      setScanError(msg);
+      toast({ tone: "error", title: "Scan failed", description: msg });
     } finally {
       setScanning(false);
       scanInFlight.current = false;
@@ -451,3 +456,4 @@ export function Findings() {
     </div>
   );
 }
+

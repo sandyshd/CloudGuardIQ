@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Badge } from "../ui/badge";
+import { ConfirmDialog } from "../ui/confirm-dialog";
+import { useToast } from "../ui/toast";
 import { Cloud, Pencil, Power, Trash2 } from "lucide-react";
 import { useSubscriptions } from "../../hooks/useSubscriptions";
 import { LoadingSpinner } from "../common/LoadingSpinner";
@@ -46,6 +48,7 @@ const inputClass =
 
 export function SubscriptionList() {
   const { subscriptions, loading, remove, toggle, replace } = useSubscriptions();
+  const { toast } = useToast();
 
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -53,26 +56,31 @@ export function SubscriptionList() {
   const [editName, setEditName] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
 
-  const counter = useMemo(() => {
-    const total = subscriptions.length;
-    return `${total} linked`;
-  }, [subscriptions.length]);
+  const [confirmTarget, setConfirmTarget] = useState<Subscription | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  const counter = useMemo(() => `${subscriptions.length} linked`, [subscriptions.length]);
 
   if (loading) return <LoadingSpinner />;
 
-  const handleRemove = async (id: string, displayName: string) => {
-    setError(null);
-    const confirmed = window.confirm(
-      `Remove subscription "${displayName || id}"?\n\n` +
-        "Stops scans immediately. Existing findings are kept for 30 days " +
-        "so re-linking the same subscription restores your history. After " +
-        "that they are permanently deleted.",
-    );
-    if (!confirmed) return;
+  const handleRemoveConfirmed = async () => {
+    if (!confirmTarget) return;
+    setRemoving(true);
     try {
-      await remove(id);
+      await remove(confirmTarget.subscription_id);
+      toast({
+        tone: "success",
+        title: "Subscription removed",
+        description:
+          confirmTarget.display_name || confirmTarget.subscription_id,
+      });
+      setConfirmTarget(null);
     } catch (err) {
-      setError(formatApiError(err, "Failed to remove subscription"));
+      const msg = formatApiError(err, "Failed to remove subscription");
+      setError(msg);
+      toast({ tone: "error", title: "Remove failed", description: msg });
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -81,8 +89,14 @@ export function SubscriptionList() {
     const next = currentState === "Enabled" ? "Disabled" : "Enabled";
     try {
       await toggle(id, next);
+      toast({
+        tone: "success",
+        title: next === "Enabled" ? "Subscription enabled" : "Subscription disabled",
+      });
     } catch (err) {
-      setError(formatApiError(err, "Failed to update subscription"));
+      const msg = formatApiError(err, "Failed to update subscription");
+      setError(msg);
+      toast({ tone: "error", title: "Update failed", description: msg });
     }
   };
 
@@ -116,9 +130,12 @@ export function SubscriptionList() {
     setEditSubmitting(true);
     try {
       await replace(originalId, trimmedId, editName);
+      toast({ tone: "success", title: "Subscription updated" });
       cancelEdit();
     } catch (err) {
-      setError(formatApiError(err, "Failed to update subscription"));
+      const msg = formatApiError(err, "Failed to update subscription");
+      setError(msg);
+      toast({ tone: "error", title: "Update failed", description: msg });
     } finally {
       setEditSubmitting(false);
     }
@@ -258,9 +275,7 @@ export function SubscriptionList() {
                   <Button
                     variant="destructive"
                     size="sm"
-                    onClick={() =>
-                      handleRemove(sub.subscription_id, sub.display_name)
-                    }
+                    onClick={() => setConfirmTarget(sub)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     Remove
@@ -270,6 +285,24 @@ export function SubscriptionList() {
             ),
           )}
         </div>
+
+        <ConfirmDialog
+          open={confirmTarget !== null}
+          tone="destructive"
+          title={`Remove "${confirmTarget?.display_name || confirmTarget?.subscription_id || ""}"?`}
+          description={
+            <p>
+              Stops scans immediately. Existing findings are kept for{" "}
+              <strong className="text-[hsl(var(--foreground))]">30 days</strong>{" "}
+              so re-linking the same subscription restores your history. After
+              that they are permanently deleted.
+            </p>
+          }
+          confirmLabel="Remove subscription"
+          busy={removing}
+          onConfirm={handleRemoveConfirmed}
+          onCancel={() => setConfirmTarget(null)}
+        />
       </CardContent>
     </Card>
   );

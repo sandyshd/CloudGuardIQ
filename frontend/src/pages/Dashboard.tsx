@@ -1,6 +1,7 @@
 import { Shield, DollarSign, CheckCircle, Server, Link2, Scan, RefreshCw } from "lucide-react";
 import { StatCard } from "../components/common/StatCard";
 import { PageHeader } from "../components/common/PageHeader";
+import { useToast } from "../components/ui/toast";
 import { SeverityChart } from "../components/dashboard/SeverityChart";
 import { CostChart } from "../components/dashboard/CostChart";
 import { ActivityFeed } from "../components/dashboard/ActivityFeed";
@@ -27,6 +28,7 @@ export function Dashboard() {
   );
   const [selectedFinding, setSelectedFinding] = useState<FindingResult | null>(null);
   const [scanning, setScanning] = useState(false);
+  const { toast } = useToast();
   const [scanError, setScanError] = useState<string | null>(null);
   // Hard-lock against double-fire in addition to the disabled button.
   const scanInFlight = useRef(false);
@@ -63,17 +65,20 @@ export function Dashboard() {
     try {
       await triggerScan({ subscription_id: subId, include_cost: true });
       await refresh();
+      toast({ tone: "success", title: "Scan complete" });
     } catch (err) {
       const statusCode = (
         err as { response?: { status?: number } }
       )?.response?.status;
 
       if (statusCode === 429) {
-        setScanError(
-          "Scan is cooling down for your plan. Free: once every 24 hours, Starter: once per hour, Enterprise: every 15 minutes. Please try again after the cooldown.",
-        );
+        const cooldownMsg = "Scan is cooling down for your plan. Free: once every 24 hours, Starter: once per hour, Enterprise: every 15 minutes. Please try again after the cooldown.";
+        setScanError(cooldownMsg);
+        toast({ tone: "warning", title: "Scan rate-limited", description: cooldownMsg });
       } else {
-        setScanError(err instanceof Error ? err.message : "Scan failed");
+        const msg = err instanceof Error ? err.message : "Scan failed";
+        setScanError(msg);
+        toast({ tone: "error", title: "Scan failed", description: msg });
       }
     } finally {
       setScanning(false);
@@ -249,3 +254,4 @@ export function Dashboard() {
     </div>
   );
 }
+

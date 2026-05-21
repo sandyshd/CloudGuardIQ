@@ -20,6 +20,7 @@ import { Alert, AlertDescription } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { useToast } from "../components/ui/toast";
 import { CLIBlock } from "../components/remediation/CLIBlock";
 import { ComplianceImpact } from "../components/remediation/ComplianceImpact";
 import { SimilarFindings } from "../components/remediation/SimilarFindings";
@@ -51,6 +52,7 @@ export function AIFix() {
   const findingId = routeId ?? queryId ?? null;
   const navigate = useNavigate();
   const { subscriptions, selected: selectedSub } = useSubscriptions();
+  const { toast } = useToast();
 
   const [finding, setFinding] = useState<FindingResult | null>(null);
   const [card, setCard] = useState<RemediationCard | null>(null);
@@ -58,7 +60,6 @@ export function AIFix() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<ActionState>("idle");
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
 
@@ -186,35 +187,32 @@ export function AIFix() {
 
   const onApply = async () => {
     setAction("applying");
-    setActionMessage(null);
     await applyTerraformFix(
       finding.finding_id,
       finding.resource_snapshot?.subscription_id ?? "",
     );
     setAction("idle");
-    setActionMessage("Terraform apply requested. Tracking in Self-Heal.");
+    toast({ tone: "success", title: "Terraform apply requested", description: "Tracking in Self-Heal." });
   };
   const onResolve = async () => {
     setAction("resolving");
-    setActionMessage(null);
     await markFindingResolved(
       finding.finding_id,
       finding.resource_snapshot?.subscription_id ?? "",
     );
     setAction("idle");
-    setActionMessage("Marked as resolved.");
+    toast({ tone: "success", title: "Finding resolved" });
     navigate("/findings");
   };
   const onSnooze = async () => {
     setAction("snoozing");
-    setActionMessage(null);
     await snoozeFinding(
       finding.finding_id,
       finding.resource_snapshot?.subscription_id ?? "",
       7,
     );
     setAction("idle");
-    setActionMessage("Snoozed for 7 days.");
+    toast({ tone: "default", title: "Snoozed for 7 days" });
   };
 
   const snap = finding.resource_snapshot;
@@ -395,11 +393,6 @@ export function AIFix() {
               <Clock className="h-4 w-4" />
               {action === "snoozing" ? "Snoozing…" : "Snooze 7 days"}
             </Button>
-            {actionMessage && (
-              <span className="ml-auto text-xs text-[hsl(var(--muted-foreground))]">
-                {actionMessage}
-              </span>
-            )}
           </div>
         </div>
 
@@ -450,3 +443,4 @@ export function AIFix() {
     </div>
   );
 }
+
