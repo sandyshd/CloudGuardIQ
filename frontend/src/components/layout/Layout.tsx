@@ -1,21 +1,29 @@
+import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { DemoBanner } from "./DemoBanner";
+import { CommandPalette } from "./CommandPalette";
+import { TimeRangeProvider } from "../../contexts/TimeRangeContext";
 
 export function Layout() {
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
   return (
-    <div className="flex h-screen overflow-hidden bg-[hsl(var(--background))]">
-      <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Topbar />
-        <DemoBanner />
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[1440px] px-6 py-8 lg:px-10">
-            <Outlet />
-          </div>
-        </main>
+    <TimeRangeProvider>
+      <div className="flex h-screen overflow-hidden bg-[hsl(var(--background))]">
+        <Sidebar />
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <Topbar onOpenPalette={() => setPaletteOpen(true)} />
+          <DemoBanner />
+          <main className="flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-[1440px] px-6 py-8 lg:px-10">
+              <Outlet />
+            </div>
+          </main>
+        </div>
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       </div>
-    </div>
+    </TimeRangeProvider>
   );
 }
