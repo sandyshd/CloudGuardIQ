@@ -32,6 +32,7 @@ import {
 } from "../components/dashboard/OverviewCharts";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { useFindings } from "../hooks/useFindings";
+import { useComplianceScorecard } from "../hooks/useComplianceScorecard";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { triggerScan } from "../api/scans";
 import { TIER2_VALUES, TIER3_VALUES } from "../types";
@@ -54,12 +55,6 @@ const SEV_COLOR: Record<Severity, string> = {
   INFORMATIONAL: "hsl(var(--severity-info))",
 };
 
-const COMPLIANCE_FRAMEWORKS = [
-  { id: "CIS_AZURE", label: "CIS Azure", aliases: ["CIS", "CIS Azure", "CIS_AZURE"] },
-  { id: "NIST_800_53", label: "NIST 800-53", aliases: ["NIST", "NIST 800-53", "NIST_800_53", "NIST_SP_800_53"] },
-  { id: "ISO_27001", label: "ISO 27001", aliases: ["ISO", "ISO 27001", "ISO_27001", "ISO27001"] },
-  { id: "PCI_DSS", label: "PCI-DSS", aliases: ["PCI", "PCI-DSS", "PCI_DSS", "PCIDSS"] },
-];
 
 function postureScore(findings: FindingResult[]): number {
   const open = findings.filter((f) => (f.status ?? "OPEN") === "OPEN");
@@ -108,6 +103,7 @@ export function Dashboard() {
   const { subscriptions, loading: subsLoading, selected: selectedSub } =
     useSubscriptions();
   const { findings, loading, refresh } = useFindings(selectedSub?.subscription_id);
+  const { scorecard, loading: scorecardLoading } = useComplianceScorecard(selectedSub?.subscription_id);
   const [selectedFinding, setSelectedFinding] = useState<FindingResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -205,17 +201,6 @@ export function Dashboard() {
       )
       .slice(0, 5);
 
-    // Compliance scorecard.
-    const compliance = COMPLIANCE_FRAMEWORKS.map((fw) => {
-      const matches = open.filter((f) =>
-        (f.compliance_frameworks ?? []).some((cf) =>
-          fw.aliases.some((a) => cf.toUpperCase().replace(/[\s-]/g, "_") === a.toUpperCase().replace(/[\s-]/g, "_")),
-        ),
-      );
-      const penalty = matches.reduce((s, f) => s + (SEV_WEIGHT[f.severity] ?? 0), 0);
-      const score = Math.max(0, Math.min(100, Math.round(100 - penalty * 2)));
-      return { ...fw, score, openCount: matches.length };
-    });
 
     // Data tier presence.
     const tiers = new Set<DataTier>();
@@ -242,7 +227,6 @@ export function Dashboard() {
       finopsCount: finops.length,
       costByService,
       topRisks,
-      compliance,
       tier2Active,
       tier3Active,
       recent,
@@ -559,18 +543,53 @@ export function Dashboard() {
             <CardTitle>Compliance</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-4">
-              {metrics.compliance.map((fw) => (
-                <button
-                  key={fw.id}
-                  type="button"
-                  onClick={() => navigate(`/compliance?framework=${fw.id}`)}
-                  className="flex flex-col items-center gap-1 rounded-md p-2 transition-colors hover:bg-[hsl(var(--accent)/0.08)]"
-                >
-                  <ProgressRing value={fw.score} label={fw.label} />
-                </button>
-              ))}
-            </div>
+            {scorecardLoading ? (
+              <div className="grid grid-cols-2 gap-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-24 animate-pulse rounded-md bg-[hsl(var(--muted))]"
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                {scorecard
+                  .filter((fw) =>
+                    ["CIS_AZURE", "NIST_800_53", "ISO_27001", "PCI_DSS"].includes(
+                      fw.framework_id,
+                    ),
+                  )
+                  .map((fw) => {
+                    const evaluated = fw.controls_total > 0;
+                    return (
+                      <button
+                        key={fw.framework_id}
+                        type="button"
+                        onClick={() =>
+                          navigate(`/compliance?framework=${fw.framework_id}`)
+                        }
+                        className="flex flex-col items-center gap-1 rounded-md p-2 text-center transition-colors hover:bg-[hsl(var(--accent)/0.08)]"
+                        title={
+                          evaluated
+                            ? `${fw.controls_passed}/${fw.controls_total} controls passing · ${fw.open_findings} open finding${fw.open_findings === 1 ? "" : "s"}`
+                            : "Not yet evaluated"
+                        }
+                      >
+                        <ProgressRing
+                          value={evaluated ? fw.score : 0}
+                          label={fw.short_label}
+                        />
+                        <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                          {evaluated
+                            ? `${fw.controls_passed}/${fw.controls_total} controls`
+                            : "Not yet evaluated"}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -710,4 +729,7 @@ function DataSourceRow({
     </div>
   );
 }
+
+
+
 

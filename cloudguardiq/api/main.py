@@ -54,6 +54,12 @@ from cloudguardiq.billing.quota import (
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.billing.stripe_service import StripeService
 from cloudguardiq.billing.usage import UsageRepository
+from cloudguardiq.compliance.scorecard import (
+    FrameworkScore as ComplianceFrameworkScore,
+)
+from cloudguardiq.compliance.scorecard import (
+    compute_scorecard as compute_compliance_scorecard,
+)
 from cloudguardiq.core.config import get_settings
 from cloudguardiq.core.database import CosmosRepository
 from cloudguardiq.core.enums import DataTier, FindingStatus, FindingType, Severity
@@ -1300,3 +1306,48 @@ async def get_finding_terraform(
 
 
 
+
+
+@app.get(
+    "/compliance/scorecard",
+    response_model=list[ComplianceFrameworkScore],
+)
+async def get_compliance_scorecard(
+    subscription_id: str = Query(default=""),
+    user: TokenPayload = _auth,
+) -> list[ComplianceFrameworkScore]:
+    """Return per-framework compliance scores for the requested subscription.
+
+    The score for each framework is computed as ``controls_passed /
+    controls_total * 100`` where the denominator is the set of controls
+    actively evaluated by CloudGuardIQ's rule registry (not the published
+    catalogue size). Only OPEN findings contribute to ``controls_failed``.
+    Resolved, snoozed, and applied findings are excluded.
+
+    Frameworks with zero evaluated controls return ``score=100`` with
+    ``controls_total=0`` so the UI can render a "Not yet evaluated" badge
+    without surfacing a misleading red ring.
+    """
+    repo = get_repo()
+    sub_id = ""
+    if subscription_id:
+        sub_id = await _validate_owned_subscription(user, subscription_id)
+        bind_context(subscription_id=sub_id, provider="azure")
+    settings = get_settings()
+    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
+
+    findings: list[FindingResult] = []
+    if repo is not None and sub_id:
+        try:
+            findings = await repo.get_findings(sub_id, tenant_id=tenant_id, limit=2000)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Compliance scorecard: failed to query findings from Cosmos: %s",
+                exc,
+            )
+            findings = []
+    elif settings.auth_disabled and not sub_id:
+        # Local/dev mode: surface demo findings so the dashboard isn't blank.
+        findings = _demo_findings()
+
+    return compute_compliance_scorecard(findings)
