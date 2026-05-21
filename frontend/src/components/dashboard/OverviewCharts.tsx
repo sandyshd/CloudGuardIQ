@@ -62,12 +62,12 @@ export function FindingsOverTimeChart({
 
   return (
     <ResponsiveContainer width="100%" height={260}>
-      <AreaChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+      <AreaChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
         <defs>
           {SEV_ORDER.map((s) => (
             <linearGradient id={`g-${s}`} key={s} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={SEV_COLOR[s]} stopOpacity={0.55} />
-              <stop offset="100%" stopColor={SEV_COLOR[s]} stopOpacity={0.05} />
+              <stop offset="0%" stopColor={SEV_COLOR[s]} stopOpacity={0.35} />
+              <stop offset="100%" stopColor={SEV_COLOR[s]} stopOpacity={0.02} />
             </linearGradient>
           ))}
         </defs>
@@ -85,7 +85,7 @@ export function FindingsOverTimeChart({
           tickLine={false}
           axisLine={false}
           allowDecimals={false}
-          width={32}
+          width={36}
         />
         <Tooltip
           contentStyle={{
@@ -100,7 +100,6 @@ export function FindingsOverTimeChart({
             key={s}
             type="monotone"
             dataKey={s}
-            stackId="1"
             stroke={SEV_COLOR[s]}
             fill={`url(#g-${s})`}
             strokeWidth={1.5}

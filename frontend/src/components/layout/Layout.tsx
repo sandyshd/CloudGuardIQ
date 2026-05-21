@@ -17,7 +17,7 @@ export function Layout() {
           <Topbar onOpenPalette={() => setPaletteOpen(true)} />
           <DemoBanner />
           <main className="flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-[1440px] px-6 py-8 lg:px-10">
+            <div className="w-full px-6 py-6 lg:px-8">
               <Outlet />
             </div>
           </main>
