@@ -35,7 +35,7 @@ async def _build_scan_pipeline(
     from azure.identity import DefaultAzureCredential as SyncDefaultAzureCredential
     from azure.servicebus.aio import ServiceBusClient
 
-    from cloudguardiq.adapters.azure_adapter import AzureAdapter
+    from cloudguardiq.adapters.azure.adapter import AzureAdapter
     from cloudguardiq.auth.customer_credential import build_default_factory
     from cloudguardiq.billing.repository import BillingRepository
     from cloudguardiq.billing.usage import UsageRepository

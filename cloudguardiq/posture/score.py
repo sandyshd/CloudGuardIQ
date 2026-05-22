@@ -39,11 +39,16 @@ def _iter_rule_classes() -> Iterator[type]:
     counted toward the posture-score denominator.
     """
     pkg = importlib.import_module("cloudguardiq.adapters.rules")
-    for mod_info in pkgutil.iter_modules(pkg.__path__):
-        if mod_info.name.startswith("_") or mod_info.name == "base":
+    # Recursively walk provider subpackages (azure/, aws/, gcp/, ...)
+    # so rules under cloudguardiq.adapters.rules.<provider>.* are seen.
+    for mod_info in pkgutil.walk_packages(
+        pkg.__path__, prefix=f"{pkg.__name__}.",
+    ):
+        short_name = mod_info.name.rsplit(".", 1)[-1]
+        if short_name.startswith("_") or short_name == "base":
             continue
         try:
-            module = importlib.import_module(f"{pkg.__name__}.{mod_info.name}")
+            module = importlib.import_module(mod_info.name)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Could not import rule module %s: %s", mod_info.name, exc)
             continue

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from cloudguardiq.adapters.rules.network import (
+from cloudguardiq.adapters.rules.azure.network import (
     AnyPortOpenToInternetRule,
     DDoSProtectionRule,
     InboundAllowAllRule,
@@ -13,7 +13,7 @@ from cloudguardiq.adapters.rules.network import (
     RDPOpenToInternetRule,
     SSHOpenToInternetRule,
 )
-from cloudguardiq.adapters.rules.storage import (
+from cloudguardiq.adapters.rules.azure.storage import (
     BlobSoftDeleteRule,
     BlobVersioningRule,
     DiagnosticLoggingRule,

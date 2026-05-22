@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cloudguardiq.adapters.azure_adapter import AzureAdapter
+from cloudguardiq.adapters.azure.adapter import AzureAdapter
 from cloudguardiq.adapters.base import CapabilityFlags
 from cloudguardiq.core.enums import CloudProvider, DataTier
 from cloudguardiq.core.models import ResourceSnapshot
@@ -171,7 +171,7 @@ async def test_tier3_failure_graceful(adapter: AzureAdapter) -> None:
 async def test_validate_connection_true(adapter: AzureAdapter) -> None:
     """validate_connection returns True when Resource Graph responds."""
     with patch(
-        "cloudguardiq.adapters.azure_adapter.ResourceGraphClient"
+        "cloudguardiq.adapters.azure.adapter.ResourceGraphClient"
     ) as mock_rg_cls:
         mock_client = MagicMock()
         mock_client.resources.return_value = MagicMock(data=[{"id": "x"}])
@@ -187,7 +187,7 @@ async def test_validate_connection_true(adapter: AzureAdapter) -> None:
 async def test_validate_connection_false(adapter: AzureAdapter) -> None:
     """validate_connection returns False when Resource Graph returns 403."""
     with patch(
-        "cloudguardiq.adapters.azure_adapter.ResourceGraphClient"
+        "cloudguardiq.adapters.azure.adapter.ResourceGraphClient"
     ) as mock_rg_cls:
         mock_client = MagicMock()
         mock_client.resources.side_effect = Exception("HTTP 403 Forbidden")

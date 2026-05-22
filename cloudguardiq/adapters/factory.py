@@ -55,7 +55,7 @@ def build_scan_adapter(
     )
 
     if provider_enum is CloudProvider.AZURE:
-        from cloudguardiq.adapters.azure_adapter import AzureAdapter
+        from cloudguardiq.adapters.azure.adapter import AzureAdapter
 
         if not subscription_id or credential is None:
             raise UnsupportedProviderError(

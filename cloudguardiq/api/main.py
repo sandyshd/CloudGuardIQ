@@ -17,22 +17,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from cloudguardiq.adapters.azure_adapter import AzureAdapter
+from cloudguardiq.adapters.azure.adapter import AzureAdapter
 from cloudguardiq.adapters.native_scanner import NativeScanner
-from cloudguardiq.adapters.rules.compute import (
+from cloudguardiq.adapters.rules.azure.compute import (
     VMNoEncryptionRule,
     VMUnmanagedDisksRule,
 )
-from cloudguardiq.adapters.rules.finops import (
+from cloudguardiq.adapters.rules.azure.finops import (
     UnattachedDiskRule,
     UnderutilizedVMRule,
 )
-from cloudguardiq.adapters.rules.keyvault import (
+from cloudguardiq.adapters.rules.azure.keyvault import (
     KeyVaultPurgeProtectionRule,
     KeyVaultSoftDeleteRule,
 )
-from cloudguardiq.adapters.rules.network import NSGOpenRDPRule, NSGOpenSSHRule
-from cloudguardiq.adapters.rules.storage import (
+from cloudguardiq.adapters.rules.azure.network import NSGOpenRDPRule, NSGOpenSSHRule
+from cloudguardiq.adapters.rules.azure.storage import (
     StorageHttpsOnlyRule,
     StoragePublicAccessRule,
 )

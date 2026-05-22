@@ -87,8 +87,8 @@ export function FinOps() {
         />
         <EmptyState
           icon={<Link2 className="h-12 w-12" />}
-          title="Link a subscription to start scanning"
-          message="Connect an Azure subscription on the Settings page to surface idle VMs, unattached disks, and other cost waste."
+          title="Link a cloud account to start scanning"
+          message="Connect an Azure subscription or AWS account on the Settings page to surface idle VMs, unattached disks, Elastic IPs, and other cost waste across clouds."
           primaryLabel="Go to Settings"
           primaryTo="/settings"
         />
@@ -106,7 +106,7 @@ export function FinOps() {
         <EmptyState
           icon={<DollarSign className="h-12 w-12" />}
           title="No FinOps findings yet"
-          message="Run a scan from the Findings page to detect underutilized VMs, unattached disks, and savings opportunities."
+          message="Run a scan from the Findings page to detect underutilized VMs, unattached disks, Elastic IPs, and savings opportunities across all connected clouds."
           primaryLabel="Go to Findings"
           primaryTo="/findings"
         />

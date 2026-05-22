@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from cloudguardiq.adapters.rules.compute import (
+from cloudguardiq.adapters.rules.azure.compute import (
     IdleVMRule,
     MissingCostTagsRule,
     NoBackupPolicyRule,
@@ -14,7 +14,7 @@ from cloudguardiq.adapters.rules.compute import (
     PublicIPDirectAttachedRule,
     UnmanagedDiskRule,
 )
-from cloudguardiq.adapters.rules.finops import (
+from cloudguardiq.adapters.rules.azure.finops import (
     AKSNoAutoscalerRule,
     AppGatewayLowUtilisationRule,
     DevTestOutsideBusinessHoursRule,
@@ -24,7 +24,7 @@ from cloudguardiq.adapters.rules.finops import (
     UnassignedPublicIPRule,
     UnattachedManagedDiskRule,
 )
-from cloudguardiq.adapters.rules.iam import (
+from cloudguardiq.adapters.rules.azure.iam import (
     ClassicAdminRoleRule,
     ExternalUserPrivilegedRoleRule,
     GuestPrivilegedRoleRule,
@@ -34,7 +34,7 @@ from cloudguardiq.adapters.rules.iam import (
     SPOwnerMultipleSubscriptionsRule,
     SPPasswordExpiryRule,
 )
-from cloudguardiq.adapters.rules.keyvault import (
+from cloudguardiq.adapters.rules.azure.keyvault import (
     NoDiagnosticLoggingRule,
     PublicNetworkAccessRule,
     PurgeProtectionRule,

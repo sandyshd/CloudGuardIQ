@@ -24,7 +24,7 @@ async def _run_scan(subscription_id: str, output_format: str) -> None:
     """Execute a full tiered scan and print results."""
     from azure.identity import DefaultAzureCredential
 
-    from cloudguardiq.adapters.azure_adapter import AzureAdapter
+    from cloudguardiq.adapters.azure.adapter import AzureAdapter
     from cloudguardiq.adapters.native_scanner import RULE_REGISTRY
     from cloudguardiq.policy.engine import PolicyEngine
 

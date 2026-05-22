@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cloudguardiq.adapters.rules.storage import StorageHttpsOnlyRule, StoragePublicAccessRule
+from cloudguardiq.adapters.rules.azure.storage import StorageHttpsOnlyRule, StoragePublicAccessRule
 from cloudguardiq.core.enums import Severity
 from cloudguardiq.core.models import ResourceSnapshot
 from cloudguardiq.policy.engine import PolicyEngine
