@@ -389,6 +389,7 @@ export function MultiCloudOnboardingHub(): JSX.Element {
   const [displayName, setDisplayName] = useState("");
   const [tenantId, setTenantId] = useState("");
   const [accountId, setAccountId] = useState("");
+  const [awsRegion, setAwsRegion] = useState("us-east-1");
   const [projectId, setProjectId] = useState("");
 
   const [session, setSession] = useState<OnboardingSessionResponseV1 | null>(null);
@@ -438,6 +439,7 @@ export function MultiCloudOnboardingHub(): JSX.Element {
     setDisplayName("");
     setTenantId("");
     setAccountId("");
+    setAwsRegion("us-east-1");
     setProjectId("");
     setNotice(null);
   }
@@ -450,7 +452,7 @@ export function MultiCloudOnboardingHub(): JSX.Element {
       provider === "AZURE"
         ? { tenant_id: tenantId.trim() }
         : provider === "AWS"
-          ? { account_id: accountId.trim() }
+          ? { account_id: accountId.trim(), region: awsRegion.trim() }
           : { project_id: projectId.trim() };
 
     setBusyAction("create");
@@ -747,6 +749,27 @@ export function MultiCloudOnboardingHub(): JSX.Element {
                     />
                     <p className="text-xs text-[hsl(var(--muted-foreground))]">
                       12-digit account number from AWS Console → My Account.
+                    </p>
+                  </div>
+                )}
+
+                {provider === "AWS" && (
+                  <div className="space-y-1 md:col-span-2">
+                    <label className="text-sm font-medium" htmlFor="aws-region">
+                      AWS region
+                    </label>
+                    <input
+                      id="aws-region"
+                      className="h-10 w-full rounded border px-2 font-mono text-sm"
+                      placeholder="us-east-1"
+                      value={awsRegion}
+                      onChange={(event) => setAwsRegion(event.target.value)}
+                      pattern="^[a-z]{2}-[a-z]+-\d$"
+                      required
+                    />
+                    <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                      Primary region for the connected account, e.g.
+                      <code> us-east-1</code> or <code> eu-west-2</code>.
                     </p>
                   </div>
                 )}

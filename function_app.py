@@ -175,7 +175,10 @@ async def _get_ai_worker():
 
 
 @app.timer_trigger(
-    schedule="0 0 */6 * * *",
+    # Fire every 5 minutes. Per-tenant cooldown gating in
+    # scan_trigger() enforces the actual cadence per billing plan:
+    # Free = 1440 min, Starter = 60 min, Enterprise = 15 min.
+    schedule="0 */5 * * * *",
     arg_name="timer",
     run_on_startup=False,
 )
