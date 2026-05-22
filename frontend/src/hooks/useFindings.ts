@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FindingResult } from "../types";
 import { getFindings } from "../api/findings";
 
+import { toFriendlyMessage } from "../lib/errors";
 export function useFindings(subscriptionId?: string, limit = 5000) {
   const [findings, setFindings] = useState<FindingResult[]>([]);
   const [loading, setLoading] = useState(true);
@@ -14,7 +15,7 @@ export function useFindings(subscriptionId?: string, limit = 5000) {
       const data = await getFindings(subscriptionId, limit);
       setFindings(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load findings");
+      setError(toFriendlyMessage(err, "Failed to load findings"));
     } finally {
       setLoading(false);
     }

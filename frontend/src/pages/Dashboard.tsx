@@ -39,7 +39,8 @@ import { triggerScan } from "../api/scans";
 import { TIER2_VALUES, TIER3_VALUES } from "../types";
 import type { FindingResult, Severity, DataTier } from "../types";
 import { cn } from "../lib/utils";
-
+
+import { toFriendlyMessage } from "../lib/errors";
 const SEV_WEIGHT: Record<Severity, number> = {
   CRITICAL: 10,
   HIGH: 5,
@@ -128,7 +129,7 @@ export function Dashboard() {
       await refresh();
       toast({ title: "Scan complete", description: "Findings refreshed." });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Scan failed";
+      const msg = toFriendlyMessage(err, "Scan failed");
       setScanError(msg);
       toast({ title: "Scan failed", description: msg, tone: "error" });
     } finally {

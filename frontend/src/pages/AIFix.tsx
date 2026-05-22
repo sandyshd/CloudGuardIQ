@@ -16,7 +16,8 @@ import { useSubscriptions } from "../hooks/useSubscriptions";
 import { DetailSkeleton } from "../components/common/PageSkeleton";
 import { SeverityBadge } from "../components/common/SeverityBadge";
 import { DataTierBadge } from "../components/common/DataTierBadge";
-import { Alert, AlertDescription } from "../components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
+import { toFriendlyError, toFriendlyMessage, type FriendlyError } from "../lib/errors";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -61,7 +62,7 @@ export function AIFix() {
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<ActionState>("idle");
   const [generating, setGenerating] = useState(false);
-  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<FriendlyError | null>(null);
 
   const load = useCallback(async () => {
     if (!findingId) return;
@@ -77,7 +78,7 @@ export function AIFix() {
       setFinding(f);
       setSimilar(all.filter((x) => x.finding_id !== findingId).slice(0, 3));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load finding");
+      setError(toFriendlyMessage(err, "Failed to load finding."));
     } finally {
       setLoading(false);
     }
@@ -96,9 +97,7 @@ export function AIFix() {
       setCard(newCard);
     } catch (err) {
       setGenerationError(
-        err instanceof Error
-          ? err.message
-          : "AI generation failed. Check that Azure OpenAI is configured.",
+        toFriendlyError(err, "AI generation failed. Please try again in a moment."),
       );
     } finally {
       setGenerating(false);
@@ -311,14 +310,26 @@ export function AIFix() {
                   Generating AI remediation… this can take a few seconds.
                 </div>
               ) : generationError ? (
-                <>
-                  <p className="text-[hsl(var(--severity-critical))]">
-                    {generationError}
-                  </p>
-                  <Button size="sm" onClick={runGenerate} disabled={generating}>
-                    Retry generation
-                  </Button>
-                </>
+                <div className="space-y-3">
+                  <Alert variant={generationError.tone === "error" ? "destructive" : "warning"}>
+                    <AlertTitle>{generationError.title}</AlertTitle>
+                    <AlertDescription>{generationError.message}</AlertDescription>
+                  </Alert>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={runGenerate} disabled={generating}>
+                      Retry generation
+                    </Button>
+                    {generationError.actionHref && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => navigate(generationError.actionHref!)}
+                      >
+                        {generationError.actionLabel ?? "Open"}
+                      </Button>
+                    )}
+                  </div>
+                </div>
               ) : (
                 <p className="italic text-[hsl(var(--muted-foreground))]">
                   Preparing AI remediation…

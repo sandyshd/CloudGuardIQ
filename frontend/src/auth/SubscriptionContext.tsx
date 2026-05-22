@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { Subscription } from "../types";
+import type { Subscription } from "../types";
+import { toFriendlyMessage } from "../lib/errors";
 import {
   addSubscription as apiAdd,
   getSubscriptions,
@@ -76,7 +77,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       const data = await getSubscriptions();
       setSubscriptions(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load subscriptions");
+      setError(toFriendlyMessage(err, "Failed to load subscriptions"));
     } finally {
       setLoading(false);
     }

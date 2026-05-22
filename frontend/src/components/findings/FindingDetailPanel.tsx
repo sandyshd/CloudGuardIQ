@@ -132,7 +132,7 @@ export function FindingDetailPanel({ finding, onClose, onUpdate }: FindingDetail
       // Roll back on failure.
       setLocal(previous);
       onUpdate?.(previous);
-      const msg = err instanceof Error ? err.message : "Request failed";
+      const msg = toFriendlyMessage(err, "Request failed");
       toast({ tone: "error", title: "Action failed", description: msg });
     } finally {
       setBusy(null);
@@ -399,3 +399,4 @@ export function FindingDetailPanel({ finding, onClose, onUpdate }: FindingDetail
     </div>
   );
 }
+import { toFriendlyMessage } from "../../lib/errors";

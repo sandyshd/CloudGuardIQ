@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getComplianceScorecard, type FrameworkScore } from "../api/compliance";
 
+import { toFriendlyMessage } from "../lib/errors";
 export function useComplianceScorecard(subscriptionId?: string) {
   const [scorecard, setScorecard] = useState<FrameworkScore[]>([]);
   const [loading, setLoading] = useState(true);
@@ -13,7 +14,7 @@ export function useComplianceScorecard(subscriptionId?: string) {
       const data = await getComplianceScorecard(subscriptionId);
       setScorecard(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load compliance scorecard");
+      setError(toFriendlyMessage(err, "Failed to load compliance scorecard"));
       setScorecard([]);
     } finally {
       setLoading(false);

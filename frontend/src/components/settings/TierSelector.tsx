@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
-import { Alert, AlertDescription } from "../ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { toFriendlyError, type FriendlyError } from "../../lib/errors";
 import { Check, Sparkles } from "lucide-react";
 import {
   type BillingStatus,
@@ -73,7 +74,7 @@ const PLANS: PlanDef[] = [
 export function TierSelector() {
   const [status, setStatus] = useState<BillingStatus | null>(null);
   const [busyTier, setBusyTier] = useState<BillingTier | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,7 +100,7 @@ export function TierSelector() {
       const url = await createCheckout(tier);
       window.location.href = url;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to start checkout");
+      setError(toFriendlyError(err, "Unable to start checkout. Please try again."));
       setBusyTier(null);
     }
   };
@@ -111,8 +112,12 @@ export function TierSelector() {
       </CardHeader>
       <CardContent>
         {error && (
-          <Alert variant="destructive" className="mb-3">
-            <AlertDescription>{error}</AlertDescription>
+          <Alert
+            variant={error.tone === "error" ? "destructive" : "warning"}
+            className="mb-3"
+          >
+            <AlertTitle>{error.title}</AlertTitle>
+            <AlertDescription>{error.message}</AlertDescription>
           </Alert>
         )}
         <div className="grid gap-3 md:grid-cols-3">

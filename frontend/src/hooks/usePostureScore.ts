@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getPostureScore, type PostureScore } from "../api/posture";
 
+import { toFriendlyMessage } from "../lib/errors";
 export function usePostureScore(subscriptionId?: string) {
   const [posture, setPosture] = useState<PostureScore | null>(null);
   const [loading, setLoading] = useState(true);
@@ -13,7 +14,7 @@ export function usePostureScore(subscriptionId?: string) {
       const data = await getPostureScore(subscriptionId);
       setPosture(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load posture score");
+      setError(toFriendlyMessage(err, "Failed to load posture score"));
       setPosture(null);
     } finally {
       setLoading(false);
