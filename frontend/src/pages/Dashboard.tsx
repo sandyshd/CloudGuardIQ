@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   Shield,
   AlertTriangle,
-  DollarSign,
   Sparkles,
   ArrowRight,
   ArrowUpRight,
@@ -16,6 +15,7 @@ import {
   Activity,
   Wrench,
   Plug,
+  Server,
 } from "lucide-react";
 import { PageHeader } from "../components/common/PageHeader";
 import { EmptyState } from "../components/common/EmptyState";
@@ -233,6 +233,7 @@ export function Dashboard() {
       trend,
       sevCounts,
       resourcesCount: resources.length,
+      resourceTypesCount: new Set(resources.map((r) => r.resource_type)).size,
       monthlySpend,
       mtd,
       forecast,
@@ -402,50 +403,26 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* 3. Monthly Cloud Spend */}
+        {/* 3. Resources Scanned */}
         <Card>
           <CardContent className="p-5">
             <div className="flex items-start justify-between">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
-                  Monthly Cloud Spend
+                  Resources Scanned
                 </div>
-                {metrics.forecast > 0 ? (
-                  <>
-                    <div className="mt-2 text-4xl font-semibold leading-none text-[hsl(var(--foreground))]">
-                      {fmtMoney(metrics.mtd)}
-                    </div>
-                    <div className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
-                      Forecast {fmtMoney(metrics.forecast)} / mo
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="mt-2 text-2xl font-semibold leading-none text-[hsl(var(--muted-foreground))]">
-                      Not available
-                    </div>
-                    <div className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
-                      Cost data unavailable. Grant Cost Management Reader on the subscription.
-                    </div>
-                  </>
-                )}
+                <div className="mt-2 text-4xl font-semibold leading-none text-[hsl(var(--foreground))]">
+                  {metrics.resourcesCount.toLocaleString()}
+                </div>
+                <div className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
+                  {metrics.resourceTypesCount > 0
+                    ? `Across ${metrics.resourceTypesCount} resource type${metrics.resourceTypesCount === 1 ? "" : "s"}`
+                    : "No resources scanned yet"}
+                </div>
               </div>
-              <DollarSign className="h-5 w-5 text-[hsl(var(--muted-foreground))]" />
+              <Server className="h-5 w-5 text-[hsl(var(--muted-foreground))]" />
             </div>
-            <div className="mt-3">
-              <Sparkline
-                values={
-                  metrics.forecast > 0
-                    ? Array.from({ length: 12 }, (_, i) =>
-                        (metrics.forecast * (i + 1)) / 12,
-                      )
-                    : [0, 0]
-                }
-                color="hsl(var(--primary))"
-                width={220}
-                height={36}
-              />
-            </div>
+            <div className="mt-3 h-9" />
           </CardContent>
         </Card>
 
