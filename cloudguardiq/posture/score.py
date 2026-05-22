@@ -26,7 +26,7 @@ from collections.abc import Iterable, Iterator
 
 from pydantic import BaseModel
 
-from cloudguardiq.core.enums import FindingStatus, Severity
+from cloudguardiq.core.enums import CloudProvider, FindingStatus, Severity
 from cloudguardiq.core.models import FindingResult
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,30 @@ def _iter_rule_classes() -> Iterator[type]:
             rule_id = getattr(obj, "rule_id", None)
             if isinstance(rule_id, str) and rule_id:
                 yield obj
+
+
+def _rule_provider(cls: type) -> CloudProvider | None:
+    """Infer the cloud provider for a rule class from its resource_types.
+
+    Resource type strings follow each cloud's native naming convention:
+    Azure uses ``Microsoft.<RP>/<Type>`` (e.g. ``Microsoft.Storage/storageAccounts``);
+    AWS uses ``AWS::<Service>::<Type>``. Returns ``None`` when the rule
+    has no resource_types declared or the prefix is unrecognized -- such
+    rules are treated as provider-agnostic and always counted.
+    """
+    resource_types = getattr(cls, "resource_types", None)
+    if not resource_types:
+        return None
+    for rt in resource_types:
+        if not isinstance(rt, str):
+            continue
+        if rt.startswith("Microsoft."):
+            return CloudProvider.AZURE
+        if rt.startswith("AWS::"):
+            return CloudProvider.AWS
+        if rt.startswith("google."):
+            return CloudProvider.GCP
+    return None
 
 
 SEVERITY_WEIGHT: dict[Severity, int] = {
@@ -114,7 +138,11 @@ def _grade(score: int) -> str:
     return "F"
 
 
-def compute_posture_score(findings: Iterable[FindingResult]) -> PostureScore:
+def compute_posture_score(
+    findings: Iterable[FindingResult],
+    *,
+    providers: set[CloudProvider] | None = None,
+) -> PostureScore:
     """Compute the weighted control-pass posture score.
 
     Args:
@@ -131,6 +159,15 @@ def compute_posture_score(findings: Iterable[FindingResult]) -> PostureScore:
         rule_id = getattr(cls, "rule_id", None)
         if not isinstance(rule_id, str) or not rule_id:
             continue
+        # When a provider filter is supplied (typically the providers
+        # the caller has actually connected) skip rules tagged to a
+        # different cloud so they do not artificially inflate the
+        # denominator. Provider-agnostic rules (no resource_types)
+        # always count.
+        if providers is not None:
+            rule_provider = _rule_provider(cls)
+            if rule_provider is not None and rule_provider not in providers:
+                continue
         rule_weights[rule_id] = _rule_weight(cls)
 
     total_weight = sum(rule_weights.values())

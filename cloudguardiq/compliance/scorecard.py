@@ -24,7 +24,7 @@ from functools import lru_cache
 
 from pydantic import BaseModel
 
-from cloudguardiq.core.enums import FindingStatus, Severity
+from cloudguardiq.core.enums import CloudProvider, FindingStatus, Severity
 from cloudguardiq.core.models import FindingResult
 
 logger = logging.getLogger(__name__)
@@ -140,14 +140,51 @@ def _iter_rule_classes() -> Iterator[type]:
                 yield obj
 
 
-@lru_cache(maxsize=1)
-def _build_catalogue() -> dict[str, set[str]]:
+def _rule_provider(cls: type) -> CloudProvider | None:
+    """Infer the cloud provider for a rule class from its resource_types.
+
+    Azure: ``Microsoft.<RP>/<Type>`` -> AZURE
+    AWS:   ``AWS::<Service>::<Type>`` -> AWS
+    GCP:   ``google.<service>.<Type>`` -> GCP
+    Anything else (or no resource_types) -> None, treated as
+    provider-agnostic and always counted.
+    """
+    resource_types = getattr(cls, "resource_types", None)
+    if not resource_types:
+        return None
+    for rt in resource_types:
+        if not isinstance(rt, str):
+            continue
+        if rt.startswith("Microsoft."):
+            return CloudProvider.AZURE
+        if rt.startswith("AWS::"):
+            return CloudProvider.AWS
+        if rt.startswith("google."):
+            return CloudProvider.GCP
+    return None
+
+
+@lru_cache(maxsize=8)
+def _build_catalogue(
+    providers_key: frozenset[CloudProvider] | None = None,
+) -> dict[str, set[str]]:
     """Return ``{framework_id: {control_id, ...}}`` covering every control
-    referenced by any rule in the registry. Cached for the process lifetime;
-    rules are static so re-scanning is wasteful."""
+    referenced by any rule in the registry. Cached per-providers key so
+    repeated calls with the same scope avoid re-scanning rule modules.
+
+    When ``providers_key`` is None the catalogue includes every rule
+    (legacy behavior). When set, only rules whose ``_rule_provider``
+    is in the set (or None / provider-agnostic) are counted, so the
+    score is not diluted by rule packs for clouds the caller has not
+    connected.
+    """
     catalogue: dict[str, set[str]] = {fw.id: set() for fw in FRAMEWORKS}
     unknown: set[str] = set()
     for cls in _iter_rule_classes():
+        if providers_key is not None:
+            rp = _rule_provider(cls)
+            if rp is not None and rp not in providers_key:
+                continue
         for tag in getattr(cls, "compliance_frameworks", []) or []:
             classified = _classify(tag)
             if classified is None:
@@ -195,14 +232,19 @@ class FrameworkScore(BaseModel):
     severity_breakdown: SeverityBreakdown
 
 
-def compute_scorecard(findings: Iterable[FindingResult]) -> list[FrameworkScore]:
+def compute_scorecard(
+    findings: Iterable[FindingResult],
+    *,
+    providers: set[CloudProvider] | None = None,
+) -> list[FrameworkScore]:
     """Compute the scorecard for an iterable of findings.
 
     Only ``OPEN`` findings (or findings with no explicit status, which the
     backend treats as open) contribute to ``controls_failed``. Resolved,
     snoozed, and applied findings are excluded.
     """
-    catalogue = _build_catalogue()
+    providers_key = frozenset(providers) if providers else None
+    catalogue = _build_catalogue(providers_key)
 
     failed_controls: dict[str, set[str]] = {fw.id: set() for fw in FRAMEWORKS}
     open_finding_counts: dict[str, int] = {fw.id: 0 for fw in FRAMEWORKS}

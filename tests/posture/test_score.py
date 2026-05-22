@@ -87,3 +87,31 @@ def test_grade_thresholds() -> None:
     assert _grade(75) == "C"
     assert _grade(65) == "D"
     assert _grade(40) == "F"
+
+
+def test_provider_scope_excludes_other_cloud_rules() -> None:
+    """Regression: when the caller passes ``providers={AZURE}`` only Azure
+    rules contribute to the denominator. AWS-only rules must not inflate
+    or deflate the score for an Azure-only scope.
+
+    Without this filter, the recursive rule-discovery introduced when
+    Azure/AWS/GCP rule packs were re-grouped under
+    ``cloudguardiq.adapters.rules.<provider>.*`` started counting the
+    AWS rule pack against an Azure-only tenant, which silently bumped
+    Security Posture upward even when no findings changed.
+    """
+    from cloudguardiq.core.enums import CloudProvider
+    reset_catalogue_cache()
+    no_filter = compute_posture_score([])
+    azure_only = compute_posture_score([], providers={CloudProvider.AZURE})
+    aws_only = compute_posture_score([], providers={CloudProvider.AWS})
+
+    assert azure_only.rules_evaluated > 0
+    assert aws_only.rules_evaluated > 0
+    # Azure-only must be strictly smaller than the unfiltered catalogue,
+    # because at least one AWS rule exists.
+    assert azure_only.rules_evaluated < no_filter.rules_evaluated
+    # And AWS-only must be strictly smaller as well.
+    assert aws_only.rules_evaluated < no_filter.rules_evaluated
+    # Provider-agnostic rules (no resource_types) count in both scopes,
+    # so AZURE + AWS may exceed the unfiltered total; that is expected.

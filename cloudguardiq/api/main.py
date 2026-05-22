@@ -1312,6 +1312,45 @@ async def get_finding_terraform(
 
 
 
+async def _providers_for_scope(
+    *,
+    user: TokenPayload,
+    subscription_id: str,
+) -> set | None:
+    """Return the set of CloudProvider values that the scoring functions
+    should restrict their rule catalogue to.
+
+    * If a specific ``subscription_id`` is supplied we look up the
+      SubscriptionRecord and return ``{record.provider}`` so we never
+      count rule packs for clouds the caller has not connected.
+    * If no subscription is specified (tenant-wide view in dev mode)
+      we return ``None`` to keep the legacy "all rules" denominator.
+    """
+    from cloudguardiq.core.enums import CloudProvider
+    settings = get_settings()
+    if not subscription_id or settings.auth_disabled:
+        return None
+    try:
+        repo = subscriptions_module._repository  # noqa: SLF001
+        if repo is None:
+            return None
+        tenant_id = get_tenant_id(user)
+        record = await repo.get(tenant_id, subscription_id.lower())
+        if record is None:
+            return None
+        provider = getattr(record, "provider", None)
+        if isinstance(provider, CloudProvider):
+            return {provider}
+        if isinstance(provider, str):
+            try:
+                return {CloudProvider(provider)}
+            except ValueError:
+                return None
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to resolve provider scope for %s: %s", subscription_id, exc)
+    return None
+
+
 @app.get(
     "/compliance/scorecard",
     response_model=list[ComplianceFrameworkScore],
@@ -1354,7 +1393,8 @@ async def get_compliance_scorecard(
         # Local/dev mode: surface demo findings so the dashboard isn't blank.
         findings = _demo_findings()
 
-    return compute_compliance_scorecard(findings)
+    providers = await _providers_for_scope(user=user, subscription_id=sub_id)
+    return compute_compliance_scorecard(findings, providers=providers)
 
 
 @app.get(
@@ -1398,6 +1438,7 @@ async def get_posture_score(
     elif settings.auth_disabled and not sub_id:
         findings = _demo_findings()
 
-    return compute_posture_score(findings)
+    providers = await _providers_for_scope(user=user, subscription_id=sub_id)
+    return compute_posture_score(findings, providers=providers)
 
 
