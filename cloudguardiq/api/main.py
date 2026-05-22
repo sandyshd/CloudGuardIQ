@@ -79,6 +79,10 @@ from cloudguardiq.onboarding.cloud_connection_repository import CloudConnectionR
 from cloudguardiq.onboarding.credential_ref_repository import CredentialRefRepository
 from cloudguardiq.pipeline.scan_pipeline import ScanResult
 from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
+from cloudguardiq.posture.score import (
+    PostureScore,
+    compute_posture_score,
+)
 from cloudguardiq.subscriptions.repository import SubscriptionsRepository
 from cloudguardiq.tenants.consent_repository import TenantConsentRepository
 from cloudguardiq.tenants.onboarding_session_repository import (
@@ -1351,5 +1355,49 @@ async def get_compliance_scorecard(
         findings = _demo_findings()
 
     return compute_compliance_scorecard(findings)
+
+
+@app.get(
+    "/posture/score",
+    response_model=PostureScore,
+)
+async def get_posture_score(
+    subscription_id: str = Query(default=""),
+    user: TokenPayload = _auth,
+) -> PostureScore:
+    """Return the weighted control-pass posture score for the scope.
+
+    Methodology (industry-aligned, matches Microsoft Defender Secure
+    Score and AWS Security Hub):
+
+        score = 100 * (sum of severity-weights of passing rules)
+                       / (sum of severity-weights of all rules)
+
+    A rule is *passing* when no OPEN finding for that rule_id exists in
+    the scope. Severity weights are CRITICAL=10, HIGH=5, MEDIUM=2,
+    LOW=1, INFORMATIONAL=0.
+    """
+    repo = get_repo()
+    sub_id = ""
+    if subscription_id:
+        sub_id = await _validate_owned_subscription(user, subscription_id)
+        bind_context(subscription_id=sub_id, provider="azure")
+    settings = get_settings()
+    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
+
+    findings: list[FindingResult] = []
+    if repo is not None and sub_id:
+        try:
+            findings = await repo.get_findings(sub_id, tenant_id=tenant_id, limit=5000)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Posture score: failed to query findings from Cosmos: %s",
+                exc,
+            )
+            findings = []
+    elif settings.auth_disabled and not sub_id:
+        findings = _demo_findings()
+
+    return compute_posture_score(findings)
 
 

@@ -47,7 +47,11 @@ export function FindingsOverTimeChart({
     };
   }
   findings.forEach((f) => {
-    const k = f.detected_at?.slice(0, 10);
+    // Prefer first_seen_at so the chart reflects when each finding was
+    // initially discovered. detected_at is rewritten on every scan, which
+    // would cause a single spike at the most recent scan date.
+    const ts = f.first_seen_at ?? f.detected_at;
+    const k = ts?.slice(0, 10);
     if (k && buckets[k]) {
       buckets[k][f.severity] = (buckets[k][f.severity] || 0) + 1;
     }

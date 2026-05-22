@@ -33,6 +33,7 @@ import {
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { useFindings } from "../hooks/useFindings";
 import { useComplianceScorecard } from "../hooks/useComplianceScorecard";
+import { usePostureScore } from "../hooks/usePostureScore";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { triggerScan } from "../api/scans";
 import { TIER2_VALUES, TIER3_VALUES } from "../types";
@@ -65,20 +66,6 @@ function postureScore(findings: FindingResult[]): number {
   return Math.max(0, Math.min(100, Math.round(100 - damped)));
 }
 
-function postureScoreFromScorecard(
-  scorecard: { controls_passed: number; controls_total: number }[],
-): number | null {
-  const totals = scorecard.reduce(
-    (acc, fw) => {
-      acc.passed += fw.controls_passed;
-      acc.total += fw.controls_total;
-      return acc;
-    },
-    { passed: 0, total: 0 },
-  );
-  if (totals.total === 0) return null;
-  return Math.round((totals.passed / totals.total) * 100);
-}
 
 function postureSparkline(findings: FindingResult[], days = 30): number[] {
   const today = new Date();
@@ -122,6 +109,7 @@ export function Dashboard() {
     useSubscriptions();
   const { findings, loading, refresh } = useFindings(selectedSub?.subscription_id);
   const { scorecard, loading: scorecardLoading } = useComplianceScorecard(selectedSub?.subscription_id);
+  const { posture } = usePostureScore(selectedSub?.subscription_id);
   const [selectedFinding, setSelectedFinding] = useState<FindingResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -296,8 +284,10 @@ export function Dashboard() {
     );
   }
 
-  const scorecardScore = postureScoreFromScorecard(scorecard);
-  const displayedScore = scorecardScore ?? metrics.score;
+  // Industry-standard CSPM score: weighted control-pass (Defender Secure Score
+  // / AWS Security Hub style). Falls back to severity-weighted formula until
+  // the backend /posture/score endpoint responds.
+  const displayedScore = posture?.score ?? metrics.score;
   const scoreColor =
     displayedScore >= 80
       ? "hsl(var(--success))"
