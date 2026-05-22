@@ -4,7 +4,7 @@ import { Bell } from "lucide-react";
 import { useFindings } from "../../hooks/useFindings";
 import { useSubscriptionContext } from "../../auth/SubscriptionContext";
 import { Button } from "../ui/button";
-import { cn, isOpenFinding } from "../../lib/utils";
+import { cn } from "../../lib/utils";
 
 const STORAGE_KEY = "cguardiq.notifSeen";
 
@@ -50,7 +50,7 @@ export function NotificationsMenu() {
   }, [open]);
 
   const critical = findings
-    .filter((f) => f.severity === "CRITICAL" && isOpenFinding(f))
+    .filter((f) => f.severity === "CRITICAL" && (f.status ?? "OPEN") === "OPEN")
     .slice()
     .sort((a, b) => (b.detected_at || "").localeCompare(a.detected_at || ""));
   const top = critical.slice(0, 6);

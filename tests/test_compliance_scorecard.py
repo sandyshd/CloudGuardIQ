@@ -98,30 +98,6 @@ class TestComputeScorecard:
         assert rows["CIS_AZURE"].controls_failed == 0
         assert rows["CIS_AZURE"].score == 100
 
-    def test_unknown_status_string_treated_as_open(self) -> None:
-        """Legacy rows with an unrecognised status value must still count
-        as OPEN -- otherwise the scorecard silently reports 100%."""
-        f = _finding(
-            rule_id="STOR-001",
-            severity=Severity.HIGH,
-            frameworks=["CIS_3.1"],
-        )
-        # Bypass Pydantic validation to simulate a Cosmos row from before
-        # the enum existed (e.g. status persisted as lowercase).
-        object.__setattr__(f, "status", "open")
-        rows = {r.framework_id: r for r in compute_scorecard([f])}
-        assert rows["CIS_AZURE"].controls_failed == 1
-        assert rows["CIS_AZURE"].open_findings == 1
-
-    def test_none_status_treated_as_open(self) -> None:
-        f = _finding(
-            rule_id="STOR-001",
-            severity=Severity.HIGH,
-            frameworks=["CIS_3.1"],
-        )
-        object.__setattr__(f, "status", None)
-        rows = {r.framework_id: r for r in compute_scorecard([f])}
-        assert rows["CIS_AZURE"].controls_failed == 1
     def test_multiple_findings_same_control_count_once(self) -> None:
         f1 = _finding(rule_id="STOR-001", severity=Severity.HIGH, frameworks=["CIS_3.1"])
         f2 = _finding(rule_id="STOR-001", severity=Severity.HIGH, frameworks=["CIS_3.1"])

@@ -21,7 +21,7 @@ import {
   TrendingUp,
   Wallet,
 } from "lucide-react";
-import { cn, isOpenFinding } from "../../lib/utils";
+import { cn } from "../../lib/utils";
 import { useFindings } from "../../hooks/useFindings";
 import { useSubscriptionContext } from "../../auth/SubscriptionContext";
 import { TenantSwitcher } from "./TenantSwitcher";
@@ -101,7 +101,7 @@ export function Sidebar() {
   const { findings } = useFindings(selected?.subscription_id);
 
   const counts = useMemo(() => {
-    const open = findings.filter((f) => isOpenFinding(f));
+    const open = findings.filter((f) => (f.status ?? "OPEN") === "OPEN");
     const critical = open.filter((f) => f.severity === "CRITICAL").length;
     const savings = open
       .filter((f) => f.finding_type === "FINOPS")

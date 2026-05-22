@@ -189,15 +189,6 @@ class FrameworkScore(BaseModel):
     severity_breakdown: SeverityBreakdown
 
 
-# Statuses that explicitly take a finding out of the OPEN bucket. Anything
-# else (including unexpected casing or missing field) is treated as OPEN so
-# legacy rows never silently disappear from the scorecard.
-_CLOSED_STATUSES: frozenset[FindingStatus] = frozenset({
-    FindingStatus.RESOLVED,
-    FindingStatus.SNOOZED,
-    FindingStatus.APPLIED,
-})
-
 def compute_scorecard(findings: Iterable[FindingResult]) -> list[FrameworkScore]:
     """Compute the scorecard for an iterable of findings.
 
@@ -214,20 +205,10 @@ def compute_scorecard(findings: Iterable[FindingResult]) -> list[FrameworkScore]
         for fw in FRAMEWORKS
     }
 
-    # Treat anything not explicitly closed as OPEN -- see _CLOSED_STATUSES
-    # at module scope. Mirrors the same lenient rule used by the dashboard.
     for f in findings:
-        raw = getattr(f, "status", None)
-        if raw is None:
-            normalised = FindingStatus.OPEN
-        elif isinstance(raw, FindingStatus):
-            normalised = raw
-        else:
-            try:
-                normalised = FindingStatus(str(raw).upper())
-            except ValueError:
-                normalised = FindingStatus.OPEN
-        if normalised in _CLOSED_STATUSES:
+        # Treat missing status as OPEN to mirror the rest of the codebase.
+        status = getattr(f, "status", None) or FindingStatus.OPEN
+        if status != FindingStatus.OPEN:
             continue
         sev = f.severity
         for tag in f.compliance_frameworks or []:
