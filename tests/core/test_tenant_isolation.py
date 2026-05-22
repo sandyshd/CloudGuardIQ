@@ -116,6 +116,30 @@ async def test_findings_query_filters_by_tenant_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_findings_query_matches_legacy_unstamped_rows() -> None:
+    """Findings persisted before tenant stamping (commit bf4cc24) lack a
+    `tenant_id` field. The query must still surface them to the
+    subscription owner -- otherwise the dashboard silently zeros out after
+    a tenant-isolation rollout. Subscription ownership is enforced upstream
+    so this is safe."""
+    from cloudguardiq.core.database import _build_findings_query
+
+    query, _ = _build_findings_query(
+        tenant_id="tenant-A", subscription_id="sub-shared", limit=10,
+    )
+    assert "NOT IS_DEFINED(c.tenant_id)" in query
+    assert "c.tenant_id = null" in query
+    assert "c.tenant_id = ''" in query
+
+
+async def test_finding_lookup_matches_legacy_unstamped_rows() -> None:
+    from cloudguardiq.core.database import _build_finding_lookup_query
+
+    query, _ = _build_finding_lookup_query(
+        tenant_id="tenant-A", finding_id="finding-1",
+    )
+    assert "NOT IS_DEFINED(c.tenant_id)" in query
+
 async def test_finding_lookup_filters_by_tenant_id() -> None:
     """Single-finding lookup must include tenant_id filter."""
     from cloudguardiq.core.database import _build_finding_lookup_query

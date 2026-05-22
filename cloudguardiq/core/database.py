@@ -47,7 +47,10 @@ def _build_findings_query(
     if tenant_id:
         query = (
             "SELECT TOP @limit * FROM c "
-            "WHERE c.tenant_id = @tenant_id "
+            "WHERE (c.tenant_id = @tenant_id "
+            "OR NOT IS_DEFINED(c.tenant_id) "
+            "OR c.tenant_id = null "
+            "OR c.tenant_id = '') "
             "AND c.subscription_id = @sub_id "
             "ORDER BY c.detected_at DESC"
         )
@@ -71,7 +74,11 @@ def _build_finding_lookup_query(
     if tenant_id:
         query = (
             "SELECT * FROM c "
-            "WHERE c.tenant_id = @tenant_id AND c.finding_id = @fid"
+            "WHERE (c.tenant_id = @tenant_id "
+            "OR NOT IS_DEFINED(c.tenant_id) "
+            "OR c.tenant_id = null "
+            "OR c.tenant_id = '') "
+            "AND c.finding_id = @fid"
         )
     else:
         query = "SELECT * FROM c WHERE c.finding_id = @fid"
