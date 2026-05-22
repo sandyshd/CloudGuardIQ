@@ -113,8 +113,8 @@ class TestPolicyEngineNew:
         assert findings == []
 
     def test_engine_runs_all_rules(self, engine: PolicyEngine) -> None:
-        """Verify all 44 native rules are registered via auto-discovery."""
-        assert engine.native_rule_count == 44
+        """Verify all 55 native rules (44 Azure + 11 AWS) are auto-discovered."""
+        assert engine.native_rule_count == 55
 
     def test_priority_score_critical_high_cost_is_near_100(self) -> None:
         """CRITICAL severity + high waste + many frameworks -> score near 100."""

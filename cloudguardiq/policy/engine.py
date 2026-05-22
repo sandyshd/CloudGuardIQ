@@ -67,27 +67,41 @@ def _compute_priority(finding: FindingResult) -> float:
 
 
 def _discover_rules() -> list[Any]:
-    """Auto-discover and instantiate all PolicyRule subclasses from adapters/rules/.
+    """Auto-discover and instantiate every PolicyRule subclass.
 
-    Scans all modules under `cloudguardiq.adapters.rules` for classes that
-    inherit from `cloudguardiq.adapters.rules.base.PolicyRule`.
+    Recursively walks ``cloudguardiq.adapters.rules`` (including provider
+    subpackages such as ``aws/``) and instantiates every concrete
+    ``PolicyRule`` subclass it finds. Duplicates by ``rule_id`` are
+    de-duplicated so a class re-exported from a registry module is only
+    registered once.
     """
     from cloudguardiq.adapters.rules.base import PolicyRule as PolicyRuleBase
 
     rules: list[Any] = []
+    seen_ids: set[str] = set()
     package = importlib.import_module("cloudguardiq.adapters.rules")
-    for _importer, module_name, _ispkg in pkgutil.iter_modules(package.__path__):
-        if module_name == "base":
+    for _finder, module_name, _ispkg in pkgutil.walk_packages(
+        package.__path__, prefix="cloudguardiq.adapters.rules."
+    ):
+        if module_name.endswith(".base"):
             continue
-        full_name = f"cloudguardiq.adapters.rules.{module_name}"
-        mod = importlib.import_module(full_name)
+        try:
+            mod = importlib.import_module(module_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to import rule module %s: %s", module_name, exc)
+            continue
         for _name, obj in inspect.getmembers(mod, inspect.isclass):
             if (
                 issubclass(obj, PolicyRuleBase)
                 and obj is not PolicyRuleBase
                 and not inspect.isabstract(obj)
             ):
+                rule_id = getattr(obj, "rule_id", None)
+                if rule_id and rule_id in seen_ids:
+                    continue
                 rules.append(obj())
+                if rule_id:
+                    seen_ids.add(rule_id)
     return rules
 
 
@@ -132,6 +146,12 @@ class PolicyEngine:
                     )
             # Run native PolicyRule instances
             for rule_obj in self._native_rules:
+                rule_types = getattr(rule_obj, "resource_types", None)
+                if rule_types and snapshot.resource_type not in rule_types:
+                    # Rule declares a type whitelist that excludes this
+                    # snapshot. Skip -- this is the cross-cloud routing
+                    # guarantee: AWS rules never see Azure snapshots.
+                    continue
                 try:
                     result = rule_obj.evaluate(snapshot)
                     if result is not None:
@@ -219,6 +239,9 @@ class PolicyEngine:
 
         # Native PolicyRule instances
         for rule_obj in self._native_rules:
+            rule_types = getattr(rule_obj, "resource_types", None)
+            if rule_types and snapshot.resource_type not in rule_types:
+                continue
             try:
                 result = rule_obj.evaluate(snapshot)
                 if result is not None:
