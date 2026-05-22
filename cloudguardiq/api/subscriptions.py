@@ -30,7 +30,7 @@ from cloudguardiq.auth.graph_principal_resolver import (
 from cloudguardiq.billing.plans import get_plan
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.core.config import Settings
-from cloudguardiq.core.enums import SubscriptionTier
+from cloudguardiq.core.enums import CloudProvider, SubscriptionTier
 from cloudguardiq.subscriptions.repository import (
     SubscriptionRecord,
     SubscriptionsRepository,
@@ -87,6 +87,11 @@ class SubscriptionResponse(BaseModel):
     subscription_id: str
     display_name: str = ""
     state: str = "Enabled"
+    # Multi-cloud: lowercase provider string ("azure" | "aws")
+    # so the React UI can branch on it without a new schema fetch.
+    provider: str = "azure"
+    aws_account_id: str = ""
+    aws_region: str = ""
 
     @classmethod
     def from_record(cls, rec: SubscriptionRecord) -> SubscriptionResponse:
@@ -95,6 +100,9 @@ class SubscriptionResponse(BaseModel):
             subscription_id=rec.subscription_id,
             display_name=rec.display_name or rec.subscription_id,
             state=rec.state,
+            provider=rec.provider.value.lower(),
+            aws_account_id=rec.aws_account_id,
+            aws_region=rec.aws_region,
         )
 
 
@@ -107,18 +115,38 @@ class AddSubscriptionRequest(BaseModel):
     generic 422 which hides *why* the id was rejected.
     """
 
-    subscription_id: str = Field(..., min_length=1, max_length=64)
+    # For AWS connections ``subscription_id`` is optional in the
+    # request body; the handler reuses ``aws_account_id`` as the
+    # canonical id. We keep the field non-optional with min_length=0
+    # so existing Azure clients (that always send it) are unaffected.
+    subscription_id: str = Field(default="", max_length=64)
     display_name: str = ""
     # Optional: the Azure tenant that owns this subscription. When the
     # caller does not supply it we default to their JWT ``tid`` claim
     # (single-tenant onboarding). For Phase 3 cross-tenant flows the
     # frontend passes the customer's Entra tenant id explicitly.
     customer_tenant_id: str = ""
+    # Multi-cloud: lowercase provider string. Defaults to ``azure``
+    # so clients that do not send the field keep the existing
+    # Azure-only onboarding flow.
+    provider: str = "azure"
+    aws_account_id: str = ""
+    aws_region: str = ""
 
     @field_validator("subscription_id")
     @classmethod
     def _normalize(cls, v: str) -> str:
         return v.strip().lower()
+
+    @field_validator("provider")
+    @classmethod
+    def _normalize_provider(cls, v: str) -> str:
+        return (v or "azure").strip().lower()
+
+    @field_validator("aws_account_id")
+    @classmethod
+    def _normalize_account(cls, v: str) -> str:
+        return (v or "").strip()
 
 
 class PatchSubscriptionRequest(BaseModel):
@@ -323,6 +351,102 @@ async def list_subscriptions(
     return [SubscriptionResponse.from_record(r) for r in records]
 
 
+_AWS_REGION_RE = re.compile(r"^[a-z]{2}-[a-z]+-\d$")
+
+
+async def _add_aws_subscription(
+    body: AddSubscriptionRequest, tenant_id: str,
+) -> SubscriptionResponse:
+    """Handle ``POST /subscriptions`` for ``provider=aws``.
+
+    AWS onboarding does not flow through Entra consent or the Azure
+    Resource Graph access probe. We validate the account id shape,
+    enforce the same tier cap as Azure, and persist a record keyed
+    on the 12-digit account id so the scan pipeline picks it up on
+    the next tick.
+    """
+    account = (body.aws_account_id or body.subscription_id or "").strip()
+    if not _AWS_ACCOUNT_RE.match(account):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_aws_account_id",
+                "message": (
+                    "aws_account_id must be a 12-digit AWS account number."
+                ),
+            },
+        )
+    region = (body.aws_region or "us-east-1").strip().lower()
+    if not _AWS_REGION_RE.match(region):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "invalid_aws_region",
+                "message": (
+                    "aws_region must look like ``us-east-1`` (lowercase, hyphens)."
+                ),
+            },
+        )
+
+    repo = _get_repo()
+    billing = _get_billing()
+    settings = _get_settings()
+    owning_tenant_id = tenant_id
+
+    record = await billing.get(owning_tenant_id)
+    tier = record.tier if record else SubscriptionTier.FREE
+    cap = _cap_for_tier(settings, tier)
+
+    existing = await repo.get(owning_tenant_id, account)
+    if existing is not None and existing.state == "Removed":
+        existing.state = "Enabled"
+        existing.removed_at = None
+        existing.provider = CloudProvider.AWS
+        existing.aws_account_id = account
+        existing.aws_region = region
+        if body.display_name:
+            existing.display_name = body.display_name
+        restored = await repo.upsert(existing)
+        logger.info(
+            "Restored soft-deleted AWS account tenant=%s account=%s",
+            tenant_id, account,
+        )
+        return SubscriptionResponse.from_record(restored)
+
+    current = await repo.count(owning_tenant_id)
+    if cap >= 0 and current >= cap:
+        logger.info(
+            "Tier cap reached (AWS): tenant=%s tier=%s current=%d cap=%d",
+            tenant_id, tier.value, current, cap,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": "upgrade_required",
+                "current_tier": tier.value.lower(),
+                "limit": "subscriptions",
+                "cap": cap,
+                "current": current,
+            },
+        )
+
+    rec = SubscriptionRecord(
+        tenant_id=owning_tenant_id,
+        subscription_id=account,
+        customer_tenant_id=tenant_id,
+        display_name=body.display_name or f"AWS {account}",
+        provider=CloudProvider.AWS,
+        aws_account_id=account,
+        aws_region=region,
+    )
+    saved = await repo.upsert(rec)
+    logger.info(
+        "Linked AWS account tenant=%s account=%s region=%s",
+        tenant_id, account, region,
+    )
+    return SubscriptionResponse.from_record(saved)
+
+
 @router.post(
     "", response_model=SubscriptionResponse, status_code=status.HTTP_201_CREATED
 )
@@ -336,6 +460,14 @@ async def add_subscription(
     when the tenant is at its plan limit.
     """
     tenant_id = get_tenant_id(user)
+
+    # ------------------------------------------------------------------
+    # AWS branch -- skips the Azure-specific consent + access-probe path
+    # and stores the connection keyed on the 12-digit account id.
+    # ------------------------------------------------------------------
+    if body.provider == "aws":
+        return await _add_aws_subscription(body, tenant_id)
+
     raw_customer_tid = (body.customer_tenant_id or tenant_id).strip()
     customer_tid = (
         raw_customer_tid.lower()
