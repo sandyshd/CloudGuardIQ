@@ -968,7 +968,7 @@ async def scan_subscription(
 @app.get("/findings", response_model=list[FindingResult])
 async def list_findings(
     subscription_id: str = Query(default=""),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=5000),
     user: TokenPayload = _auth,
 ) -> list[FindingResult]:
     """Return FindingResults for a subscription, sorted by priority_score descending."""
@@ -1339,7 +1339,7 @@ async def get_compliance_scorecard(
     findings: list[FindingResult] = []
     if repo is not None and sub_id:
         try:
-            findings = await repo.get_findings(sub_id, tenant_id=tenant_id, limit=2000)
+            findings = await repo.get_findings(sub_id, tenant_id=tenant_id, limit=5000)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(
                 "Compliance scorecard: failed to query findings from Cosmos: %s",
@@ -1351,3 +1351,5 @@ async def get_compliance_scorecard(
         findings = _demo_findings()
 
     return compute_compliance_scorecard(findings)
+
+

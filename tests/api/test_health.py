@@ -60,6 +60,14 @@ class TestFindingsEndpoints:
         assert "rule_id" in data[0]
 
     @pytest.mark.asyncio
+    async def test_list_findings_allows_high_limit_for_dashboard_counts(
+        self, client: AsyncClient,
+    ) -> None:
+        """GET /findings accepts a high limit so UI totals are not capped at 50."""
+        response = await client.get("/findings", params={"limit": 5000})
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
     async def test_get_finding_by_id(self, client: AsyncClient) -> None:
         # First get a valid finding_id from the list
         list_resp = await client.get("/findings")

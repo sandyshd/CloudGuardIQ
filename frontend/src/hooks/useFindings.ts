@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FindingResult } from "../types";
 import { getFindings } from "../api/findings";
 
-export function useFindings(subscriptionId?: string) {
+export function useFindings(subscriptionId?: string, limit = 5000) {
   const [findings, setFindings] = useState<FindingResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -11,14 +11,14 @@ export function useFindings(subscriptionId?: string) {
     setLoading(true);
     setError(null);
     try {
-      const data = await getFindings(subscriptionId);
+      const data = await getFindings(subscriptionId, limit);
       setFindings(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load findings");
     } finally {
       setLoading(false);
     }
-  }, [subscriptionId]);
+  }, [subscriptionId, limit]);
 
   useEffect(() => {
     refresh();

@@ -1,8 +1,8 @@
 import apiClient from "./client";
 import type { FindingResult, RemediationCard } from "../types";
 
-export async function getFindings(subscriptionId?: string): Promise<FindingResult[]> {
-  const params = subscriptionId ? { subscription_id: subscriptionId } : {};
+export async function getFindings(subscriptionId?: string, limit = 5000): Promise<FindingResult[]> {
+  const params = subscriptionId ? { subscription_id: subscriptionId, limit } : { limit };
   const { data } = await apiClient.get<FindingResult[]>("/findings", { params });
   return data;
 }
@@ -13,7 +13,7 @@ export async function getFinding(
 ): Promise<FindingResult> {
   // Findings are partitioned by /subscription_id in Cosmos. Passing the
   // sub here turns the lookup into a fast single-partition read_item.
-  const params = subscriptionId ? { subscription_id: subscriptionId } : {};
+  const params = subscriptionId ? { subscription_id: subscriptionId, limit } : { limit };
   const { data } = await apiClient.get<FindingResult>(`/findings/${findingId}`, { params });
   return data;
 }
@@ -61,3 +61,4 @@ export async function generateRemediation(findingId: string): Promise<Remediatio
   const { data } = await apiClient.post<RemediationCard>(`/findings/${findingId}/generate-remediation`);
   return data;
 }
+
