@@ -223,7 +223,7 @@ arrative` | `str` | Plain-English explanation |
 
 ## Security Rules
 
-52 built-in rules across 6 categories:
+52 built-in **Azure** rules across 6 categories, plus an early **AWS** rule pack (11 rules across 5 categories — see [`cloudguardiq/adapters/rules/aws/`](cloudguardiq/adapters/rules/aws/)):
 
 | Category | Rules | Examples |
 |----------|-------|---------|
