@@ -132,12 +132,11 @@ async def _get_ai_worker():
     from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
 
     from cloudguardiq.ai.remediation_engine import RemediationEngine
+    from cloudguardiq.billing.repository import BillingRepository
+    from cloudguardiq.billing.usage import UsageRepository
     from cloudguardiq.core.config import get_settings
     from cloudguardiq.core.database import CosmosRepository
     from cloudguardiq.pipeline.ai_worker import AIWorker
-
-    from cloudguardiq.billing.repository import BillingRepository
-    from cloudguardiq.billing.usage import UsageRepository
 
     settings = get_settings()
     db = CosmosRepository(settings)
