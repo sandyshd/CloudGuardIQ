@@ -102,34 +102,36 @@ def test_get_tenant_id_raises_when_tid_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_findings_query_filters_by_tenant_id() -> None:
-    """The findings query must include a tenant_id filter."""
+async def test_findings_list_query_is_scoped_to_subscription_partition() -> None:
+    """The list query relies on the ``/subscription_id`` partition key plus
+    upstream ``_validate_owned_subscription`` for isolation, so it no longer
+    filters on ``c.tenant_id``. Filtering on a stamped ``tenant_id`` caused
+    silent zero-row responses whenever rows were unstamped or stamped with a
+    legacy value (the dashboard would show 0 findings even though Cosmos held
+    OPEN docs under the user''s subscription)."""
     from cloudguardiq.core.database import _build_findings_query
 
     query, params = _build_findings_query(
-        tenant_id="tenant-A", subscription_id="sub-shared", limit=10
+        tenant_id="tenant-A", subscription_id="sub-shared", limit=10,
     )
-    assert "c.tenant_id = @tenant_id" in query
+    assert "c.subscription_id = @sub_id" in query
+    assert "c.tenant_id" not in query
     names = {p["name"] for p in params}
-    assert "@tenant_id" in names
-    assert ("@sub_id" in names) or ("@subscription_id" in names)
+    assert "@sub_id" in names
+    assert "@tenant_id" not in names
 
 
 @pytest.mark.asyncio
-async def test_findings_query_matches_legacy_unstamped_rows() -> None:
-    """Findings persisted before tenant stamping (commit bf4cc24) lack a
-    `tenant_id` field. The query must still surface them to the
-    subscription owner -- otherwise the dashboard silently zeros out after
-    a tenant-isolation rollout. Subscription ownership is enforced upstream
-    so this is safe."""
+async def test_findings_list_query_ignores_missing_tenant_id() -> None:
+    """Regression for the dashboard-zero bug: rows without a ``tenant_id``
+    field (or stamped with a legacy value) must still be returned to the
+    validated subscription owner."""
     from cloudguardiq.core.database import _build_findings_query
 
     query, _ = _build_findings_query(
-        tenant_id="tenant-A", subscription_id="sub-shared", limit=10,
+        tenant_id="", subscription_id="sub-shared", limit=10,
     )
-    assert "NOT IS_DEFINED(c.tenant_id)" in query
-    assert "c.tenant_id = null" in query
-    assert "c.tenant_id = ''" in query
+    assert "c.tenant_id" not in query
 
 
 async def test_finding_lookup_matches_legacy_unstamped_rows() -> None:
