@@ -31,38 +31,35 @@ logger = logging.getLogger(__name__)
 def _build_findings_query(
     tenant_id: str, subscription_id: str, limit: int = 50
 ) -> tuple[str, list[dict[str, object]]]:
-    """Return (query, params) for listing findings within a subscription.
+    """Return (query, params) for listing findings within a tenant.
 
-    The findings container is partitioned by ``/subscription_id`` and the
-    caller (``GET /findings``) has already proven subscription ownership via
-    ``_validate_owned_subscription`` before reaching this builder. That makes
-    the partition itself the security boundary -- any document under the
-    validated partition legitimately belongs to the caller, regardless of
-    whether the legacy ``tenant_id`` field is set, empty, or stamped with a
-    value that no longer matches the JWT ``tid`` (e.g. rows persisted before
-    commit bf4cc24 wired tenant stamping, or scans run by a previous principal
-    in the same Entra tenant).
-
-    Earlier revisions filtered on ``c.tenant_id = @tenant_id`` for
-    defence-in-depth, but in practice it produced silent zero-row responses
-    whenever stamping was missing or inconsistent -- the dashboard would show
-    ``0 findings across 0 resources`` even though Cosmos clearly held OPEN
-    findings under the user's subscription. The ``tenant_id`` argument is
-    therefore accepted for backwards compatibility but no longer used to
-    filter list results. Single-finding cross-partition lookups (see
-    ``_build_finding_lookup_query``) still rely on ``tenant_id`` because they
-    cannot lean on the partition-key check.
+    The ``tenant_id`` filter is mandatory (Phase 1: tenant isolation). When
+    ``tenant_id`` is an empty string, the query degrades to legacy behaviour
+    (no tenant filter) so pre-backfill rows remain readable; once the
+    backfill script runs, all rows have a tenant_id and callers must pass
+    one.
     """
-    del tenant_id  # intentionally unused: see docstring
     params: list[dict[str, object]] = [
         {"name": "@limit", "value": limit},
         {"name": "@sub_id", "value": subscription_id},
+        {"name": "@tenant_id", "value": tenant_id},
     ]
-    query = (
-        "SELECT TOP @limit * FROM c "
-        "WHERE c.subscription_id = @sub_id "
-        "ORDER BY c.detected_at DESC"
-    )
+    if tenant_id:
+        query = (
+            "SELECT TOP @limit * FROM c "
+            "WHERE (c.tenant_id = @tenant_id "
+            "OR NOT IS_DEFINED(c.tenant_id) "
+            "OR c.tenant_id = null "
+            "OR c.tenant_id = '') "
+            "AND c.subscription_id = @sub_id "
+            "ORDER BY c.detected_at DESC"
+        )
+    else:
+        query = (
+            "SELECT TOP @limit * FROM c "
+            "WHERE c.subscription_id = @sub_id "
+            "ORDER BY c.detected_at DESC"
+        )
     return query, params
 
 
