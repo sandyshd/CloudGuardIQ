@@ -9,7 +9,9 @@ import {
   Wrench,
   CheckCircle2,
   Clock,
+  Loader2,
 } from "lucide-react";
+import { Skeleton } from "../components/ui/skeleton";
 import { EmptyState } from "../components/common/EmptyState";
 import { PageHeader } from "../components/common/PageHeader";
 import { useSubscriptions } from "../hooks/useSubscriptions";
@@ -305,9 +307,28 @@ export function AIFix() {
               {narrativeParagraphs.length > 0 ? (
                 narrativeParagraphs.map((p, i) => <p key={i}>{p}</p>)
               ) : generating ? (
-                <div className="flex items-center gap-2 text-[hsl(var(--muted-foreground))]">
-                  <Sparkles className="h-4 w-4 animate-pulse text-[hsl(var(--primary))]" />
-                  Generating AI remediation… this can take a few seconds.
+                <div
+                  role="status"
+                  aria-live="polite"
+                  aria-busy="true"
+                  className="space-y-3"
+                >
+                  <div className="flex items-center gap-2 rounded-md border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.06)] px-3 py-2 text-[hsl(var(--foreground))]">
+                    <Loader2 className="h-4 w-4 animate-spin text-[hsl(var(--primary))]" />
+                    <span className="text-sm font-medium">
+                      Generating AI remediation
+                      <span className="loading-dots" />
+                    </span>
+                    <span className="ml-auto text-xs text-[hsl(var(--muted-foreground))]">
+                      This can take 10–30 seconds
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    <Skeleton className="h-3 w-[95%]" />
+                    <Skeleton className="h-3 w-[88%]" />
+                    <Skeleton className="h-3 w-[75%]" />
+                  </div>
+                  <span className="sr-only">Generating AI remediation, please wait.</span>
                 </div>
               ) : generationError ? (
                 <div className="space-y-3">
@@ -372,21 +393,56 @@ export function AIFix() {
             </Card>
           )}
 
-          {card?.terraform_fix && (
+          {card?.terraform_fix ? (
             <TerraformBlock code={card.terraform_fix} title="Terraform fix" />
-          )}
-          {card?.cli_fix && (
+          ) : generating ? (
+            <Card aria-busy="true">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-[hsl(var(--primary))]" />
+                  <CardTitle>Terraform fix</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <Skeleton className="h-3 w-[60%]" />
+                <Skeleton className="h-3 w-[85%]" />
+                <Skeleton className="h-3 w-[70%]" />
+                <Skeleton className="h-3 w-[50%]" />
+              </CardContent>
+            </Card>
+          ) : null}
+          {card?.cli_fix ? (
             <CLIBlock command={card.cli_fix} title="Azure CLI equivalent" />
-          )}
+          ) : generating ? (
+            <Card aria-busy="true">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-[hsl(var(--primary))]" />
+                  <CardTitle>Azure CLI equivalent</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-3 w-[80%]" />
+              </CardContent>
+            </Card>
+          ) : null}
 
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 shadow-sm">
             <Button
               onClick={onApply}
-              disabled={action !== "idle" || !card?.terraform_fix}
+              disabled={action !== "idle" || generating || !card?.terraform_fix}
             >
-              <Wrench className="h-4 w-4" />
-              {action === "applying" ? "Applying…" : "Apply Terraform"}
+              {generating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Wrench className="h-4 w-4" />
+              )}
+              {generating
+                ? "Generating…"
+                : action === "applying"
+                  ? "Applying…"
+                  : "Apply Terraform"}
             </Button>
             <Button
               variant="secondary"
