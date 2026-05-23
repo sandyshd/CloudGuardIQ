@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from cloudguardiq.adapters.base import AdapterBase
+from cloudguardiq.adapters.pricing import (
+    aws_ebs_monthly_usd,
+    aws_eip_unattached_monthly_usd,
+)
 from cloudguardiq.core.enums import CloudProvider, DataTier
 from cloudguardiq.core.models import ResourceSnapshot
 
@@ -86,6 +90,7 @@ class AWSAdapter(AdapterBase):
         config: dict[str, Any],
         tags: dict[str, str] | None = None,
         resource_group: str = "aws-global",
+        cost_monthly: float = 0.0,
     ) -> ResourceSnapshot:
         return ResourceSnapshot(
             tenant_id="",
@@ -98,6 +103,7 @@ class AWSAdapter(AdapterBase):
             config=config,
             tags=tags or {},
             data_tier=DataTier.TIER1_NATIVE,
+            cost_monthly=cost_monthly,
             captured_at=datetime.now(timezone.utc),
         )
 
@@ -174,6 +180,8 @@ class AWSAdapter(AdapterBase):
                     t.get("Key", ""): t.get("Value", "")
                     for t in (vol.get("Tags") or [])
                 }
+                vol_type = vol.get("VolumeType")
+                vol_size = vol.get("Size") or 0
                 snaps.append(
                     self._snapshot(
                         resource_type="AWS::EC2::Volume",
@@ -182,11 +190,12 @@ class AWSAdapter(AdapterBase):
                         config={
                             "encrypted": vol.get("Encrypted", False),
                             "state": vol.get("State"),
-                            "size": vol.get("Size"),
+                            "size": vol_size,
                             "attachments": vol.get("Attachments") or [],
-                            "volume_type": vol.get("VolumeType"),
+                            "volume_type": vol_type,
                         },
                         tags=tags,
+                        cost_monthly=aws_ebs_monthly_usd(vol_type, vol_size),
                     )
                 )
         return snaps
@@ -307,16 +316,21 @@ class AWSAdapter(AdapterBase):
             return snaps
         for a in addrs:
             alloc = a.get("AllocationId") or a.get("PublicIp") or ""
+            assoc_id = a.get("AssociationId")
+            # AWS bills every public IPv4 hourly; the cost is only "waste"
+            # when the EIP is not associated with a running resource.
+            eip_cost = 0.0 if assoc_id else aws_eip_unattached_monthly_usd()
             snaps.append(
                 self._snapshot(
                     resource_type="AWS::EC2::EIP",
                     resource_name=alloc,
                     region=self.region,
                     config={
-                        "association_id": a.get("AssociationId"),
+                        "association_id": assoc_id,
                         "public_ip": a.get("PublicIp"),
                         "domain": a.get("Domain"),
                     },
+                    cost_monthly=eip_cost,
                 )
             )
         return snaps
