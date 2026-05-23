@@ -260,7 +260,7 @@ export function Findings() {
         </Alert>
       )}
       {scanError && findings.length > 0 && (
-        <Alert variant="destructive">
+        <Alert variant="warning">
           <AlertDescription>{scanError}</AlertDescription>
         </Alert>
       )}

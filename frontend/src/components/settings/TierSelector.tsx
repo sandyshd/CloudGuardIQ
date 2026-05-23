@@ -8,6 +8,7 @@ import {
   type BillingStatus,
   type BillingTier,
   createCheckout,
+  downgradeTier,
   getBillingStatus,
 } from "../../api/billing";
 import { cn } from "../../lib/utils";
@@ -105,6 +106,19 @@ export function TierSelector() {
     }
   };
 
+  const handleDowngrade = async (tier: BillingTier) => {
+    setError(null);
+    setBusyTier(tier);
+    try {
+      const updated = await downgradeTier(tier);
+      setStatus(updated);
+    } catch (err) {
+      setError(toFriendlyError(err, "Unable to change plan. Please try again."));
+    } finally {
+      setBusyTier(null);
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -125,7 +139,6 @@ export function TierSelector() {
             const isCurrent = plan.tier === current;
             const cmp = TIER_RANK[plan.tier] - TIER_RANK[current];
             const isUpgrade = cmp > 0;
-            const downgradeReady = false;
             return (
               <div
                 key={plan.tier}
@@ -187,14 +200,10 @@ export function TierSelector() {
                     <Button
                       variant="outline"
                       className="w-full"
-                      disabled={!downgradeReady}
-                      title={
-                        downgradeReady
-                          ? undefined
-                          : "Self-service downgrade is coming soon. Contact support to change your plan."
-                      }
+                      onClick={() => handleDowngrade(plan.tier)}
+                      disabled={busyTier !== null}
                     >
-                      Downgrade
+                      {busyTier === plan.tier ? "Updating…" : "Downgrade"}
                     </Button>
                   )}
                 </div>

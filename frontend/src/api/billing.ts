@@ -17,3 +17,8 @@ export async function createCheckout(tier: BillingTier): Promise<string> {
   const { data } = await apiClient.post<{ url: string }>("/billing/checkout", { tier });
   return data.url;
 }
+
+export async function downgradeTier(tier: BillingTier): Promise<BillingStatus> {
+  const { data } = await apiClient.post<BillingStatus>("/billing/downgrade", { tier });
+  return data;
+}

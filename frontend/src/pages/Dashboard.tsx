@@ -39,7 +39,8 @@ import { triggerScan } from "../api/scans";
 import { TIER2_VALUES, TIER3_VALUES } from "../types";
 import type { FindingResult, Severity, DataTier } from "../types";
 import { cn } from "../lib/utils";
-
+
+
 import { toFriendlyMessage } from "../lib/errors";
 const SEV_WEIGHT: Record<Severity, number> = {
   CRITICAL: 10,
@@ -315,7 +316,7 @@ export function Dashboard() {
       />
 
       {scanError && (
-        <Alert variant="destructive">
+        <Alert variant="warning">
           <AlertDescription>{scanError}</AlertDescription>
         </Alert>
       )}
