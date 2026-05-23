@@ -8,6 +8,7 @@ import { useToast } from "../ui/toast";
 import { Cloud, Pencil, Power, Trash2 } from "lucide-react";
 import { useSubscriptions } from "../../hooks/useSubscriptions";
 import { LoadingSpinner } from "../common/LoadingSpinner";
+import { ProviderBadge } from "../common/ProviderBadge";
 import type { Subscription } from "../../types";
 
 const GUID_RE =
@@ -246,11 +247,16 @@ export function SubscriptionList() {
                       {sub.display_name || "Unnamed subscription"}
                     </div>
                     <div className="truncate font-mono text-[11px] text-[hsl(var(--muted-foreground))]">
-                      {sub.subscription_id}
+                      {sub.provider === "AWS" && sub.aws_account_id
+                        ? `AWS account ${sub.aws_account_id}`
+                        : sub.provider === "GCP" && sub.gcp_project_id
+                        ? `GCP project ${sub.gcp_project_id}`
+                        : sub.subscription_id}
                     </div>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <ProviderBadge provider={sub.provider} />
                   <Badge
                     variant={sub.state === "Enabled" ? "success" : "secondary"}
                   >

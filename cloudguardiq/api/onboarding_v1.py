@@ -681,6 +681,55 @@ async def _mirror_aws_account_for_operator(
             caller_tenant_id, account_id, exc,
         )
 
+
+async def _mirror_gcp_project_for_operator(
+    *,
+    user: TokenPayload,
+    project_id: str,
+) -> None:
+    """Mirror a connected GCP project into the operator-tenant subscriptions
+    container so the timer-driven ScanPipeline picks it up on the next tick.
+
+    Mirrors the AWS helper above. Best-effort: failures are logged and
+    swallowed so a transient Cosmos issue does not break the connect step.
+    """
+
+    try:
+        repo = subscriptions_module._get_repo()  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Subscriptions repository unavailable for GCP mirror: %s", exc,
+        )
+        return
+
+    caller_tenant_id = get_tenant_id(user)
+    try:
+        existing = await repo.get(caller_tenant_id, project_id)
+        if existing is None:
+            await repo.upsert(
+                SubscriptionRecord(
+                    tenant_id=caller_tenant_id,
+                    subscription_id=project_id,
+                    customer_tenant_id=caller_tenant_id,
+                    display_name=f"GCP {project_id}",
+                    provider=CloudProvider_enum.GCP,
+                    gcp_project_id=project_id,
+                ),
+            )
+            return
+        if existing.state == "Removed":
+            existing.state = "Enabled"
+            existing.removed_at = None
+        existing.provider = CloudProvider_enum.GCP
+        existing.gcp_project_id = project_id
+        await repo.upsert(existing)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to mirror GCP project tenant=%s project=%s: %s",
+            caller_tenant_id, project_id, exc,
+        )
+
+
 @router.post(
     "/sessions",
     response_model=OnboardingSessionResponseV1,
@@ -1096,6 +1145,10 @@ async def connect_onboarding_session_v1(
         linked_scopes=gcp_session.linked_scope_ids,
         target_scope={"project_id": gcp_session.project_id},
         display_name="GCP connection",
+    )
+    await _mirror_gcp_project_for_operator(
+        user=user,
+        project_id=gcp_session.project_id,
     )
     return _gcp_session_to_response(gcp_session, connection_id=rec.connection_id)
 

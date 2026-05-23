@@ -33,6 +33,9 @@ def build_scan_adapter(
     account_id: str | None = None,
     region: str | None = None,
     boto3_session: Any | None = None,
+    # GCP params
+    project_id: str | None = None,
+    gcp_credentials: Any | None = None,
 ) -> AdapterBase:
     """Return an ``AdapterBase`` for the given provider.
 
@@ -45,6 +48,10 @@ def build_scan_adapter(
         account_id: AWS account id (required for AWS).
         region: Default AWS region (defaults to ``us-east-1``).
         boto3_session: Pre-built ``boto3.Session`` (mainly for tests).
+        project_id: GCP project id (required for GCP).
+        gcp_credentials: Pre-built ``google.auth.credentials.Credentials``
+            (mainly for tests). Default credential discovery is used
+            when omitted.
 
     Raises:
         UnsupportedProviderError: When *provider* is unknown or required
@@ -77,6 +84,16 @@ def build_scan_adapter(
             account_id=account_id,
             region=region or "us-east-1",
             session=boto3_session,
+        )
+
+    if provider_enum is CloudProvider.GCP:
+        from cloudguardiq.adapters.gcp.adapter import GCPAdapter
+
+        if not project_id:
+            raise UnsupportedProviderError("GCP adapter requires project_id")
+        return GCPAdapter(
+            project_id=project_id,
+            credentials=gcp_credentials,
         )
 
     raise UnsupportedProviderError(

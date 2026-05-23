@@ -33,9 +33,11 @@ class SubscriptionRecord(BaseModel):
     # connections ``subscription_id`` is reused as the canonical
     # cross-cloud connection id (==``aws_account_id``).
     provider: CloudProvider = CloudProvider.AZURE
-    # AWS-specific fields. Empty for Azure rows.
+    # AWS-specific fields. Empty for non-AWS rows.
     aws_account_id: str = ""
     aws_region: str = ""
+    # GCP-specific field. Empty for non-GCP rows.
+    gcp_project_id: str = ""
     # The Azure tenant that owns this subscription. For self-service in
     # the operator's own tenant this matches ``tenant_id``; for true
     # cross-tenant SaaS onboarding (Phase 3) ``customer_tenant_id`` is
@@ -68,6 +70,7 @@ class SubscriptionRecord(BaseModel):
             "provider": self.provider.value,
             "aws_account_id": self.aws_account_id,
             "aws_region": self.aws_region,
+            "gcp_project_id": self.gcp_project_id,
             "display_name": self.display_name,
             "state": self.state,
             "added_at": self.added_at.isoformat(),
@@ -108,6 +111,7 @@ class SubscriptionRecord(BaseModel):
             provider=provider_enum,
             aws_account_id=str(doc.get("aws_account_id", "") or ""),
             aws_region=str(doc.get("aws_region", "") or ""),
+            gcp_project_id=str(doc.get("gcp_project_id", "") or ""),
             display_name=str(doc.get("display_name", "")),
             state=str(doc.get("state", "Enabled")),
             added_at=added,

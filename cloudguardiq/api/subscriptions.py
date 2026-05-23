@@ -87,6 +87,9 @@ class SubscriptionResponse(BaseModel):
     subscription_id: str
     display_name: str = ""
     state: str = "Enabled"
+    provider: str = "AZURE"
+    aws_account_id: str = ""
+    gcp_project_id: str = ""
 
     @classmethod
     def from_record(cls, rec: SubscriptionRecord) -> SubscriptionResponse:
@@ -95,6 +98,9 @@ class SubscriptionResponse(BaseModel):
             subscription_id=rec.subscription_id,
             display_name=rec.display_name or rec.subscription_id,
             state=rec.state,
+            provider=rec.provider.value,
+            aws_account_id=rec.aws_account_id,
+            gcp_project_id=rec.gcp_project_id,
         )
 
 
