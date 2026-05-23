@@ -198,7 +198,6 @@ export function TierSelector() {
                     </Button>
                   ) : (
                     <Button
-                      variant="outline"
                       className="w-full"
                       onClick={() => handleDowngrade(plan.tier)}
                       disabled={busyTier !== null}

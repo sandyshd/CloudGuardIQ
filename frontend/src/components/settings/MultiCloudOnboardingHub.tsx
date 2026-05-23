@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "../ui/table";
+import { Info } from "lucide-react";
 import { useSubscriptionContext } from "../../auth/SubscriptionContext";
 import {
   connectOnboardingSessionV1,
@@ -676,7 +677,11 @@ export function MultiCloudOnboardingHub(): JSX.Element {
 
           {step === 1 && (
             <section className="space-y-4">
-              <div className="rounded border bg-[hsl(var(--muted))]/30 p-3 text-sm">
+              <div
+                role="note"
+                className="flex items-start gap-2 rounded-md border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.06)] p-3 text-sm text-[hsl(var(--foreground))]"
+              >
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--primary))]" aria-hidden="true" />
                 <p>
                   Choose the cloud provider you want to onboard and identify the account.
                   CloudGuardIQ never receives long-lived credentials — trust is granted by you
