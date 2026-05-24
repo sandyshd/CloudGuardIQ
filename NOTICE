@@ -1,0 +1,21 @@
+CloudGuardIQ
+Copyright 2026 Sandip Patel and CloudGuardIQ contributors
+
+This product includes software developed by Sandip Patel as original work,
+released under the Apache License, Version 2.0 (see LICENSE).
+
+Original contributions include:
+  * Tiered (T1/T2/T3) cloud-agnostic data-source abstraction
+  * Cross-tenant Azure AD onboarding session model with admin-consent and
+    Reader-RBAC state machine
+  * Multi-cloud onboarding wizard (Azure / AWS / GCP) with provider-agnostic
+    artifact generation, permission probing, and scope discovery
+  * Quota-aware SaaS scan pipeline with priority-scored finding queueing
+  * GPT-5.1 structured-output remediation engine producing Terraform + CLI
+    fixes with confidence qualifiers tied to data tiers
+  * PolicyEngine architecture that strictly isolates rule evaluation from
+    cloud SDKs
+
+This product depends on third-party open-source software. Each dependency
+retains its own copyright and license; consult that project's repository
+for terms.

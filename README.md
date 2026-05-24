@@ -1,805 +1,476 @@
+<div align="center">
+
 # CloudGuardIQ
 
-Azure-native SaaS combining **CSPM** (Cloud Security Posture Management) and **FinOps** cost
-governance with **AI-generated remediation** powered by GPT-5.1.
+**Unified Cloud Security Posture Management (CSPM) + FinOps Cost Governance, powered by AI**
+
+*Azure-native multi-tenant SaaS — secure, optimize, and remediate Azure, AWS, and GCP workloads from a single pane of glass.*
+
+[![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://react.dev/)
+[![Terraform](https://img.shields.io/badge/Terraform-1.8%2B-7B42BC.svg)](https://www.terraform.io/)
+[![Tests](https://img.shields.io/badge/tests-324%20passing-success.svg)](#16-testing--quality)
+[![Coverage](https://img.shields.io/badge/coverage-80%25%2B-success.svg)](#16-testing--quality)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](#20-license)
+
+</div>
 
 ---
 
 ## Table of Contents
 
-- [Architecture Overview](#architecture-overview)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Data Models](#data-models)
-- [Security Rules](#security-rules)
-- [API Endpoints](#api-endpoints)
-- [Authentication](#authentication)
-- [Multi-tenant SaaS](#multi-tenant-saas)
-- [Local Development Setup](#local-development-setup)
-- [Azure Deployment](#azure-deployment)
-- [CI/CD Pipelines](#cicd-pipelines)
-- [Testing](#testing)
-- [Environment Variables](#environment-variables)
-- [Infrastructure Variables (Terraform)](#infrastructure-variables-terraform)
-- [Terraform Outputs](#terraform-outputs)
+1. [Product Overview](#1-product-overview)
+2. [Key Capabilities](#2-key-capabilities)
+3. [Supported Clouds & Frameworks](#3-supported-clouds--frameworks)
+4. [Solution Architecture](#4-solution-architecture)
+5. [Tech Stack](#5-tech-stack)
+6. [Subscription Plans](#6-subscription-plans)
+7. [Repository Layout](#7-repository-layout)
+8. [Prerequisites](#8-prerequisites)
+9. [Quickstart (Local Development)](#9-quickstart-local-development)
+10. [Production Deployment on Azure](#10-production-deployment-on-azure)
+11. [Customer Onboarding](#11-customer-onboarding)
+12. [Configuration Reference](#12-configuration-reference)
+13. [REST API Reference](#13-rest-api-reference)
+14. [Security & Compliance](#14-security--compliance)
+15. [Observability & Operations](#15-observability--operations)
+16. [Testing & Quality](#16-testing--quality)
+17. [CI/CD](#17-cicd)
+18. [Roadmap](#18-roadmap)
+19. [Support](#19-support)
+20. [License](#20-license)
 
 ---
 
-## Architecture Overview
+## 1. Product Overview
+
+**CloudGuardIQ** is an enterprise-grade multi-tenant SaaS platform that combines
+**Cloud Security Posture Management (CSPM)**, **FinOps cost governance**, and
+**AI-generated remediation** into one unified workflow. It is built cloud-natively
+on Azure but scans **Azure, AWS, and GCP** environments through a pluggable
+adapter framework.
+
+### What problem does it solve?
+
+Modern cloud teams juggle a fragmented toolchain — separate products for security
+posture, cost optimization, compliance reporting, and remediation guidance. Each
+tool produces siloed alerts; engineers spend hours triaging, prioritizing, and
+hand-crafting fixes. CloudGuardIQ collapses this stack:
+
+| Pain point | CloudGuardIQ answer |
+|------------|--------------------|
+| Hundreds of low-context CSPM alerts | Cross-signal **priority score** (severity × cost × compliance) |
+| "Now what do I do?" after a finding | **GPT-5.1 remediation cards** with ready-to-deploy Terraform + Azure CLI |
+| Vendor lock-in to Defender / Security Hub / SCC | **Tiered adapter strategy** — vendor enrichment is *optional*, never required |
+| Cost waste hidden in security tools | First-class **FinOps rules** alongside security rules |
+| Slow customer onboarding | **<15-minute multi-cloud wizard** with one-click ARM / CloudFormation / `gcloud` artifacts |
+| Compliance evidence gathering | Built-in **CIS, SOC 2, ISO 27001, PCI-DSS** mapping per finding |
+
+### Who is it for?
+
+- **Cloud Security Engineers** — replace 3+ tools, ship fixes in IaC instead of click-ops
+- **FinOps Practitioners** — surface waste alongside risk, attribute savings to remediation
+- **MSPs / Operators** — onboard customer tenants in minutes, manage hundreds of subscriptions
+- **Compliance & Audit Teams** — pre-mapped frameworks, exportable scorecards
+
+---
+
+## 2. Key Capabilities
+
+### 2.1 Cloud Security Posture Management (CSPM)
+- **70+ built-in policy rules** across Storage, Compute, Network, IAM, Key Vault, Containers
+- **Cross-cloud rule packs**: Azure (52), AWS (11+), GCP (early access)
+- **Continuous configuration drift detection** with SHA-256 baselining
+- **Compliance mapping** for CIS Benchmarks, SOC 2, ISO 27001, PCI-DSS, NIST 800-53
+- **Tier-aware enrichment** — auto-detects and consumes Microsoft Defender for Cloud,
+  AWS Security Hub, and Google SCC when available, with graceful fallback
+
+### 2.2 FinOps Cost Governance
+- Dedicated `FINOPS-*` rules (idle VMs, unattached disks, orphan IPs, AKS autoscaler, oversized SKUs)
+- Monthly **waste quantification per resource** via Azure Cost Management / Cost Explorer / Billing APIs
+- **Projected savings** attached to every remediation card
+- Plan-aware **cost dashboard** with savings trend lines
+
+### 2.3 AI-Generated Remediation
+- **GPT-5.1** (Azure OpenAI) in structured JSON mode for deterministic output
+- Each finding produces a **Remediation Card** containing:
+  - Plain-English narrative
+  - Production-ready **Terraform HCL** fix
+  - Equivalent **Azure CLI / AWS CLI / `gcloud`** commands
+  - Confidence qualifier tied to the data tier that produced the finding
+  - Estimated monthly savings (when applicable)
+- Retry-with-backoff, AI quota enforcement, and per-tenant cost guardrails
+- Asynchronous **Service Bus worker** pattern — non-blocking scan pipeline
+
+### 2.4 Self-Healing (Enterprise)
+- **Drift detector** continuously compares live resource hashes against baseline
+- **Contract monitor** validates IaC-declared state against actual state
+- **Repair agent** applies low-risk auto-remediations (Enterprise tier only, opt-in)
+
+### 2.5 Multi-Tenant SaaS Platform
+- Hard tenant isolation via Azure AD `tid` JWT claim — every Cosmos query filters by `tenant_id`
+- **Cross-tenant onboarding** — operators in tenant A can enroll customers in tenant B
+- **Per-tenant subscription registry** with state machine (Enabled / Disabled / Failed)
+- **Stripe-powered billing** with metered usage (scans, AI remediations, subscription cap)
+- **Quota enforcement** at every entry point (route, middleware, pipeline, worker)
+
+### 2.6 Customer Onboarding Experience
+- Unified **Multi-Cloud Onboarding Wizard** (5 steps) for Azure / AWS / GCP
+- One-click **Deploy to Azure** ARM template (Reader RBAC grant)
+- Auto-generated **CloudFormation** template (AWS) and **`gcloud` binding script** (GCP)
+- Real-time **permission probe** + **scope discovery** before scan
+- Auto-disable on auth failure with friendly re-link UX
+
+### 2.7 Compliance & Reporting
+- **Compliance Scorecard** per framework with drill-down to failing controls
+- **Posture Score** (0–100) aggregated across severity weights
+- Exportable **JSON / CSV** evidence for auditors
+- Tenant-scoped **audit event log**
+
+### 2.8 Developer & Operator Experience
+- **OpenAPI 3** spec at `/docs` (Swagger UI) and `/redoc`
+- **Python CLI**: `cloudguardiq scan --subscription-id <id> --output json`
+- **Demo mode** (`AUTH_DISABLED=true`) for instant zero-config UI walkthroughs
+- **Application Insights** distributed tracing across API → Service Bus → Worker
+
+---
+
+## 3. Supported Clouds & Frameworks
+
+### Cloud providers
+
+| Provider | Native scanner | Free vendor enrichment | Paid vendor enrichment |
+|----------|----------------|------------------------|------------------------|
+| **Azure** | Resource Graph + Cost Management | Defender for Cloud (free CSPM) | Defender plans (Servers, SQL, Storage, etc.) |
+| **AWS** | Config / Cost Explorer | Security Hub | GuardDuty, Inspector |
+| **GCP** | Asset Inventory / Billing | Security Command Center (Standard) | SCC Premium |
+
+> Vendor enrichment is **always optional**. Every external call is wrapped in
+> `try/except` with graceful fallback to native-only signal. No vendor is a
+> hard dependency at any tier.
+
+### Compliance frameworks
+
+CIS Microsoft Azure Foundations · CIS AWS Foundations · CIS GCP Foundations ·
+SOC 2 (Type II) · ISO/IEC 27001 · PCI-DSS v4.0 · NIST SP 800-53 ·
+HIPAA (selected controls) · Azure Well-Architected Framework
+
+### Built-in rule packs
+
+| Pack | Count | Examples |
+|------|-------|----------|
+| Azure — Storage | 9 | Public blob access, HTTPS-only, shared key auth |
+| Azure — Compute | 8 | Disk encryption, idle VMs, unmanaged disks, missing backups |
+| Azure — Network | 3 | Open RDP (3389), SSH (22) to internet |
+| Azure — IAM | 3 | Overly broad role assignments, stale principals |
+| Azure — Key Vault | 5 | Soft delete, purge protection, public access |
+| Azure — FinOps | 8 | Unattached disks, idle VMs, orphan IPs, AKS autoscaler |
+| AWS | 11+ | S3 public, EC2 metadata v1, security groups, IAM, ECR, FinOps |
+| GCP | early | Compute, storage, IAM, network, registry |
+
+All rules live in [`cloudguardiq/adapters/rules/`](cloudguardiq/adapters/rules/)
+and operate exclusively on normalized `ResourceSnapshot` objects — the
+`cloudguardiq/policy/` module never imports a cloud SDK.
+
+---
+
+## 4. Solution Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  React 18 + TypeScript + Tailwind  (Static Web App)             │
-│  MSAL browser auth → Azure AD tokens                            │
-└──────────────────────┬───────────────────────────────────────────┘
-                       │  REST / Bearer JWT
-┌──────────────────────▼───────────────────────────────────────────┐
-│  FastAPI Backend  (Container App)                                │
-│  ┌──────────┐  ┌─────────────┐  ┌────────────────┐              │
-│  │ API Layer│→ │PolicyEngine │→ │ ScanPipeline   │              │
-│  └──────────┘  └─────────────┘  └───────┬────────┘              │
-│                                         │                        │
-│  ┌──────────────────────────────────────▼─────────────────────┐  │
-│  │  AzureAdapter                                              │  │
-│  │  ├─ NativeScanner (Tier 1 — Resource Graph + 52 rules)     │  │
-│  │  ├─ Vendor CSPM    (Tier 2 — auto-detected, free)          │  │
-│  │  └─ Vendor deep    (Tier 3 — auto-detected, paid plans)    │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└──────────────────────┬───────────────────────────────────────────┘
-                       │  Service Bus queue
-┌──────────────────────▼───────────────────────────────────────────┐
-│  Azure Functions (Timer + Service Bus triggers)                  │
-│  ├─ scan_trigger      — scheduled every 6 hours                  │
-│  └─ ai_worker_trigger — processes findings → GPT-5.1              │
-│     └─ RemediationEngine → Terraform fix, CLI fix, savings       │
-└──────────────────────┬───────────────────────────────────────────┘
-                       │
-┌──────────────────────▼───────────────────────────────────────────┐
-│  Azure Cosmos DB (serverless)                                    │
-│  Containers: snapshots │ findings │ remediations │ system │ billing │ subscriptions │ tenant_consents │ onboarding_sessions │
-└──────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│  React 18 + TypeScript + Tailwind CSS 4  ·  Azure Static Web App          │
+│  MSAL browser auth → Azure AD tokens (multi-tenant)                       │
+└───────────────────────────────┬───────────────────────────────────────────┘
+                                │ HTTPS / Bearer JWT
+┌───────────────────────────────▼───────────────────────────────────────────┐
+│  FastAPI Backend  ·  Azure Container Apps                                 │
+│  ┌─────────┐  ┌──────────────┐  ┌─────────────┐  ┌────────────────────┐   │
+│  │ Routes  │→ │ JWT/JWKS Auth│→ │PolicyEngine │→ │ ScanPipeline       │   │
+│  └─────────┘  └──────────────┘  └─────────────┘  └─────────┬──────────┘   │
+│  ┌──────────────────────────────────────────────────────────▼──────────┐  │
+│  │  Adapter Layer (ONLY layer touching cloud SDKs)                     │  │
+│  │  ├─ AzureAdapter  →  NativeScanner ▸ Defender enrichment ▸ Cost Mgmt│  │
+│  │  ├─ AWSAdapter    →  Config / Security Hub / Cost Explorer          │  │
+│  │  └─ GCPAdapter    →  Asset Inventory / SCC / Billing                │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │ BillingSvc   │  │ OnboardingSvc│  │ ComplianceSvc│  │ HealingSvc   │   │
+│  │ (Stripe)     │  │ (multi-cloud)│  │ (scorecards) │  │ (Enterprise) │   │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │
+└───────────────────────────────┬───────────────────────────────────────────┘
+                                │ Service Bus (managed identity)
+┌───────────────────────────────▼───────────────────────────────────────────┐
+│  Azure Functions  ·  Timer + Service Bus triggers                         │
+│  ├─ scan_trigger        — scheduled scans (per-tier cooldown)             │
+│  └─ ai_worker_trigger   — Findings → GPT-5.1 → RemediationCard            │
+└───────────────────────────────┬───────────────────────────────────────────┘
+                                │
+┌───────────────────────────────▼───────────────────────────────────────────┐
+│  Azure Cosmos DB (serverless, RBAC, local auth disabled)                  │
+│  snapshots │ findings │ remediations │ system │ billing │                 │
+│  subscriptions │ tenant_consents │ onboarding_sessions │                  │
+│  cloud_connections │ audit_events │ credential_refs                       │
+└───────────────────────────────────────────────────────────────────────────┘
+
+  Azure OpenAI (GPT-5.1) · Azure Key Vault · App Insights · Log Analytics
 ```
 
-### Tiered Data Source Strategy (cloud-agnostic)
+### Architectural principles
 
-`DataTier` describes *signal richness*, not a vendor. The same enum values
-work across Azure, AWS, and GCP; canonical `TIER2_ENRICHED` / `TIER3_DEEP`
-names are aliases of the legacy Azure-specific values so stored data and
-existing rules remain unchanged.
+1. **Strict layering** — `policy/` rules never import cloud SDKs; they evaluate
+   normalized `ResourceSnapshot` objects only.
+2. **Adapter isolation** — `adapters/base.py::AdapterBase` is the *only*
+   interface that touches external cloud APIs.
+3. **Graceful degradation** — every external call has a try/except with a
+   typed fallback. A failed Defender API call never breaks a scan.
+4. **RBAC everywhere** — zero shared secrets between services. All
+   intra-Azure calls use Managed Identity via `DefaultAzureCredential`.
+5. **Structured AI I/O** — GPT-5.1 only ever sees a typed `FindingResult`
+   JSON, never raw cloud API responses.
+6. **Tenant isolation by construction** — `tenant_id` is a required field on
+   every persisted document; queries always include it.
+
+### Tiered data source strategy
+
+`DataTier` describes *signal richness*, not a specific vendor. Customers
+without paid security tools still get a fully functional product.
 
 | Tier | Canonical name | Azure | AWS | GCP |
 |------|----------------|-------|-----|-----|
-| **T1** | `TIER1_NATIVE` | Resource Graph + Cost Mgmt | Config / Cost Explorer | Asset Inventory / Billing |
-| **T2** | `TIER2_ENRICHED` (alias of `TIER2_FREE_CSPM`) | Defender for Cloud (free CSPM) | Security Hub | Security Command Center |
-| **T3** | `TIER3_DEEP` (alias of `TIER3_PAID`) | Defender for Cloud (paid plans) | GuardDuty / Inspector | SCC Premium |
+| **T1** | `TIER1_NATIVE` | Resource Graph + Cost Mgmt | Config + Cost Explorer | Asset Inventory + Billing |
+| **T2** | `TIER2_ENRICHED` | Defender for Cloud (free CSPM) | Security Hub | Security Command Center |
+| **T3** | `TIER3_DEEP` | Defender paid plans | GuardDuty + Inspector | SCC Premium |
 
-Vendor security services are **never** a hard dependency. All vendor API
-calls are wrapped in `try/except` with fallback to empty enrichment, and
-CloudGuardIQ auto-detects them on every plan at no extra charge.
+### Core data models
+
+| Model | Purpose | Notable fields |
+|-------|---------|----------------|
+| `ResourceSnapshot` | Point-in-time capture of a cloud resource | `provider`, `subscription_id`, `resource_type`, `config`, `cost_monthly`, `data_tier`, `raw_hash`, `tenant_id` |
+| `FindingResult` | Security / FinOps / compliance finding | `rule_id`, `severity`, `finding_type`, `evidence`, `compliance_frameworks`, `waste_monthly_usd`, `priority_score`, `tenant_id` |
+| `RemediationCard` | AI-generated fix plan | `narrative`, `terraform_fix`, `cli_fix`, `confidence_qualifier`, `estimated_savings_usd`, `model_version` |
 
 ---
 
-## Tech Stack
+## 5. Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| **Frontend** | React 18, TypeScript, Tailwind CSS 4, MSAL |
-| **Backend API** | Python 3.12, FastAPI, Pydantic v2, uvicorn |
-| **AI** | Azure OpenAI GPT-5.1 (structured JSON mode) |
-| **Database** | Azure Cosmos DB (serverless, NoSQL) |
-| **Messaging** | Azure Service Bus |
-| **Identity** | Azure AD / Entra ID, MSAL, RBAC (DefaultAzureCredential) |
-| **Infra** | Terraform (AzureRM 3.100+) |
-| **Observability** | Application Insights, Log Analytics |
-| **CI/CD** | GitHub Actions (OIDC workload identity) |
-| **Quality** | pytest, ruff, mypy |
+| **Frontend** | React 18, TypeScript 5.6, Vite 6, Tailwind CSS 4, MSAL React, Recharts, Lucide |
+| **Backend API** | Python 3.12, FastAPI 0.111, Pydantic v2, uvicorn, async/await throughout |
+| **Async workers** | Azure Functions (Python v2 programming model), Timer + Service Bus triggers |
+| **AI** | Azure OpenAI GPT-5.1 in structured JSON mode |
+| **Database** | Azure Cosmos DB (serverless NoSQL, RBAC, local auth disabled) |
+| **Messaging** | Azure Service Bus (managed identity) |
+| **Identity** | Azure AD / Entra ID (multi-tenant app), MSAL, `DefaultAzureCredential` |
+| **Billing** | Stripe (checkout sessions, metered usage) |
+| **Infrastructure** | Terraform 1.8+, AzureRM provider 3.100+ |
+| **Observability** | Application Insights, Log Analytics, OpenTelemetry-compatible tracing |
+| **CI/CD** | GitHub Actions with OIDC workload identity federation |
+| **Quality** | pytest, pytest-asyncio, pytest-cov, ruff, mypy |
 
 ---
 
-## Project Structure
+## 6. Subscription Plans
+
+The plan catalog is the **single source of truth** in
+[cloudguardiq/billing/plans.py](cloudguardiq/billing/plans.py) and is exposed
+publicly via `GET /billing/plans`. Limits scale on the same axes as Wiz, Orca,
+and Prisma Cloud: **subscriptions**, **resources per scan**, **AI usage**, and
+**scan cadence**.
+
+| | **Free** | **Starter** | **Enterprise** |
+|---|---|---|---|
+| **Price** | $0 | $49 / mo | $299 / mo |
+| **Cloud subscriptions / accounts** | 1 | 3 | Unlimited |
+| **Resources per scan** | 100 | 1,000 | Unlimited |
+| **Scan cadence** | Daily | Hourly | Every 15 min |
+| **AI remediation plans / month** | 5 | 100 | Unlimited |
+| **Self-healing** | — | — | ✓ |
+| **Priority support** | — | — | ✓ |
+| **Vendor enrichment (Defender / Security Hub / SCC)** | Auto | Auto | Auto |
+
+> Vendor enrichment is **never** gated behind a paywall. If the customer has
+> Defender for Cloud enabled, CloudGuardIQ consumes it for free on all tiers.
+
+Over-cap actions return `HTTP 402 upgrade_required` with `{ current_tier,
+limit, cap, current }` so the UI can render a clear upgrade prompt. Enforcement
+is wired at every quota-bearing entry point:
+
+| Path | Enforced quota |
+|------|----------------|
+| `POST /scan` | Resources per scan (middleware) |
+| `POST /subscriptions` | Subscription cap (route handler) |
+| `POST /findings/{id}/generate-remediation` | AI quota (shared helper) |
+| `ScanPipeline._queue_findings` | Top-N by priority within remaining AI quota |
+| `AIWorker.process_message` | AI quota (defense-in-depth) |
+| `scan_trigger` (Timer) | Per-tier scan-cadence cooldown |
+
+---
+
+## 7. Repository Layout
 
 ```
 cloudguardiq/
-├── cloudguardiq/               # Python backend
-│   ├── adapters/               # Cloud API adapters (Azure SDK)
-│   │   ├── base.py             # AdapterBase — ONLY interface to cloud APIs
-│   │   ├── azure_adapter.py    # 3-tier Azure scanning orchestrator
-│   │   ├── native_scanner.py   # Resource Graph queries + rule registry
-│   │   └── rules/              # PolicyRule implementations
-│   │       ├── storage.py      # STOR-001 .. STOR-009
-│   │       ├── compute.py      # VM-001 .. VM-008
-│   │       ├── network.py      # NSG-001 .. NSG-003
-│   │       ├── iam.py          # IAM-001 .. IAM-003
-│   │       ├── keyvault.py     # KV-001 .. KV-005
-│   │       └── finops.py       # FINOPS-001 .. FINOPS-008
-│   ├── ai/                     # AI remediation
-│   │   ├── remediation_engine.py  # GPT-5.1 structured output
-│   │   └── prompt_templates.py    # System + user prompts
-│   ├── api/                    # FastAPI REST layer
-│   │   ├── main.py             # Route definitions
-│   │   └── auth.py             # JWT validation (Azure AD JWKS)
-│   ├── core/                   # Shared models & config
-│   │   ├── config.py           # Settings (pydantic-settings)
-│   │   ├── database.py         # CosmosRepository (async, RBAC)
-│   │   ├── enums.py            # DataTier, Severity, FindingType, etc.
-│   │   └── models.py           # ResourceSnapshot, FindingResult, RemediationCard
-│   ├── pipeline/               # Scan orchestration
-│   │   ├── scan_pipeline.py    # End-to-end scan workflow
-│   │   └── ai_worker.py        # Service Bus → AI processing
-│   ├── policy/                 # Rule evaluation (NO Azure SDK imports)
-│   │   └── engine.py           # PolicyEngine
-│   ├── healing/                # Self-healing modules
-│   │   └── drift_detector.py   # Config drift detection
-│   ├── billing/                # (placeholder) Stripe billing
-│   ├── notifications/          # (placeholder) Alert routing
-│   └── reports/                # (placeholder) Report generation
-├── frontend/                   # React SPA
-│   ├── src/
-│   │   ├── pages/              # Dashboard, Findings, FinOps, AIFix, etc.
-│   │   ├── components/         # UI components (dashboard, findings, layout)
-│   │   ├── api/                # Axios client with MSAL token injection
-│   │   ├── auth/               # MSAL config + RequireAuth wrapper
-│   │   └── types/              # TypeScript type definitions
-│   ├── package.json
-│   └── vite.config.ts
-├── infra/                      # Terraform IaC
-│   ├── main.tf                 # All Azure resources
-│   ├── variables.tf            # Input variables
-│   └── outputs.tf              # Output values + .env generators
-├── tests/                      # pytest test suite (324 tests, 80%+ coverage)
-│   ├── adapters/
-│   ├── api/
-│   ├── core/
-│   ├── policy/
-│   └── conftest.py             # Shared fixtures
-├── Dockerfile                  # Backend container image
-├── function_app.py             # Azure Functions entry point
-├── pyproject.toml              # Python project metadata
-├── .env.example                # Environment variable template
-└── .github/workflows/
-    ├── ci.yml                  # Lint, type-check, test, TF validate
-    ├── infra.yml               # Terraform plan/apply (OIDC)
-    └── deploy.yml              # Build & deploy frontend + backend
+├── cloudguardiq/                    # Python backend package
+│   ├── adapters/                    # Cloud API adapters (ONLY cloud SDK callers)
+│   │   ├── base.py                  # AdapterBase interface
+│   │   ├── native_scanner.py        # Generic Tier-1 scanner + rule registry
+│   │   ├── capability_detector.py   # Auto-detects Defender/SHub/SCC availability
+│   │   ├── access_probe.py          # Pre-scan permission validation
+│   │   ├── factory.py               # Provider → Adapter resolution
+│   │   ├── azure/   aws/   gcp/     # Per-provider adapter implementations
+│   │   ├── pricing/                 # SKU → cost lookup tables
+│   │   └── rules/
+│   │       ├── azure/               # 52 rules (storage, compute, network, iam, kv, finops)
+│   │       ├── aws/                 # 11+ rules (s3, ec2, iam, registry, security_group, finops)
+│   │       └── gcp/                 # Early-access rules (compute, storage, iam, network, registry)
+│   ├── ai/                          # GPT-5.1 remediation engine
+│   │   ├── remediation_engine.py
+│   │   ├── risk_scorer.py
+│   │   └── prompt_templates.py
+│   ├── api/                         # FastAPI REST layer
+│   │   ├── main.py                  # Route definitions
+│   │   ├── auth.py                  # Azure AD JWT/JWKS validation
+│   │   ├── billing.py               # Stripe billing endpoints
+│   │   ├── subscriptions.py         # Per-tenant subscription registry
+│   │   ├── onboarding.py            # Azure-only legacy onboarding
+│   │   └── onboarding_v1.py         # Multi-cloud onboarding (Azure/AWS/GCP)
+│   ├── auth/                        # Customer-credential factory (cross-tenant)
+│   ├── billing/                     # Plan catalog, quotas, Stripe service, middleware
+│   ├── compliance/                  # Compliance scorecard service
+│   ├── core/                        # Models, enums, config, Cosmos client, observability
+│   ├── healing/                     # Drift detector, contract monitor, repair agent
+│   ├── onboarding/                  # Cloud-connection + credential-ref + audit repos
+│   ├── pipeline/                    # Scan orchestration + AI worker
+│   ├── policy/                      # PolicyEngine (NO cloud SDK imports allowed)
+│   ├── posture/                     # Posture score aggregation
+│   ├── subscriptions/               # Subscription repository + state machine
+│   ├── tenants/                     # Tenant-context helpers
+│   ├── cli.py                       # `cloudguardiq scan ...` CLI
+│   └── __main__.py
+├── frontend/                        # React 18 SPA (Vite + Tailwind v4)
+│   └── src/
+│       ├── pages/                   # Dashboard, Findings, FinOps, AIFix, Compliance,
+│       │                            #   SelfHeal, Settings, ComingSoon
+│       ├── components/              # dashboard, findings, layout, settings (incl. wizard)
+│       ├── api/                     # Axios client with MSAL token interceptor
+│       ├── auth/                    # MSAL config + RequireAuth wrapper
+│       ├── contexts/  hooks/  lib/  types/
+├── infra/                           # Terraform IaC
+│   ├── main.tf                      # All Azure resources + RBAC
+│   ├── variables.tf  outputs.tf
+│   └── templates/                   # cloudguardiq-reader.json (Deploy-to-Azure ARM)
+├── tests/                           # 324 pytest tests, 80%+ coverage
+├── scripts/                         # Operational scripts (audit, backfill)
+├── docs/                            # Design docs (multicloud-onboarding, SaaS plan)
+├── function_app.py                  # Azure Functions entry point
+├── Dockerfile                       # Backend container image
+├── pyproject.toml                   # Python project + optional extras (aws, gcp, dev)
+└── .github/workflows/               # ci.yml · infra.yml · deploy.yml
 ```
 
 ---
 
-## Data Models
+## 8. Prerequisites
 
-### ResourceSnapshot
+### Local development
+- **Python 3.12+**
+- **Node.js 20+** and **npm 10+**
+- **Azure CLI 2.60+** (`az login` enables `DefaultAzureCredential`)
+- **Git 2.40+**
+- **Docker Desktop** (optional, for containerized backend runs)
+- **Terraform 1.8+** (only if you will provision infrastructure)
 
-Represents a point-in-time capture of an Azure resource.
+### Azure tenant (operator side)
+- Azure subscription with **Contributor** access for Terraform apply
+- Ability to create an **Azure AD app registration** (multi-tenant)
+- One of: **Global Administrator** *or* **Application Administrator** in Entra ID
+- (Optional) **Microsoft Partner Network** account for **Publisher Verification**
+  before going GA
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | `str` | Cloud-agnostic ID: `azure/vm/{sub}/{rg}/{name}` |
-| `provider` | `CloudProvider` | `AZURE`, `AWS`, `GCP`, `TERRAFORM` |
-| `subscription_id` | `str` | Azure subscription ID |
-| `resource_group` | `str` | Resource group name |
-| `resource_type` | `str` | e.g. `Microsoft.Compute/virtualMachines` |
-| `resource_name` | `str` | Resource display name |
-| `region` | `str` | Azure region |
-| `config` | `dict` | Normalized resource properties |
-| `cost_monthly` | `float` | Monthly cost from Cost Management API |
-| `tags` | `dict` | Resource tags |
-| `data_tier` | `DataTier` | `TIER1_NATIVE`, `TIER2_ENRICHED`/`TIER2_FREE_CSPM`, `TIER3_PAID` |
-| `raw_hash` | `str` | SHA256 of config for drift detection |
-| `captured_at` | `datetime` | Snapshot timestamp |
+### Customer tenant (per onboarded customer)
+- **Global Administrator** (or Privileged Role Administrator) — for one-time
+  admin consent on the multi-tenant app
+- **Owner** or **User Access Administrator** on each subscription that will be
+  scanned — for assigning the `Reader` role to the CloudGuardIQ service principal
 
-### FindingResult
-
-A security, cost, or compliance finding produced by the PolicyEngine.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `finding_id` | `str` | UUID |
-| `resource_snapshot` | `ResourceSnapshot` | Associated resource |
-| `rule_id` | `str` | Rule identifier (e.g. `STOR-001`) |
-| `severity` | `Severity` | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFORMATIONAL` |
-| `finding_type` | `FindingType` | `SECURITY`, `FINOPS`, `COMPLIANCE` |
-| `description` | `str` | Human-readable description |
-| `evidence` | `dict` | What triggered the finding |
-| `compliance_frameworks` | `list[str]` | e.g. `["CIS_3.1", "SOC2_CC6.1"]` |
-| `waste_monthly_usd` | `float` | Monthly cost waste |
-| `priority_score` | `float` | 0–100 (severity × 0.5 + cost × 0.3 + compliance × 0.2) |
-
-### RemediationCard
-
-AI-generated fix plan for a finding.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `card_id` | `str` | UUID |
-| `finding_result` | `FindingResult` | The finding being remediated |
-| 
-arrative` | `str` | Plain-English explanation |
-| `terraform_fix` | `str` | Ready-to-deploy HCL code |
-| `cli_fix` | `str` | Equivalent Azure CLI commands |
-| `confidence_qualifier` | `str` | Data tier confidence context |
-| `estimated_savings_usd` | `float` | Projected monthly savings |
-| `model_version` | `str` | GPT model used |
+> CloudGuardIQ never writes to customer subscriptions. **`Reader` is the only
+> RBAC role required.** AI remediations are rendered as IaC diffs that the
+> customer applies themselves.
 
 ---
 
-## Security Rules
-
-52 built-in **Azure** rules across 6 categories, plus an early **AWS** rule pack (11 rules across 5 categories — see [`cloudguardiq/adapters/rules/aws/`](cloudguardiq/adapters/rules/aws/)):
-
-| Category | Rules | Examples |
-|----------|-------|---------|
-| **Storage** | STOR-001 – STOR-009 | Public blob access, HTTPS-only, shared key auth |
-| **Compute** | VM-001 – VM-008 | Disk encryption, idle VMs, unmanaged disks, missing backups |
-| **Network** | NSG-001 – NSG-003 | Open RDP (3389), SSH (22) to internet |
-| **IAM** | IAM-001 – IAM-003 | Overly broad role assignments |
-| **Key Vault** | KV-001 – KV-005 | Soft delete, purge protection, public access |
-| **FinOps** | FINOPS-001 – FINOPS-008 | Unattached disks, idle VMs, orphan IPs, AKS autoscaler |
-
-Rules operate **only** on `ResourceSnapshot` objects — the `cloudguardiq/policy/`
-module never imports the Azure SDK.
-
----
-
-## API Endpoints
-
-All endpoints except `/health` require a Bearer JWT from Azure AD.
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check (no auth) |
-| `POST` | `/scan` | Run synchronous scan |
-| `POST` | `/scan/trigger` | Queue async scan via Service Bus |
-| `GET` | `/scan/{scan_id}/status` | Get scan result by ID |
-| `GET` | `/findings` | List remediation cards (sorted by priority) |
-| `GET` | `/findings/{finding_id}` | Get single remediation card |
-| `GET` | `/findings/{finding_id}/terraform` | Get Terraform fix as plain text |
-| `GET` | `/subscriptions` | List subscriptions visible to the caller tenant. Cross-tenant links are owned by the customer tenant, so customer users see their own subscriptions after operator enrollment. |
-| `POST` | `/subscriptions` | Link a subscription (validates GUID + tier cap; `402` on cap exceeded). When `customer_tenant_id` is provided, the link is persisted under that customer tenant so customer logins can manage it. |
-| `PATCH` | `/subscriptions/{id}` | Rename or enable/disable a subscription |
-| `DELETE` | `/subscriptions/{id}` | Unlink a subscription |
-| `GET` | `/subscriptions/consent-url` | Build the Azure AD admin-consent URL for a customer tenant (used by the onboarding wizard) |
-| `GET` | `/subscriptions/consent-callback` | Records admin consent after Azure AD redirects the customer back to the SPA |
-| `GET` | `/subscriptions/onboarding-template` | Returns the one-click ARM "Deploy to Azure" URL that assigns Reader to CloudGuardIQ's service principal |
-| `POST` | `/subscriptions/onboarding-sessions` | Start a customer onboarding session and return current status + consent URL |
-| `GET` | `/subscriptions/onboarding-sessions/{session_id}` | Read onboarding-session status (auto-advances to `pending_reader` after consent is detected) |
-| `POST` | `/subscriptions/onboarding-sessions/{session_id}/reader-granted` | Operator confirms Reader role was granted in customer tenant |
-| `POST` | `/subscriptions/onboarding-sessions/{session_id}/discover` | Discover visible customer subscriptions and cache discovered IDs on the session |
-| `POST` | `/subscriptions/onboarding-sessions/{session_id}/connect` | Connect selected (or all discovered) subscriptions and mark onboarding completed |
-| `GET` | `/subscriptions/discover` | Lists every subscription visible to CloudGuardIQ in the customer tenant (manual/advanced troubleshooting endpoint) |
-| `GET` | `/onboarding/info` | Returns CloudGuardIQ's service-principal object id + the manual `az role assignment` template |
-| `GET` | `/subscriptions/onboarding-parameters/{principal_id}` | Public, unauthenticated ARM `deploymentParameters.json` document echoing the supplied principal id. Referenced by `/uriParameters/...` in the Azure Portal Deploy-to-Azure URL so the customer's deployment blade pre-fills `cloudGuardIQPrincipalId`. |
-| `POST` | `/v1/onboarding/sessions` | Create a multi-cloud onboarding session (Azure / AWS / GCP). |
-| `GET` / `POST` | `/v1/onboarding/sessions/{id}` (+ `/generate-artifacts`, `/verify`, `/connect`) | Provider-agnostic session lifecycle used by the Multi-Cloud Onboarding wizard. |
-| `GET` | `/v1/cloud-connections` | List cloud connections (Azure / AWS / GCP) created by the V1 wizard. |
-| `POST` | `/v1/cloud-connections/{id}/refresh` | Re-run verification for an existing cloud connection. |
-| `DELETE` | `/v1/cloud-connections/{id}` | Disconnect a cloud connection (findings retained per retention policy). |
-| `GET` | `/billing/plans` | Public plan catalog (no auth) |
-| `GET` | `/billing/status` | Current tier, Stripe customer, usage |
-| `POST` | `/billing/checkout` | Create a Stripe checkout session |
-| `GET` | `/config` | Public client config (`demo_mode`, `client_id`, `version`) |
-
----
-
-## Authentication
-
-CloudGuardIQ uses **RBAC everywhere** — no API keys or shared secrets.
-
-### Backend → Azure Services
-
-All services authenticate via `DefaultAzureCredential` (managed identity in
-Azure, `az login` locally):
-
-| Service | Auth Method |
-|---------|-------------|
-| Cosmos DB | `DefaultAzureCredential` → Cosmos DB Built-in Data Contributor |
-| Azure OpenAI | `DefaultAzureCredential` → Cognitive Services OpenAI User |
-| Resource Graph | `DefaultAzureCredential` → Reader |
-| Cost Management | `DefaultAzureCredential` → Reader |
-| Service Bus | `DefaultAzureCredential` -> Azure Service Bus Data Owner (Functions) / Data Sender (API) |
-| Function App Storage | Managed identity → Storage Blob Data Owner |
-
-### Frontend → Backend
-
-1. User signs in via **MSAL** (Azure AD SPA flow)
-2. Frontend obtains a token scoped to `https://management.azure.com/.default`
-3. Token sent as `Authorization: Bearer <token>` on every API call
-4. Backend validates JWT against Azure AD JWKS keys
-5. On 401, frontend auto-redirects to MSAL login
-
-### CI/CD → Azure
-
-GitHub Actions authenticates via **OIDC workload identity federation** — no
-stored secrets for Azure credentials.
-
-### App Registrations
-
-| App | Client ID | Purpose |
-|-----|-----------|---------|
-| **CloudGuardIQ-dev** | From Terraform output `azure_ad_client_id` | User login (MSAL SPA flow), JWT validation |
-| **CloudGuardIQ-GitHub-OIDC** | GitHub secret `AZURE_CLIENT_ID` | CI/CD pipeline OIDC auth only (no redirect URIs) |
-
-> **Important:** The frontend uses `APP_CLIENT_ID` (CloudGuardIQ-dev) for MSAL,
-> not `AZURE_CLIENT_ID` (GitHub OIDC). These are different app registrations.
-
----
-
-## Multi-tenant SaaS
-
-CloudGuardIQ is a multi-tenant SaaS — each customer's data is isolated by the
-Azure AD `tid` claim from their JWT, and customers manage their own Azure
-subscriptions from the **Settings → Azure Subscriptions** page rather than
-relying on a deploy-time `AZURE_SUBSCRIPTION_ID` env var.
-
-### Tenant isolation
-
-- Every `ResourceSnapshot`, `FindingResult`, `RemediationCard`, and scan
-  result document carries a `tenant_id` field.
-- Cosmos queries always filter by `tenant_id` from the caller's JWT — no
-  cross-tenant reads are possible even with guessed IDs.
-- The `subscriptions` Cosmos container (PK `/tenant_id`) holds each tenant's
-  linked subscriptions. For cross-tenant onboarding, links are stored under
-  the customer tenant (`tenant_id=customer_tenant_id`) so customer users can
-  see/manage subscriptions after login even when an operator performed the
-  initial enrollment.
-- `/scan`, `/findings`, etc. enforce a 403 `subscription_not_linked` error
-  when a tenant requests data for a subscription they do not own.
-
-### Plan catalog (single source of truth)
-
-Plan limits are scaled on **resources**, **subscriptions**, **AI usage**,
-and **scan frequency** -- the same axes used by category-leading CSPM
-products. No vendor capability (Defender, Security Hub, SCC) is ever
-gated behind a paywall. The catalog lives in
-[`cloudguardiq/billing/plans.py`](cloudguardiq/billing/plans.py) and is
-exposed publicly at `GET /billing/plans`.
-
-| Plan | Price | Subscriptions | Resources / scan | Scan cadence | AI remediations / mo | Self-healing |
-|------|-------|---------------|------------------|--------------|----------------------|--------------|
-| **Free** | $0 | 1 | 100 | Daily | 5 | -- |
-| **Starter** (`PRO` wire value) | $49/mo | 3 | 1,000 | Hourly | 100 | -- |
-| **Enterprise** | $299/mo | unlimited | unlimited | 15 min | unlimited | yes |
-
-Enforcement is wired everywhere a quota-bearing action can occur:
-
-| Path | What's enforced |
-|------|-----------------|
-| `POST /scan` | resources/scan (middleware) |
-| `POST /subscriptions` | subscription cap (route handler) |
-| `POST /findings/{id}/generate-remediation` | AI quota (shared helper) |
-| Service Bus producer (`ScanPipeline._queue_findings`) | top-N by priority within remaining AI quota |
-| Service Bus consumer (`AIWorker.process_message`) | AI quota (defense-in-depth) |
-| Timer trigger (`scan_trigger`) | per-tier scan cooldown via `last_scan_at` |
-
-All over-cap responses return `HTTP 402 upgrade_required` with
-`{ current_tier, limit, cap, current }` so the UI can surface a clear
-upgrade prompt.
-
-### App-registration audience
-
-The CloudGuardIQ Azure AD app is provisioned with
-`sign_in_audience = AzureADMultipleOrgs`, which lets users from any Entra
-tenant sign in. **Phase 3 cross-tenant scanning is now shipped:** customers
-in a different Entra tenant can self-onboard their Azure subscriptions
-after granting admin consent. See the next section for the flow.
-
-### Connecting subscriptions from another Entra tenant
-
-CloudGuardIQ runs as a multi-tenant Azure AD app. Customers in a
-*different* Entra tenant (call it tenant **B**) can self-onboard their
-Azure subscriptions to a CloudGuardIQ deployment running in your tenant
-(tenant **A**) by following the steps below. The whole flow is designed
-to take under 15 minutes from the customer's first click.
-
-#### Roles required
-
-| Role | Where | Used for |
-|------|-------|----------|
-| **Global Administrator** *(or Privileged Role Admin)* | Tenant **B** | Granting tenant-wide admin consent on the multi-tenant app. |
-| **Owner / User Access Administrator** | Each subscription in tenant **B** that will be linked | Assigning the `Reader` role to the CloudGuardIQ service principal. |
-| Any signed-in user | Tenant **A** (the CloudGuardIQ frontend) | Driving the onboarding wizard and submitting `POST /subscriptions`. |
-
-#### Pre-flight checklist (operator side, tenant A)
-
-Run these once, before any customer onboards.
-
-**Automated by `terraform apply` (no operator action needed):**
-
-- [x] App registration created with
-      `sign_in_audience = AzureADMultipleOrgs` (multi-tenant).
-- [x] Client secret provisioned and injected into the Container App
-      and Function App as `CLOUDGUARDIQ_AZURE_CLIENT_SECRET`
-      (used by `AzureCustomerCredentialFactory` for cross-tenant calls).
-- [x] Consent callback Reply URL registered on the app registration's
-      `web.redirect_uris`:
-      `https://<frontend-host>/settings?consent=callback`,
-      plus everything in `var.consent_redirect_uris`
-      (default includes `http://localhost:3000/settings?consent=callback`
-      for dev).
-- [x] `CLOUDGUARDIQ_CONSENT_REDIRECT_URI` env var injected into the
-      Container App and Function App and pointed at the same Reply URL,
-      so `GET /subscriptions/consent-url` builds the correct
-      `redirect_uri` automatically.
-- [x] `tenant_consents` Cosmos container created
-      (PK `/customer_tenant_id`).
-- [x] `onboarding_sessions` Cosmos container created
-      (PK `/operator_tenant_id`).
-- [ ] `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI` set to a public HTTPS URL
-      hosting [`infra/templates/cloudguardiq-reader.json`](infra/templates/cloudguardiq-reader.json)
-      (e.g. raw GitHub URL or an Azure Storage blob). Drives the
-      **Deploy to Azure** button in step 3 of the wizard. Empty value
-      disables one-click deploy (the `az role assignment create`
-      fallback still works). Wired through the Terraform variable
-      `onboarding_template_uri`.
-
-**Manual one-time setup (cannot be automated by Terraform):**
-
-- [ ] **Publisher verification** completed on the app registration via
-      Microsoft Partner Center. Without it Azure AD warns customers
-      the app is unverified, and many tenants block consent outright.
-      See <https://learn.microsoft.com/azure/active-directory/develop/publisher-verification-overview>.
-- [ ] **Home-tenant admin consent** granted once on tenant **A** for
-      the API permissions declared on the app registration. From a
-      shell signed in to a Global Admin of tenant **A**:
-
-      ```bash
-      az ad app permission admin-consent --id <cgiq-client-id>
-      ```
-
-      (The client id is exposed by the Terraform output
-      `azure_ad_client_id`.)
-
-**Optional:**
-
-- [ ] Replace the client secret with a certificate by setting
-      `CLOUDGUARDIQ_AZURE_CERTIFICATE_PATH` (preferred for production).
-      `AzureCustomerCredentialFactory` picks the certificate first when
-      both are present.
-- [ ] Add custom production hostnames (e.g. `app.example.com`) to
-      `consent_redirect_uris` in `terraform.tfvars` so admin-consent
-      callbacks for those hosts are also accepted.
-
-#### Multi-Cloud Onboarding wizard (UI-driven, recommended)
-
-The Settings page renders a single **Multi-Cloud Onboarding** card backed by
-[`frontend/src/components/settings/MultiCloudOnboardingHub.tsx`](frontend/src/components/settings/MultiCloudOnboardingHub.tsx).
-The same five-step wizard onboards **Azure**, **AWS**, and **GCP** through
-the unified `/v1/onboarding/sessions` API (see
-[`docs/multicloud-onboarding-design.md`](docs/multicloud-onboarding-design.md)
-for the full spec). The legacy `Linked Subscriptions` card is now
-manage-only (edit / enable / disable / remove) and the previous Azure-only
-"Connect another tenant" wizard has been removed.
-
-| Step | UI title | Primary actor | What happens | Backend endpoint |
-|------|----------|----------------|--------------|------------------|
-| 1 | **Choose Provider** | Operator (any signed-in CloudGuardIQ user) | Pick provider (Azure / AWS / GCP), enter display name + provider scope (tenant id, account id, or project id). | `POST /v1/onboarding/sessions` |
-| 2 | **Grant Trust** | Operator clicks **Generate Artifacts**; **customer admin** then applies them in the provider console (Azure ARM deploy / AWS CloudFormation / `gcloud` binding). | Wizard renders provider-specific instructions, clickable "Open" buttons for URL artifacts, and copy buttons for IDs and policy JSON. For Azure the deploy link includes `/uriParameters/...` so `cloudGuardIQPrincipalId` is pre-populated in the ARM blade. | `POST /v1/onboarding/sessions/{id}/generate-artifacts` |
-| 3 | **Verify** | Operator | Runs three checks: `token_exchange`, `permission_probe`, `scope_discovery`. Auto-advances on success. | `POST /v1/onboarding/sessions/{id}/verify` |
-| 4 | **Connect Scopes** | Operator | Selects which discovered subscriptions / accounts / projects to monitor. | `POST /v1/onboarding/sessions/{id}/connect` |
-| 5 | **Done** | -- | Shows the new `connection_id`, refreshes the global subscription context so the Dashboard immediately picks up the new tenant, and offers an **Onboard another provider** reset. | `GET /v1/cloud-connections` |
-
-Underneath, Azure onboarding still calls the legacy
-`/subscriptions/onboarding-sessions/*` handlers documented below, so the
-Reader-role grant path, consent flow, and cross-tenant mirroring all
-behave exactly as before.
-
-#### Actor-to-action quick reference
-
-| Actor | Required role | What they do |
-|------|----------------|--------------|
-| CloudGuardIQ Operator | Any signed-in user in operator tenant | Starts session, refreshes status, discovers and connects subscriptions. |
-| Customer Admin | Global Administrator or Privileged Role Administrator in customer tenant | Grants tenant-wide admin consent on the CloudGuardIQ multi-tenant app. |
-| Customer Subscription Admin | Owner or User Access Administrator on each target subscription | Assigns `Reader` RBAC for the CloudGuardIQ enterprise app/service principal. |
-
-#### Session-based API sequence (technical reference)
-
-1. **Create session**
-
-```http
-POST /subscriptions/onboarding-sessions
-Content-Type: application/json
-
-{
-  "customer_tenant_id": "<TenantB-guid>"
-}
-```
-
-Returns:
-
-```json
-{
-  "session_id": "<hex>",
-  "customer_tenant_id": "<tenant-guid>",
-  "status": "pending_consent",
-  "consent_url": "https://login.microsoftonline.com/.../adminconsent...",
-  "discovered_subscription_ids": [],
-  "connected_subscription_ids": []
-}
-```
-
-2. **Customer admin completes consent**
-
-- Customer admin opens `consent_url` and accepts.
-- Azure AD redirects to `/settings?consent=callback&tenant=<tid>&admin_consent=True`.
-- [`frontend/src/pages/Settings.tsx`](frontend/src/pages/Settings.tsx) records callback through:
-
-  ```http
-  GET /subscriptions/consent-callback?tenant=<TenantB-guid>&admin_consent=True
-  ```
-
-- Subsequent session reads auto-advance to `pending_reader` once consent is active.
-
-3. **Reader RBAC grant + operator confirmation**
-
-Use either one-click template or CLI:
-
-- `GET /subscriptions/onboarding-template?tenant_id=<TenantB-guid>&scope=managementGroup`
-- `GET /onboarding/info` (manual command template)
-
-Then operator confirms in the wizard:
-
-```http
-POST /subscriptions/onboarding-sessions/{session_id}/reader-granted
-```
-
-4. **Discover and connect**
-
-```http
-POST /subscriptions/onboarding-sessions/{session_id}/discover
-POST /subscriptions/onboarding-sessions/{session_id}/connect
-Content-Type: application/json
-
-{
-  "subscription_ids": ["<sub-guid-1>", "<sub-guid-2>"]
-}
-```
-
-If `subscription_ids` is omitted, the API connects all discovered IDs.
-Session status moves to `completed` after successful linking.
-Connected subscriptions are persisted under the customer tenant id, so both
-self-signup customers and operator-enrolled customers see subscriptions in
-Settings after customer login.
-
-#### Common onboarding failures
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `400 invalid_tenant_id` when starting session | `customer_tenant_id` is not a GUID | Re-enter the correct Entra tenant ID and restart session. |
-| Session remains `pending_consent` | Customer admin has not accepted consent yet | Open `consent_url`, complete consent, then click **Refresh Status**. |
-| `400 consent_failed` in callback | Admin declined or callback carried error | Re-run consent and accept prompt. |
-| Discover/connect returns `400 access_denied` or `reader_role_required` | Reader RBAC missing or not propagated | Grant Reader role, wait up to 5 minutes, click **I Granted Reader Role**, retry discovery. |
-| Start onboarding returns `500`/`503` | `onboarding_sessions` container/repo not configured | Apply latest Terraform and ensure `CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS` is set. |
-
-#### Manual Reader grant command (customer tenant shell)
-
-Inside tenant **B**, a subscription **Owner** grants the CloudGuardIQ
-enterprise application the `Reader` role. From a shell signed in to
-tenant **B**:
+## 9. Quickstart (Local Development)
 
 ```bash
-# One-time: discover the object id of the cgiq enterprise app inside tenant B
-CGIQ_OBJECT_ID=$(az ad sp show --id <cgiq-client-id> --query id -o tsv)
-
-# Grant Reader on each subscription the customer wants to scan
-az role assignment create \
-  --assignee $CGIQ_OBJECT_ID \
-  --role Reader \
-  --scope /subscriptions/<sub-guid>
-```
-
-> **Why Reader and not Contributor?** CloudGuardIQ never writes to
-> customer subscriptions. Reader is the principle-of-least-privilege
-> role for posture and cost scans. AI-suggested remediations are
-> rendered as IaC diffs / `az cli` snippets the customer applies
-> themselves.
-
-Allow up to **5 minutes** for the role assignment to propagate before discovery.
-
-#### Step 4 — First scan
-
-The timer-driven scheduler
-([`function_app.py::scan_trigger`](function_app.py)) runs every six
-hours by default. For each enabled subscription it:
-
-* Reads `customer_tenant_id` off the record.
-* Builds a per-tenant credential via
-  `build_default_factory(settings).for_tenant(customer_tenant_id)`.
-* Runs the standard `ScanPipeline` (Resource Graph → PolicyEngine →
-  optional Defender enrichment → AI worker queue).
-* Stamps `last_scan_at` on success.
-
-To scan immediately instead of waiting for the next tick, run:
-
-```bash
-curl -X POST "<api>/scan/trigger?subscription_id=<sub-guid>" \
-  -H "Authorization: Bearer <token>"
-```
-
-Findings appear in the dashboard within a minute, tagged with the
-linking tenant (`tenant_id`) so multi-customer operators can filter by
-customer.
-
-#### Revocation and re-linking
-
-If the customer admin removes the CloudGuardIQ enterprise application
-in tenant **B** (or revokes the Reader role), the next scan tick will
-log a 401/403 from Azure AD and **auto-disable** the subscription:
-
-```
-WARNING Disabled subscription tenant=<A> sub=<sub-guid> due to auth failure (consent likely revoked)
-```
-
-The record is *not* deleted. After consent and Reader are restored, a
-`PATCH /subscriptions/<sub-guid>` with `{"state": "Enabled"}` reactivates
-scanning and re-attaches the historical findings.
-
-To revoke consent server-side (e.g. customer churn), call
-`TenantConsentRepository.revoke(<TenantB-guid>)` — subsequent
-`POST /subscriptions` calls for that tenant will be rejected with
-`400 consent_required` until consent is granted again.
-
-#### End-to-end smoke test (single command)
-
-With `CLOUDGUARDIQ_AUTH_DISABLED=true` (dev only) the session flow can
-be exercised without a real customer admin:
-
-```powershell
-$base = "http://localhost:8000"
-$tid  = "22222222-2222-2222-2222-222222222222"
-$sub  = "33333333-3333-3333-3333-333333333333"
-
-# Step 1: create onboarding session
-$session = (Invoke-RestMethod -Method Post -Uri "$base/subscriptions/onboarding-sessions" -ContentType "application/json" -Body "{\"customer_tenant_id\":\"$tid\"}")
-$sid = $session.session_id
-
-# Step 2: simulate Azure AD callback after admin consent
-curl "$base/subscriptions/consent-callback?tenant=$tid&admin_consent=True"
-
-# Step 3: mark Reader grant + discover + connect
-curl -X POST "$base/subscriptions/onboarding-sessions/$sid/reader-granted"
-curl -X POST "$base/subscriptions/onboarding-sessions/$sid/discover"
-curl -X POST "$base/subscriptions/onboarding-sessions/$sid/connect" -H 'Content-Type: application/json' `
-  -d "{\"subscription_ids\":[\"$sub\"]}"
-
-# Verify
-curl "$base/subscriptions"
-```
-
-**Note for production:** Microsoft requires *publisher verification* for
-non-verified multi-tenant apps before Azure AD will show consent prompts
-to customers outside your tenant. Plan for the Microsoft Partner
-Network step before going GA.
-### Demo mode
-
-When `CLOUDGUARDIQ_AUTH_DISABLED=true` (local/dev), the API serves canned
-demo findings on `/findings` so contributors get a populated UI without an
-Azure subscription. The frontend reads `GET /config` on layout mount and
-displays an amber **"Demo mode"** banner across every page in this case.
-Production deployments leave `AUTH_DISABLED` unset; the dashboard is empty
-until the tenant links a subscription on the Settings page.
-
----
-
-## Local Development Setup
-
-### Prerequisites
-
-- Python 3.12+
-- Node.js 20+
-- Azure CLI (`az login` for DefaultAzureCredential)
-- Git
-
-### 1. Clone and install Python backend
-
-```bash
-git clone https://github.com/sandyshd/CloudGuardIQ.git
+# 1. Clone
+git clone https://github.com/<your-org>/CloudGuardIQ.git
 cd CloudGuardIQ
-pip install -e ".[dev]"
-```
 
-### 2. Configure environment
+# 2. Install backend (with dev + optional cloud extras)
+pip install -e ".[dev,aws,gcp]"
 
-```bash
+# 3. Configure environment
 cp .env.example .env
-```
+# → edit .env with your tenant / Cosmos / OpenAI values (see §12)
 
-Edit `.env` with your values:
-
-```bash
-# Azure AD / Entra ID
-AZURE_CLIENT_ID=<your-app-client-id>
-AZURE_TENANT_ID=<your-tenant-id>
-AZURE_SUBSCRIPTION_ID=<your-subscription-id>   # dev-only: default for `cloudguardiq scan --subscription-id`. Production tenants link subscriptions via the Settings UI.
-
-# Azure Cosmos DB (RBAC via DefaultAzureCredential)
-CLOUDGUARDIQ_COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
-
-# Azure OpenAI (RBAC via DefaultAzureCredential)
-AZURE_OPENAI_ENDPOINT=https://<account>.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT=gpt-5.1
-
-# Azure Service Bus (managed identity)
-SERVICE_BUS_CONNECTION__fullyQualifiedNamespace=<namespace>.servicebus.windows.net
-
-# Azure Key Vault
-KEY_VAULT_URL=https://<vault>.vault.azure.net/
-
-# Cross-tenant onboarding (optional in dev)
-CLOUDGUARDIQ_CONSENT_REDIRECT_URI=http://localhost:3000/settings?consent=callback
-CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI=https://raw.githubusercontent.com/<org>/<repo>/main/infra/templates/cloudguardiq-reader.json
-```
-
-> **No API keys needed.** Authentication uses `DefaultAzureCredential` which
-> picks up your `az login` session locally or managed identity in Azure.
-
-### 3. Log in to Azure
-
-```bash
+# 4. Sign in for DefaultAzureCredential
 az login
-```
 
-This enables `DefaultAzureCredential` for local Cosmos DB and OpenAI access.
-
-### 4. Run tests
-
-```bash
-python -m pytest tests/ -v --tb=short
-```
-
-### 5. Run linter and type checker
-
-```bash
+# 5. Run quality gates
 ruff check cloudguardiq/
 mypy cloudguardiq/
-```
+python -m pytest tests/ -v --cov=cloudguardiq --cov-fail-under=80
 
-### 6. Start the API server
-
-```bash
+# 6. Start the API
 uvicorn cloudguardiq.api.main:app --reload
-```
+# → http://localhost:8000/docs  (Swagger)
+# → http://localhost:8000/redoc
 
-The API is available at `http://localhost:8000`. Docs at `http://localhost:8000/docs`.
+# 7. Start the frontend
+cd frontend
+npm install
+# Create frontend/.env.local with VITE_AZURE_CLIENT_ID, VITE_AZURE_TENANT_ID,
+# VITE_REDIRECT_URI, VITE_API_BASE_URL — or generate via Terraform output.
+npm run dev
+# → http://localhost:3000
 
-### 7. Run a CLI scan
-
-```bash
+# 8. (Optional) Run a one-shot CLI scan
 python -m cloudguardiq scan --subscription-id <sub-id> --output json
 ```
 
-### 8. Install and start the frontend
+### Demo mode (zero Azure config)
 
-```bash
-cd frontend
-npm install
-```
-
-Create `frontend/.env.local`:
-
-```bash
-VITE_AZURE_CLIENT_ID=<your-app-client-id>
-VITE_AZURE_TENANT_ID=<your-tenant-id>
-VITE_REDIRECT_URI=http://localhost:3000
-VITE_API_BASE_URL=http://localhost:8000
-```
-
-```bash
-npm run dev
-```
-
-The frontend is available at `http://localhost:3000`.
+Set `CLOUDGUARDIQ_AUTH_DISABLED=true` to serve canned demo findings on
+`/findings`. The UI displays an amber **"Demo mode"** banner across every page.
+This is the fastest way to onboard new contributors.
 
 ---
 
-## Azure Deployment
+## 10. Production Deployment on Azure
 
-### Prerequisites
+### Option A — GitHub Actions (recommended)
 
-- Azure subscription with **Contributor** access
-- Terraform 1.8+
-- An Azure AD app registration for OIDC (for CI/CD)
+1. **Create a CI service principal** with OIDC federated credentials for each
+   environment (`dev`, `staging`, `prod`).
+2. **Assign roles** to the service principal:
 
-### 1. Provision infrastructure with Terraform
+   | Role | Scope | Purpose |
+   |------|-------|---------|
+   | Contributor | Subscription | Create/manage Azure resources |
+   | User Access Administrator | Subscription | Create managed-identity RBAC |
+   | Application Administrator | Entra ID | Create app registrations |
+   | Storage Blob Data Contributor | tfstate storage | Terraform state via Azure AD |
 
-#### Option A: Local deployment
+3. **Configure GitHub secrets**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+   `AZURE_SUBSCRIPTION_ID`, `TF_STATE_RESOURCE_GROUP`, `TF_STATE_STORAGE_ACCOUNT`,
+   plus per-environment `FRONTEND_URL`, `API_URL`, `APP_CLIENT_ID`,
+   `SWA_DEPLOYMENT_TOKEN`, optional `ONBOARDING_TEMPLATE_URI`.
+4. **Run workflows** in order: `Terraform Infrastructure` (plan → apply) →
+   `Deploy` (frontend + backend + functions).
+
+### Option B — Local Terraform
 
 ```bash
 az login
@@ -812,285 +483,497 @@ terraform init \
   -backend-config="key=cloudguardiq.dev.tfstate" \
   -backend-config="use_azuread_auth=true"
 
-terraform plan -var="environment=dev" -out=tfplan
+terraform plan  -var="environment=dev" -out=tfplan
 terraform apply tfplan
-```
 
-#### Option B: GitHub Actions (recommended)
-
-1. Create an Azure AD app registration (e.g. `CloudGuardIQ-GitHub-OIDC`)
-2. Add a **federated credential** for GitHub Actions:
-   - Entity type: **Environment**
-   - Organization: `<your-github-org>`
-   - Repository: `CloudGuardIQ`
-   - Environment: `dev` (repeat for `staging`, `prod`)
-3. Assign the following roles to the service principal:
-
-   | Role | Scope | Purpose |
-   |------|-------|---------|
-   | **Contributor** | Subscription | Create/manage Azure resources |
-   | **User Access Administrator** | Subscription | Create RBAC role assignments for managed identities |
-   | **Application Administrator** | Azure AD (Entra ID) | Create app registrations and service principals |
-   | **Storage Blob Data Contributor** | tfstate storage account | Read/write Terraform state via Azure AD auth |
-
-   ```bash
-   # Contributor (resource management)
-   az role assignment create --assignee <AZURE_CLIENT_ID> \
-     --role "Contributor" --scope /subscriptions/<SUBSCRIPTION_ID>
-
-   # User Access Administrator (RBAC assignments)
-   az role assignment create --assignee <AZURE_CLIENT_ID> \
-     --role "User Access Administrator" --scope /subscriptions/<SUBSCRIPTION_ID>
-
-   # Storage Blob Data Contributor (tfstate)
-   az role assignment create --assignee <AZURE_CLIENT_ID> \
-     --role "Storage Blob Data Contributor" \
-     --scope /subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<TF_STATE_RG>/providers/Microsoft.Storage/storageAccounts/<TF_STATE_STORAGE>
-
-   # Application Administrator (Azure AD directory role — assign via Portal)
-   # Portal: Entra ID > Roles and administrators > Application Administrator > Add assignment
-   ```
-
-4. Configure GitHub repository secrets:
-
-   | Secret | Scope | Description |
-   |--------|-------|-------------|
-   | `AZURE_CLIENT_ID` | Repository | App registration client ID |
-   | `AZURE_TENANT_ID` | Repository | Azure AD tenant ID |
-   | `AZURE_SUBSCRIPTION_ID` | Repository | Target subscription |
-   | `TF_STATE_RESOURCE_GROUP` | Repository | Resource group for tfstate storage |
-   | `TF_STATE_STORAGE_ACCOUNT` | Repository | Storage account for tfstate |
-   | `FRONTEND_URL` | Environment | Static Web App URL (e.g. `https://<random-name>.azurestaticapps.net` — get from Azure Portal) |
-   | `API_URL` | Environment | Container App URL (e.g. `https://cguardiq-dev-api.<region>.azurecontainerapps.io`) |
-   | `APP_CLIENT_ID` | Environment | CloudGuardIQ-dev app client ID (for frontend MSAL auth) |
-| `SWA_DEPLOYMENT_TOKEN` | Environment | Static Web App deployment token (from Portal) |
-| `ONBOARDING_TEMPLATE_URI` | Repository | (Optional) Raw HTTPS URL of `infra/templates/cloudguardiq-reader.json`. Set to `https://raw.githubusercontent.com/<owner>/<repo>/<ref>/infra/templates/cloudguardiq-reader.json` to enable the cross-tenant onboarding wizard. Wired into Terraform via `TF_VAR_onboarding_template_uri` in `.github/workflows/infra.yml`. |
-
-6. Create a GitHub environment named `dev`
-7. Go to **Actions → Terraform Infrastructure → Run workflow**
-8. Select environment and action (`plan` or `apply`)
-
-### 2. What Terraform creates
-
-| Resource | Name Pattern | Purpose |
-|----------|-------------|---------|
-| Resource Group | `cguardiq-{env}-rg` | Container for all resources |
-| Azure AD App | `CloudGuardIQ-{env}` | SPA + API auth |
-| Cosmos DB | `cguardiq-{env}-cosmos` | Serverless NoSQL (RBAC, local auth disabled) |
-| Azure OpenAI | `cguardiq-{env}-openai` | GPT-5.1 deployment (local auth disabled) |
-| Key Vault | `cguardiq-{env}-kv` | Application secrets (e.g. app client secret) |
-| Service Bus | `cguardiq-{env}-sb` | Async findings queue |
-| Container App | `cguardiq-{env}-api` | FastAPI backend |
-| Function App | `cguardiq-{env}-func` | Timer scan + AI worker |
-| Container Registry | `cguardiq{env}acr` | Docker image storage (Basic SKU) |
-| Static Web App | `cguardiq-{env}-swa` | React frontend |
-| App Insights | `cguardiq-{env}-ai` | Monitoring & tracing |
-| Log Analytics | `cguardiq-{env}-law` | Log aggregation |
-
-### 3. RBAC role assignments (auto-provisioned by Terraform)
-
-| Principal | Role | Scope |
-|-----------|------|-------|
-| Container App MI | Cosmos DB Built-in Data Contributor | Cosmos DB account |
-| Container App MI | Cognitive Services OpenAI User | OpenAI account |
-| Container App MI | Reader | Subscription |
-| Function App MI | Cosmos DB Built-in Data Contributor | Cosmos DB account |
-| Function App MI | Cognitive Services OpenAI User | OpenAI account |
-| Function App MI | Reader | Subscription |
-| Function App MI | Storage Blob Data Owner | Function storage account |
-| Function App MI | Storage Queue Data Contributor | Function storage account |
-| Function App MI | Storage Table Data Contributor | Function storage account |
-| Function App MI | Azure Service Bus Data Owner | Service Bus namespace |
-| Container App MI | Azure Service Bus Data Sender | Service Bus namespace |
-| Container App MI | AcrPull | Container Registry |
-| GitHub SP | AcrPush | Container Registry |
-| GitHub SP | Storage Blob Data Owner | Function storage account |
-| Service Principal | Reader | Subscription |
-
-> **Key-based authentication is disabled** on Cosmos DB
-> (`local_authentication_disabled = true`) and Azure OpenAI
-> (`local_auth_enabled = false`). All access uses managed identity.
-
-### 4. Generate backend .env from Terraform
-
-```bash
-cd infra
-terraform output -raw backend_env_file > ../.env
-```
-
-### 5. Generate frontend .env from Terraform
-
-```bash
-cd infra
+# Auto-generate environment files
+terraform output -raw backend_env_file  > ../.env
 terraform output -raw frontend_env_file > ../frontend/.env.local
 ```
 
----
+### What Terraform provisions
 
-## CI/CD Pipelines
+| Resource | Name pattern | Purpose |
+|----------|-------------|---------|
+| Resource Group | `cguardiq-{env}-rg` | Container for all resources |
+| Azure AD App (multi-tenant) | `CloudGuardIQ-{env}` | SPA + API auth, customer onboarding |
+| Cosmos DB (serverless) | `cguardiq-{env}-cosmos` | NoSQL data store (RBAC-only) |
+| Azure OpenAI | `cguardiq-{env}-openai` | GPT-5.1 deployment (RBAC-only) |
+| Key Vault | `cguardiq-{env}-kv` | App secrets (e.g. client secret) |
+| Service Bus | `cguardiq-{env}-sb` | Async findings queue |
+| Container App | `cguardiq-{env}-api` | FastAPI backend |
+| Function App | `cguardiq-{env}-func` | Timer scan + AI worker |
+| Container Registry | `cguardiq{env}acr` | Backend image storage |
+| Static Web App | `cguardiq-{env}-swa` | React frontend |
+| Application Insights | `cguardiq-{env}-ai` | APM & tracing |
+| Log Analytics | `cguardiq-{env}-law` | Centralized logs |
 
-### CI — Lint, Test & Validate
+All managed-identity RBAC assignments (Cosmos Data Contributor, OpenAI User,
+Reader on subscription, Service Bus Data Owner/Sender, AcrPull, storage roles)
+are auto-provisioned. **Key-based authentication is disabled** on Cosmos DB
+and Azure OpenAI.
 
-**File:** `.github/workflows/ci.yml`  
-**Trigger:** Manual (`workflow_dispatch`)
+### Manual one-time setup (cannot be automated)
 
-| Job | Steps |
-|-----|-------|
-| **test** | `pip install -e ".[dev]"` → `ruff check .` → `mypy cloudguardiq/` → `pytest --cov --cov-fail-under=80` |
-| **terraform-validate** | `terraform init -backend=false` → `terraform validate` → `terraform fmt -check` |
-
-### Infrastructure — Terraform Plan/Apply
-
-**File:** `.github/workflows/infra.yml`  
-**Trigger:** Manual with inputs
-
-| Input | Options | Default |
-|-------|---------|---------|
-| `environment` | `dev`, `staging`, `prod` | `dev` |
-| `action` | `plan`, `apply` | `plan` |
-
-**Auth:** OIDC workload identity federation (no stored Azure credentials).
-
-**Flow:** Login → Init (Azure Blob backend with `use_azuread_auth`) → Format Check → Validate → Plan → Apply (if selected).
-
----
-
-### Deploy — Build & Ship Application
-
-**File:** `.github/workflows/deploy.yml`
-**Trigger:** Manual with inputs
-
-| Input | Options | Default |
-|-------|---------|---------|
-| `environment` | `dev`, `staging`, `prod` | `dev` |
-
-**Jobs:**
-
-| Job | Steps |
-|-----|-------|
-| **deploy-frontend** | 
-pm ci` → Build with `VITE_*` env vars → Deploy to Static Web App |
-| **deploy-backend** | Azure Login → Docker build → Push to ACR → Update Container App |
-| **deploy-functions** | Setup Python → Azure Login → Deploy to Azure Functions via `functions-action` |
-
-**Frontend `VITE_*` variables** are injected as build-time env vars during 
-pm run build`
-and baked into the static JS bundle. `VITE_AZURE_CLIENT_ID` uses the `APP_CLIENT_ID`
-environment secret (CloudGuardIQ-dev app), not the `AZURE_CLIENT_ID` repository secret.
-
-**Backend env vars** (Cosmos, OpenAI, etc.) are already set on the Container App by Terraform —
-the deploy workflow only updates the container image.
-
-**ACR name** is computed from the naming convention (`cguardiq{env}acr`) — no `ACR_NAME`
-secret is needed.
+- **Publisher verification** of the multi-tenant app via Microsoft Partner
+  Center. Required before customers outside your tenant can complete consent
+  without a security warning.
+- **Home-tenant admin consent** on the operator tenant:
+  ```bash
+  az ad app permission admin-consent --id <azure_ad_client_id>
+  ```
 
 ---
 
-## Testing
+## 11. Customer Onboarding
 
-```bash
-# Run all tests
-python -m pytest tests/ -v --tb=short
+The **Multi-Cloud Onboarding Wizard** (Settings → Multi-Cloud Onboarding) walks
+operators through enrolling a customer's Azure tenant, AWS account, or GCP
+project end-to-end. Target time: **under 15 minutes**.
 
-# Run with coverage
-python -m pytest tests/ --cov=cloudguardiq --cov-fail-under=80
+### 11.1 The 5-step wizard
 
-# Run a specific test file
-python -m pytest tests/test_ai_remediation.py -v
+| # | Step | Primary actor | What happens | API |
+|---|------|----------------|--------------|-----|
+| 1 | **Choose Provider** | Operator | Pick Azure / AWS / GCP, enter display name + scope (tenant id / account id / project id) | `POST /v1/onboarding/sessions` |
+| 2 | **Grant Trust** | Customer admin | Wizard renders one-click **Deploy to Azure** / **CloudFormation Quick-Create** / `gcloud` script with all parameters pre-filled. Customer admin runs it. | `POST /v1/onboarding/sessions/{id}/generate-artifacts` |
+| 3 | **Verify** | Operator | Three automated probes: `token_exchange`, `permission_probe`, `scope_discovery`. Auto-advances on success. | `POST /v1/onboarding/sessions/{id}/verify` |
+| 4 | **Connect Scopes** | Operator | Pick which discovered subscriptions / accounts / projects to monitor | `POST /v1/onboarding/sessions/{id}/connect` |
+| 5 | **Done** | — | Returns `connection_id`; dashboard immediately reflects the new scope | `GET /v1/cloud-connections` |
 
-# Lint
-ruff check cloudguardiq/
+### 11.2 Roles required per actor
 
-# Type check
-mypy cloudguardiq/
+| Actor | Role | Where |
+|-------|------|-------|
+| CloudGuardIQ Operator | Any signed-in user | Operator tenant (A) |
+| Customer Admin | Global Administrator or Privileged Role Admin | Customer tenant (B) — for admin consent |
+| Customer Subscription Admin | Owner or User Access Administrator | Each target Azure subscription — for `Reader` RBAC grant |
+
+### 11.3 Azure cross-tenant flow (under the hood)
+
+```
+Operator clicks "Onboard"
+   ↓
+POST /v1/onboarding/sessions  →  session.status = pending_consent + consent_url
+   ↓
+Customer admin opens consent_url → accepts in Azure AD
+   ↓
+Azure AD redirects → /settings?consent=callback&tenant=<tid>&admin_consent=True
+   ↓
+GET /subscriptions/consent-callback  →  TenantConsentRepository.upsert()
+   ↓
+Session auto-advances → pending_reader
+   ↓
+Customer admin runs one-click ARM (or `az role assignment create ... --role Reader`)
+   ↓
+Operator clicks "I Granted Reader Role" → POST /reader-granted
+   ↓
+POST /discover  →  enumerates visible subscriptions in customer tenant
+POST /connect    →  persists under tenant_id = customer_tenant_id
+   ↓
+Session.status = completed  ·  scan_trigger picks it up on next tick
 ```
 
-**324 tests** covering adapters, API, policy engine, AI remediation, models,
-pipeline, and healing modules. All external APIs (Azure, OpenAI, Cosmos) are
-mocked in tests.
+### 11.4 AWS flow
+
+Wizard produces a **CloudFormation Quick-Create URL** that provisions an IAM
+role with a `SecurityAudit`-equivalent policy and a trust relationship to the
+CloudGuardIQ AWS account. Operator pastes the `RoleArn`; CloudGuardIQ assumes
+it via STS for every scan.
+
+### 11.5 GCP flow
+
+Wizard produces a `gcloud` script that grants `roles/viewer` and
+`roles/billing.viewer` to a CloudGuardIQ service account on the target project
+or folder. CloudGuardIQ authenticates via workload identity federation.
+
+### 11.6 Revocation & re-linking
+
+- Removing the CloudGuardIQ enterprise app or revoking Reader → the next scan
+  tick logs `auth_failure` and **auto-disables** the subscription (record is
+  retained, findings preserved).
+- After consent + RBAC are restored: `PATCH /subscriptions/{id}` with
+  `{ "state": "Enabled" }` to resume scans.
+- For full server-side revocation: `TenantConsentRepository.revoke(<tid>)` —
+  subsequent `POST /subscriptions` calls for that tenant return
+  `400 consent_required`.
+
+### 11.7 Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `400 invalid_tenant_id` | Bad GUID | Re-enter and restart session |
+| Stuck on `pending_consent` | Consent not yet accepted | Open `consent_url`, accept, click **Refresh Status** |
+| `400 consent_failed` in callback | Admin declined / error in callback | Re-run consent |
+| `400 access_denied` / `reader_role_required` | RBAC missing or not propagated | Grant Reader, wait up to 5 min, retry discovery |
+| Session start returns 500/503 | Onboarding container/repo not configured | Re-apply Terraform |
+
+### 11.8 Manual Reader grant (customer tenant shell)
+
+```bash
+# One-time: discover the object id of the cgiq enterprise app in tenant B
+CGIQ_OBJECT_ID=$(az ad sp show --id <cgiq-client-id> --query id -o tsv)
+
+# Grant Reader on each subscription the customer wants to scan
+az role assignment create \
+  --assignee $CGIQ_OBJECT_ID \
+  --role Reader \
+  --scope /subscriptions/<sub-guid>
+```
+
+Allow up to **5 minutes** for the role assignment to propagate before discovery.
 
 ---
 
-## Environment Variables
+## 12. Configuration Reference
 
-### Backend (Python)
+### 12.1 Backend environment variables (Python)
 
-Variables with the `CLOUDGUARDIQ_` prefix are loaded by pydantic-settings.
+Variables prefixed `CLOUDGUARDIQ_` are loaded by **pydantic-settings**.
+
+#### Core
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `AZURE_CLIENT_ID` | Yes | Azure AD app client ID |
-| `AZURE_TENANT_ID` | Yes | Azure AD tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | No | **Dev/CLI only.** Production tenants link subscriptions per-tenant in Cosmos via Settings UI. |
-| `CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS` | No | Cosmos container for tenant-managed subscriptions (default: `subscriptions`) |
-| `CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS` | No | Pro-tier subscription cap (default: `10`) |
-| `CLOUDGUARDIQ_AUTH_DISABLED` | No | When `true`, /findings serves canned demo data and the UI shows a demo-mode banner |
+| `AZURE_CLIENT_ID` | Yes | App registration client ID |
+| `AZURE_TENANT_ID` | Yes | Operator (home) tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | No | **Dev / CLI only.** Prod uses per-tenant registry. |
 | `CLOUDGUARDIQ_COSMOS_ENDPOINT` | Yes | Cosmos DB account endpoint |
 | `CLOUDGUARDIQ_AZURE_OPENAI_ENDPOINT` | Yes | Azure OpenAI endpoint |
-| `CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT` | No | Model deployment name (default: `gpt-5.1`) |
+| `CLOUDGUARDIQ_AZURE_OPENAI_DEPLOYMENT` | No | Model deployment name (default `gpt-5.1`) |
 | `CLOUDGUARDIQ_AZURE_TENANT_ID` | Yes | Tenant ID for JWT validation |
 | `CLOUDGUARDIQ_AZURE_CLIENT_ID` | Yes | Client ID for JWT audience validation |
-| `CLOUDGUARDIQ_AZURE_CLIENT_SECRET` | Cross-tenant only | Client secret used by `CustomerCredentialFactory` to authenticate against customer tenants. Provisioned by Terraform. Prefer a certificate where possible. |
-| `CLOUDGUARDIQ_AZURE_CERTIFICATE_PATH` | Cross-tenant only | Path to a PFX/PEM certificate for `ClientCertificateCredential`. Takes precedence over the client secret when both are set. |
-| `CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS` | No | Cosmos container for cross-tenant admin-consent records (default: `tenant_consents`) |
-| `CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS` | No | Cosmos container for onboarding-session state (default: `onboarding_sessions`) |
-| `CLOUDGUARDIQ_CONSENT_REDIRECT_URI` | Cross-tenant only | Reply URL the Azure AD admin-consent redirect returns to (must match an app-registration Reply URL). Default: `http://localhost:3000/settings?consent=callback`. |
-| `CLOUDGUARDIQ_PUBLIC_API_BASE_URL` | No | Public HTTPS base URL of the CloudGuardIQ API (e.g. `https://cguardiq-dev-api.<region>.azurecontainerapps.io`). When set, `GET /subscriptions/onboarding-template` emits a `parameters_uri` so the Azure Portal Deploy-to-Azure blade pre-populates the `cloudGuardIQPrincipalId` ARM parameter. Wired by Terraform on the Container App from `azurerm_container_app_environment.cloudguardiq.default_domain`. Empty value disables the prefill (the deploy link still works, the customer just types the GUID manually). |
-| `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI` | No | Public HTTPS URL hosting [`infra/templates/cloudguardiq-reader.json`](infra/templates/cloudguardiq-reader.json). Drives the **Deploy to Azure** button returned by `GET /subscriptions/onboarding-template`. Empty disables the one-click button (the `az role assignment` fallback still works). If a `https://github.com/<owner>/<repo>/blob/<ref>/<path>` URL is supplied by mistake, the API rewrites it to the matching `raw.githubusercontent.com` URL so the Azure Portal blade can fetch the JSON. |
-| `SERVICE_BUS_CONNECTION__fullyQualifiedNamespace` | No | Service Bus namespace FQDN (managed identity auth) |
+| `SERVICE_BUS_CONNECTION__fullyQualifiedNamespace` | No | Service Bus FQDN (managed identity) |
 | `KEY_VAULT_URL` | No | Key Vault URI |
+| `CLOUDGUARDIQ_AUTH_DISABLED` | No | `true` enables demo mode |
 
-### Frontend (React)
+#### Cross-tenant / onboarding
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CLOUDGUARDIQ_AZURE_CLIENT_SECRET` | Cross-tenant | Secret for `CustomerCredentialFactory` |
+| `CLOUDGUARDIQ_AZURE_CERTIFICATE_PATH` | Cross-tenant | PFX/PEM cert (preferred over secret) |
+| `CLOUDGUARDIQ_CONSENT_REDIRECT_URI` | Cross-tenant | Reply URL for admin-consent callback |
+| `CLOUDGUARDIQ_PUBLIC_API_BASE_URL` | No | Public API URL — enables ARM `parameters_uri` prefill |
+| `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI` | No | Public URL of `infra/templates/cloudguardiq-reader.json` |
+
+#### Cosmos container overrides
+
+| Variable | Default |
+|----------|---------|
+| `CLOUDGUARDIQ_COSMOS_CONTAINER_SUBSCRIPTIONS` | `subscriptions` |
+| `CLOUDGUARDIQ_COSMOS_CONTAINER_TENANT_CONSENTS` | `tenant_consents` |
+| `CLOUDGUARDIQ_COSMOS_CONTAINER_ONBOARDING_SESSIONS` | `onboarding_sessions` |
+
+#### Billing / Stripe
 
 | Variable | Description |
 |----------|-------------|
-| `VITE_AZURE_CLIENT_ID` | CloudGuardIQ-dev app client ID (from `APP_CLIENT_ID` secret) |
-| `VITE_AZURE_TENANT_ID` | Azure AD tenant ID |
-| `VITE_REDIRECT_URI` | Auth redirect URI (default: `http://localhost:3000`) |
-| `VITE_API_BASE_URL` | Backend API URL (default: `/api`) |
+| `STRIPE_API_KEY` | Stripe secret key |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
+| `STRIPE_PRICE_STARTER` / `STRIPE_PRICE_ENTERPRISE` | Stripe Price IDs per plan |
 
----
+### 12.2 Frontend environment variables (Vite)
 
-## Infrastructure Variables (Terraform)
+| Variable | Description |
+|----------|-------------|
+| `VITE_AZURE_CLIENT_ID` | CloudGuardIQ-dev app client ID (= `APP_CLIENT_ID` secret) |
+| `VITE_AZURE_TENANT_ID` | `common` for multi-tenant, or specific tenant ID |
+| `VITE_REDIRECT_URI` | MSAL redirect URI (default `http://localhost:3000`) |
+| `VITE_API_BASE_URL` | Backend URL (default `/api`) |
+
+### 12.3 Terraform input variables (`infra/variables.tf`)
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `prefix` | `string` | `cguardiq` | Resource name prefix |
-| `environment` | `string` | `dev` | `dev`, `staging`, or `prod` |
-| `location` | `string` | `eastus` | Azure region |
-| `openai_location` | `string` | `eastus2` | Region for OpenAI (limited availability) |
-| `swa_location` | `string` | `eastus2` | Region for Static Web App |
-| `openai_capacity` | 
-umber` | `10` | TPM capacity (thousands) |
-| `api_container_image` | `string` | hello-world image | Docker image for backend |
-| `frontend_redirect_uris` | `list(string)` | `["http://localhost:3000"]` | Additional auth redirect URIs |
-| `consent_redirect_uris` | `list(string)` | `["http://localhost:3000/settings?consent=callback"]` | Extra Reply URLs for the Azure AD admin-consent callback (cross-tenant onboarding) |
-| `onboarding_template_uri` | `string` | `""` | Public HTTPS URL hosting [`infra/templates/cloudguardiq-reader.json`](infra/templates/cloudguardiq-reader.json). Drives the wizard's **Deploy to Azure** button. Propagated to the Container App and Function App as `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI`. In CI this is fed by the repository secret `ONBOARDING_TEMPLATE_URI` via `TF_VAR_onboarding_template_uri` in `.github/workflows/infra.yml`. |
+| `prefix` | string | `cguardiq` | Resource name prefix |
+| `environment` | string | `dev` | `dev` / `staging` / `prod` |
+| `location` | string | `eastus` | Primary Azure region |
+| `openai_location` | string | `eastus2` | Region for OpenAI |
+| `swa_location` | string | `eastus2` | Region for Static Web App |
+| `openai_capacity` | number | `10` | TPM capacity (thousands) |
+| `api_container_image` | string | hello-world | Initial backend image |
+| `frontend_redirect_uris` | list(string) | `["http://localhost:3000"]` | Extra MSAL redirect URIs |
+| `consent_redirect_uris` | list(string) | localhost callback | Extra admin-consent Reply URLs |
+| `onboarding_template_uri` | string | `""` | Public ARM template URL (Deploy-to-Azure) |
+
+### 12.4 Terraform outputs (`infra/outputs.tf`)
+
+`resource_group_name`, `azure_ad_client_id`, `azure_ad_tenant_id`,
+`cosmosdb_endpoint`, `openai_endpoint`, `key_vault_uri`,
+`servicebus_connection_string`, `appinsights_connection_string`, `api_url`,
+`function_app_name`, `frontend_url`, `acr_name`, `acr_login_server`,
+`backend_env_file`, `frontend_env_file`.
 
 ---
 
-## Terraform Outputs
+## 13. REST API Reference
 
-| Output | Description |
-|--------|-------------|
-| `resource_group_name` | Resource group name |
-| `azure_ad_client_id` | Azure AD app client ID |
-| `azure_ad_tenant_id` | Azure AD tenant ID |
-| `cosmosdb_endpoint` | Cosmos DB account endpoint |
-| `openai_endpoint` | Azure OpenAI endpoint |
-| `key_vault_uri` | Key Vault URI |
-| `servicebus_connection_string` | Service Bus connection string (sensitive) |
-| `appinsights_connection_string` | App Insights connection string (sensitive) |
-| `api_url` | Backend API URL |
-| `function_app_name` | Function App name |
-| `frontend_url` | Frontend Static Web App URL |
-| `acr_name` | Azure Container Registry name |
-| `acr_login_server` | Azure Container Registry login server |
-| `backend_env_file` | Ready-to-use `.env` contents |
-| `frontend_env_file` | Ready-to-use frontend `.env.local` contents |
+OpenAPI 3 spec is auto-generated at `/docs` (Swagger UI) and `/redoc`.
+All endpoints except `/health`, `/config`, `/billing/plans`, and
+`/subscriptions/onboarding-parameters/{id}` require a Bearer JWT from Azure AD.
+
+### Public
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Liveness probe |
+| GET | `/config` | Client config (`demo_mode`, `client_id`, `version`) |
+| GET | `/billing/plans` | Public plan catalog |
+
+### Scans
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/scan` | Synchronous scan |
+| POST | `/scan/trigger` | Queue async scan (Service Bus) |
+| GET | `/scan/{scan_id}/status` | Scan result by ID |
+
+### Findings & remediation
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/findings` | List remediation cards sorted by priority |
+| GET | `/findings/{id}` | Single remediation card |
+| GET | `/findings/{id}/terraform` | Terraform fix as `text/plain` |
+| POST | `/findings/{id}/generate-remediation` | Re-run GPT-5.1 for a finding (AI-quota gated) |
+
+### Subscriptions (Azure, per-tenant)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/subscriptions` | List subscriptions for caller tenant |
+| POST | `/subscriptions` | Link a subscription (`402` if cap exceeded) |
+| PATCH | `/subscriptions/{id}` | Rename or enable/disable |
+| DELETE | `/subscriptions/{id}` | Unlink (findings retained per retention policy) |
+| GET | `/subscriptions/discover` | Enumerate subscriptions visible to CloudGuardIQ in customer tenant |
+| GET | `/subscriptions/consent-url` | Build Azure AD admin-consent URL |
+| GET | `/subscriptions/consent-callback` | Record consent after Azure AD redirect |
+| GET | `/subscriptions/onboarding-template` | One-click Deploy-to-Azure URL |
+| GET | `/subscriptions/onboarding-parameters/{principal_id}` | Public ARM `deploymentParameters.json` |
+| POST | `/subscriptions/onboarding-sessions` | Start an Azure-only onboarding session |
+| GET | `/subscriptions/onboarding-sessions/{id}` | Read session status |
+| POST | `/subscriptions/onboarding-sessions/{id}/reader-granted` | Confirm RBAC grant |
+| POST | `/subscriptions/onboarding-sessions/{id}/discover` | Enumerate customer subscriptions |
+| POST | `/subscriptions/onboarding-sessions/{id}/connect` | Link selected subscriptions |
+| GET | `/onboarding/info` | CloudGuardIQ SP object id + manual `az` template |
+
+### Multi-cloud onboarding (V1)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/onboarding/sessions` | Create session (Azure / AWS / GCP) |
+| GET | `/v1/onboarding/sessions/{id}` | Read session |
+| POST | `/v1/onboarding/sessions/{id}/generate-artifacts` | Render provider-specific deploy artifacts |
+| POST | `/v1/onboarding/sessions/{id}/verify` | Run `token_exchange` + `permission_probe` + `scope_discovery` |
+| POST | `/v1/onboarding/sessions/{id}/connect` | Persist selected scopes |
+| GET | `/v1/cloud-connections` | List all cloud connections |
+| POST | `/v1/cloud-connections/{id}/refresh` | Re-verify connection |
+| DELETE | `/v1/cloud-connections/{id}` | Disconnect |
+
+### Billing
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/billing/status` | Current tier, Stripe customer, usage |
+| POST | `/billing/checkout` | Create a Stripe checkout session |
+| POST | `/billing/webhook` | Stripe webhook handler |
+
+### Compliance & posture
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/compliance/scorecard` | Per-framework scorecard |
+| GET | `/posture/score` | Aggregated posture score (0–100) |
 
 ---
 
-## License
+## 14. Security & Compliance
 
-Proprietary — All rights reserved.
+### 14.1 Authentication & authorization
+
+- **Zero shared secrets** between Azure services. All intra-Azure calls use
+  Managed Identity via `DefaultAzureCredential`.
+- **CI/CD** authenticates to Azure via **OIDC workload identity federation**.
+- **Frontend → Backend**: MSAL-issued Azure AD token, validated server-side
+  against Azure AD JWKS keys.
+- **Cross-tenant**: `CustomerCredentialFactory` issues per-tenant
+  `ClientCertificateCredential` (preferred) or `ClientSecretCredential` for
+  customer-tenant API calls. The secret/cert lives only in Key Vault.
+
+### 14.2 Tenant isolation
+
+- Every `ResourceSnapshot`, `FindingResult`, `RemediationCard`, scan result,
+  and subscription record carries `tenant_id`.
+- All Cosmos queries are filtered by `tenant_id` extracted from the caller's
+  validated JWT `tid` claim. **Cross-tenant reads are impossible** even with
+  guessed IDs.
+- `/scan`, `/findings`, and `/subscriptions/*` return `403 subscription_not_linked`
+  when a tenant requests data outside their scope.
+
+### 14.3 Data protection
+
+- **Cosmos DB**: serverless, RBAC-only (`local_authentication_disabled = true`),
+  encrypted at rest with Microsoft-managed keys (CMK supported via Key Vault).
+- **Azure OpenAI**: RBAC-only (`local_auth_enabled = false`), no prompts or
+  completions retained on Microsoft side beyond service-default windows.
+- **Secrets**: Key Vault for app secrets, GitHub OIDC for CI — no long-lived
+  credentials in pipelines or env vars.
+- **PII**: CloudGuardIQ does not collect end-user PII. Only Azure resource
+  metadata and the operator's Azure AD `oid` / `tid` / `email` are stored.
+
+### 14.4 OWASP Top 10 alignment
+
+- **A01 Broken Access Control** — tenant-scoped queries, JWT validation, RBAC
+- **A02 Cryptographic Failures** — TLS everywhere, RBAC-only data plane, no shared keys
+- **A03 Injection** — Pydantic v2 validation at every boundary, parameterized Cosmos queries
+- **A05 Security Misconfiguration** — Terraform-codified configuration, ruff/mypy gates
+- **A07 Identification & Auth Failures** — MSAL + Azure AD, JWKS validation, no password storage
+- **A09 Logging & Monitoring Failures** — App Insights tracing on every request + worker
+
+### 14.5 Compliance frameworks mapped
+
+CIS Microsoft Azure Foundations · CIS AWS Foundations · CIS GCP Foundations ·
+SOC 2 (Type II) · ISO/IEC 27001 · PCI-DSS v4.0 · NIST SP 800-53 · HIPAA.
+
+Each `FindingResult` carries `compliance_frameworks: list[str]`
+(e.g. `["CIS_3.1", "SOC2_CC6.1"]`) so auditors can pivot directly to controls.
+
+---
+
+## 15. Observability & Operations
+
+| Capability | Implementation |
+|------------|----------------|
+| Distributed tracing | Application Insights — API → Service Bus → Worker |
+| Structured logging | Python `logging` module (never `print()`) routed to Log Analytics |
+| Metrics | App Insights custom metrics: scan duration, AI tokens, quota hits, queue depth |
+| Health probes | `GET /health` (liveness) — wired into Container Apps probes |
+| Alerting | Azure Monitor alerts on 5xx rate, queue depth, AI quota saturation |
+| Audit log | Per-tenant `audit_events` Cosmos container (consent, RBAC, billing changes) |
+| Dashboards | App Insights workbooks (importable JSON in `docs/workbooks/`) |
+
+---
+
+## 16. Testing & Quality
+
+- **324 tests** across adapters, API, policy engine, AI remediation, pipeline,
+  healing, billing, onboarding, and tenant isolation.
+- **Minimum coverage: 80 %** (enforced in CI).
+- All external services (Azure SDK, OpenAI, Cosmos, Stripe) are **mocked** in
+  tests — no live network calls in the test suite.
+- **Strict typing**: mypy passes on `cloudguardiq/` with `disallow_untyped_defs`.
+- **Lint**: ruff with project-defined ruleset in [ruff.toml](ruff.toml).
+
+```bash
+# Full quality gate (mirrors CI)
+ruff check cloudguardiq/
+mypy cloudguardiq/
+python -m pytest tests/ -v --cov=cloudguardiq --cov-fail-under=80
+
+# Run a single suite
+python -m pytest tests/test_ai_remediation.py -v
+python -m pytest tests/adapters/ -k "azure"
+```
+
+---
+
+## 17. CI/CD
+
+GitHub Actions workflows in [`.github/workflows/`](.github/workflows/):
+
+| Workflow | File | Trigger | Purpose |
+|----------|------|---------|---------|
+| **CI — Lint / Type / Test** | `ci.yml` | `workflow_dispatch` | ruff + mypy + pytest (≥ 80 % cov) + `terraform validate / fmt` |
+| **Terraform Infrastructure** | `infra.yml` | `workflow_dispatch` (env, action) | OIDC login → init → fmt → validate → plan → apply |
+| **Deploy** | `deploy.yml` | `workflow_dispatch` (env) | Build & ship frontend (SWA), backend (ACR → Container App), and functions |
+
+All workflows authenticate to Azure via **OIDC workload identity federation** —
+no stored Azure credentials in GitHub.
+
+---
+
+## 18. Roadmap
+
+| Phase | Status | Highlights |
+|-------|--------|------------|
+| **Phase 1 — Azure CSPM + FinOps + AI** | ✅ Shipped | 52 rules, GPT-5.1 remediation, single-tenant |
+| **Phase 2 — Multi-tenant SaaS** | ✅ Shipped | Tenant isolation, Stripe billing, quota enforcement |
+| **Phase 3 — Cross-tenant onboarding** | ✅ Shipped | Consent wizard, customer-credential factory, auto-disable |
+| **Phase 4 — Multi-cloud (AWS / GCP)** | 🟡 In progress | AWS rule pack live, GCP early access, unified V1 onboarding |
+| **Phase 5 — Self-healing GA** | 🟡 In progress | Drift detector & contract monitor live; auto-repair gated to Enterprise |
+| **Phase 6 — SIEM / SOAR integrations** | ⏳ Planned | Splunk, Sentinel, ServiceNow, PagerDuty |
+| **Phase 7 — Custom policy SDK** | ⏳ Planned | Python + Rego DSL for customer-authored rules |
+
+See [docs/saas-phased-plan.md](docs/saas-phased-plan.md) and
+[docs/saas-decisions.md](docs/saas-decisions.md) for architectural decision
+records.
+
+---
+
+## 19. Support
+
+| Channel | Where | When |
+|---------|-------|------|
+| **Documentation** | [`docs/`](docs/) directory + `/docs` Swagger | Always |
+| **In-product help** | Settings → Help & Onboarding | All plans |
+| **Community support** | GitHub Discussions | Free / Starter |
+| **Email support** | support@cloudguardiq.com | Starter (24h SLO) |
+| **Priority support** | support@cloudguardiq.com + Slack Connect | Enterprise (4h SLO) |
+| **Security disclosures** | security@cloudguardiq.com (PGP key in `SECURITY.md`) | All plans |
+
+---
+
+## 20. License
+
+CloudGuardIQ is released under the **Apache License, Version 2.0** — an
+OSI-approved permissive open-source license that allows commercial use,
+modification, distribution, patent grant, and private use.
+
+```
+Copyright 2026 Sandip Patel and CloudGuardIQ contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
+
+The full license text is available in [LICENSE](LICENSE).
+
+### Author & original contribution
+
+CloudGuardIQ is the original work of **Sandip Patel**. The architecture,
+tiered data-source strategy, cross-tenant onboarding model, GPT-5.1
+structured-output remediation pipeline, multi-cloud rule packs, and
+quota-aware SaaS billing layer are independent contributions authored
+for this project.
+
+### Contributing
+
+Contributions are welcome under the Apache 2.0 license. By submitting a pull
+request you agree that your contribution is licensed under the same terms.
+See [CONTRIBUTING.md](CONTRIBUTING.md) when present, or open an issue to
+discuss substantial changes first.
+
+### Trademarks
+
+"CloudGuardIQ" and the CloudGuardIQ logo are trademarks of the author.
+The Apache 2.0 license grants rights to the source code but does not grant
+permission to use these trademarks. "Azure", "AWS", "GCP", "Microsoft",
+and other product names are trademarks of their respective owners.
+
+---
+
+<div align="center">
+
+**CloudGuardIQ** · Built on Azure · Powered by GPT-5.1 · Open source under Apache 2.0
+
+</div>
