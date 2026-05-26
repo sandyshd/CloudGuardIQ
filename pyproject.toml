@@ -55,3 +55,6 @@ testpaths = ["tests"]
 where = ["."]
 include = ["cloudguardiq*"]
 
+[tool.setuptools.package-data]
+"cloudguardiq.api.templates" = ["*.json"]
+

@@ -360,7 +360,9 @@ cloudguardiq/
 ├── infra/                           # Terraform IaC
 │   ├── main.tf                      # All Azure resources + RBAC
 │   ├── variables.tf  outputs.tf
-│   └── templates/                   # cloudguardiq-reader.json (Deploy-to-Azure ARM)
+├── cloudguardiq/api/templates/      # cloudguardiq-reader.json (Deploy-to-Azure ARM,
+│                                    #   bundled into the wheel and served anonymously
+│                                    #   by GET /subscriptions/onboarding-template.json)
 ├── tests/                           # 324 pytest tests, 80%+ coverage
 ├── scripts/                         # Operational scripts (audit, backfill)
 ├── docs/                            # Design docs (multicloud-onboarding, SaaS plan)
@@ -654,8 +656,8 @@ Variables prefixed `CLOUDGUARDIQ_` are loaded by **pydantic-settings**.
 | `CLOUDGUARDIQ_AZURE_CLIENT_SECRET` | Cross-tenant | Secret for `CustomerCredentialFactory` |
 | `CLOUDGUARDIQ_AZURE_CERTIFICATE_PATH` | Cross-tenant | PFX/PEM cert (preferred over secret) |
 | `CLOUDGUARDIQ_CONSENT_REDIRECT_URI` | Cross-tenant | Reply URL for admin-consent callback |
-| `CLOUDGUARDIQ_PUBLIC_API_BASE_URL` | No | Public API URL — enables ARM `parameters_uri` prefill |
-| `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI` | No | Public URL of `infra/templates/cloudguardiq-reader.json` |
+| `CLOUDGUARDIQ_PUBLIC_API_BASE_URL` | No | Public API URL — enables ARM `parameters_uri` prefill and the bundled `onboarding-template.json` route |
+| `CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI` | No | Override the ARM template URL. When empty, the API serves the template it ships with at `{CLOUDGUARDIQ_PUBLIC_API_BASE_URL}/subscriptions/onboarding-template.json` so the GitHub repo can stay private |
 
 #### Cosmos container overrides
 

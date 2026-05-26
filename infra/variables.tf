@@ -101,7 +101,7 @@ variable "consent_redirect_uris" {
 }
 
 variable "onboarding_template_uri" {
-  description = "Public HTTPS URL hosting infra/templates/cloudguardiq-reader.json. Used to build the Azure Portal Deploy-to-Azure link in the simpler one-click onboarding flow. Empty disables the button (falls back to az CLI command)."
+  description = "Optional override for the ARM template URL used by the Azure Portal Deploy-to-Azure one-click onboarding link. When empty, the API serves its bundled copy of cloudguardiq-reader.json anonymously at {public_api_base_url}/subscriptions/onboarding-template.json -- so the GitHub repo can stay private. Set this only if you want to host the template on a CDN/Storage Account instead."
   type        = string
   default     = ""
 }
