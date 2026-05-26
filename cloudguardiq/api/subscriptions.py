@@ -990,9 +990,15 @@ def _normalize_template_uri(uri: str) -> str:
     """
     if not uri:
         return uri
-    m = _GITHUB_BLOB_RE.match(uri.strip())
+    # Strip surrounding whitespace and any wrapping quote/backtick characters.
+    # A common misconfiguration is setting the env var or CI secret to
+    # ``'https://.../template.json'`` (with literal quotes), which gets
+    # URL-encoded to a trailing ``%27`` in the Deploy-to-Azure link and makes
+    # the Portal fail with "error downloading the template".
+    cleaned = uri.strip().strip("'\"`").strip()
+    m = _GITHUB_BLOB_RE.match(cleaned)
     if not m:
-        return uri
+        return cleaned
     owner, repo, ref, path = m.groups()
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
 

@@ -341,6 +341,20 @@ def test_normalize_template_uri_empty() -> None:
     assert _normalize_template_uri("") == ""
 
 
+def test_normalize_template_uri_strips_wrapping_quotes() -> None:
+    """Wrapping quotes/whitespace (a common misconfiguration in CI secrets or
+    .env files like ``ONBOARDING_TEMPLATE_URI='https://.../json'``) must be
+    stripped so the Portal Deploy-to-Azure link does not end with a trailing
+    URL-encoded ``%27`` and fail to download the template."""
+    from cloudguardiq.api.subscriptions import _normalize_template_uri
+    raw = "https://raw.githubusercontent.com/sandyshd/CloudGuardIQ/development/infra/templates/cloudguardiq-reader.json"
+    assert _normalize_template_uri(f"'{raw}'") == raw
+    assert _normalize_template_uri(f'"{raw}"') == raw
+    assert _normalize_template_uri(f"  {raw}\n") == raw
+    blob = "https://github.com/sandyshd/CloudGuardIQ/blob/development/infra/templates/cloudguardiq-reader.json"
+    assert _normalize_template_uri(f"'{blob}'") == raw
+
+
 def test_build_deploy_url_uses_normalized_uri_via_get_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
