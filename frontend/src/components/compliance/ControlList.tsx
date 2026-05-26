@@ -53,10 +53,17 @@ export function ControlList({
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase();
+    // ``framework`` may be a granular tag (``SOC2_CC6.1``) coming from the
+    // dropdown, or a family id (``SOC2``, ``CIS``, ``ISO_27001`` …) coming
+    // from a click on a row in FrameworkPosture. Match on equality OR on
+    // ``<family>_`` prefix so both selection sources filter correctly.
+    const matchesFramework = (tags: string[]): boolean => {
+      if (!framework) return true;
+      const prefix = `${framework}_`;
+      return tags.some((fw) => fw === framework || fw.startsWith(prefix));
+    };
     return compliance
-      .filter((f) =>
-        framework ? f.compliance_frameworks.includes(framework) : true,
-      )
+      .filter((f) => matchesFramework(f.compliance_frameworks))
       .filter((f) => (severity === "ALL" ? true : f.severity === severity))
       .filter((f) => {
         if (!term) return true;
