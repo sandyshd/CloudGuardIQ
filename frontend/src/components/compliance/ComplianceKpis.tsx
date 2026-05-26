@@ -22,7 +22,13 @@ function computeScore(findings: FindingResult[]): number {
 
 export function ComplianceKpis({ findings, scorecard }: ComplianceKpisProps) {
   const stats = useMemo(() => {
-    const compliance = findings.filter((f) => f.compliance_frameworks.length > 0);
+    // Match the backend definition of "open" (status === OPEN) so the
+    // KPI strip reconciles with the scorecard's per-framework counts
+    // and the "Failed controls" table below. Findings with no framework
+    // tags are excluded -- this page is about framework posture.
+    const compliance = findings.filter(
+      (f) => f.compliance_frameworks.length > 0 && f.status === "OPEN",
+    );
     const frameworks = new Set<string>();
     compliance.forEach((f) =>
       f.compliance_frameworks.forEach((fw) => frameworks.add(fw)),

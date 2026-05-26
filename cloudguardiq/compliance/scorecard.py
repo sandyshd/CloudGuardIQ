@@ -224,6 +224,11 @@ class FrameworkScore(BaseModel):
     framework_id: str
     label: str
     short_label: str
+    # Tag prefixes the backend uses to route a finding's
+    # ``compliance_frameworks`` tag to this row (e.g. ``CIS_AZURE``'s
+    # prefixes are ``("CIS_",)``). Shipped so the frontend can filter
+    # findings by family without duplicating the prefix table.
+    prefixes: tuple[str, ...] = ()
     controls_total: int
     controls_failed: int
     controls_passed: int
@@ -294,6 +299,7 @@ def compute_scorecard(
                 framework_id=fw.id,
                 label=fw.label,
                 short_label=fw.short_label,
+                prefixes=fw.prefixes,
                 controls_total=total,
                 controls_failed=failed,
                 controls_passed=passed,

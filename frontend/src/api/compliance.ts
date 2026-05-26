@@ -11,6 +11,9 @@ export interface FrameworkScore {
   framework_id: string;
   label: string;
   short_label: string;
+  /** Tag prefixes used by the backend to route findings to this row.
+   * Used to filter findings client-side without duplicating the table. */
+  prefixes?: string[];
   controls_total: number;
   controls_failed: number;
   controls_passed: number;

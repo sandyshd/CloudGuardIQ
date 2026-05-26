@@ -81,6 +81,7 @@ export function Compliance() {
         framework={framework}
         onFrameworkChange={setFramework}
         onSelect={setSelected}
+        scorecard={scorecard}
       />
 
       <ReportHistory />
