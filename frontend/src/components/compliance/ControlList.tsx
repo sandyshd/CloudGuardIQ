@@ -69,15 +69,22 @@ export function ControlList({
     // ``framework`` may be a granular tag (``SOC2_CC6.1``) from the
     // dropdown, or a family id (``CIS_AZURE``, ``NIST_800_53`` …) from a
     // row click. Resolve via the scorecard's authoritative prefix list
-    // when available, falling back to equality / ``<id>_`` prefix so the
-    // dropdown still works without the scorecard.
+    // when available. The static fallback below keeps filtering correct
+    // even before the API redeploys with the ``prefixes`` field.
+    const FALLBACK_PREFIXES: Record<string, string[]> = {
+      CIS_AZURE: ["CIS_"],
+      NIST_800_53: ["NIST_"],
+      ISO_27001: ["ISO_27001_", "ISO27001_", "ISO_"],
+      PCI_DSS: ["PCI_DSS_", "PCI_", "PCIDSS_"],
+      SOC2: ["SOC2_", "SOC_2_"],
+    };
     const matchesFramework = (tags: string[]): boolean => {
       if (!framework) return true;
       const row = scorecard?.find((r) => r.framework_id === framework);
       const prefixes =
         row?.prefixes && row.prefixes.length > 0
           ? row.prefixes
-          : [`${framework}_`];
+          : (FALLBACK_PREFIXES[framework] ?? [`${framework}_`]);
       return tags.some(
         (fw) =>
           fw === framework || prefixes.some((p) => fw.startsWith(p)),
