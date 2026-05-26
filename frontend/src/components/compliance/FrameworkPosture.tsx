@@ -353,8 +353,11 @@ export function FrameworkPosture({
                         <span className="truncate font-medium text-[hsl(var(--foreground))]">
                           {fw.short_label}
                         </span>
-                        <span className="truncate text-[11px] text-[hsl(var(--muted-foreground))]">
-                          · {fw.controls_passed}/{fw.controls_total}
+                        <span
+                          className="truncate text-[11px] text-[hsl(var(--muted-foreground))]"
+                          title="Controls passing / controls evaluated by CloudGuardIQ's rule registry for this framework."
+                        >
+                          · {fw.controls_passed}/{fw.controls_total} controls passing
                         </span>
                       </div>
                       <div
