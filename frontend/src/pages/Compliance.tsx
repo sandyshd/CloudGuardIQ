@@ -4,7 +4,6 @@ import { useComplianceScorecard } from "../hooks/useComplianceScorecard";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { ComplianceKpis } from "../components/compliance/ComplianceKpis";
 import { FrameworkPosture } from "../components/compliance/FrameworkPosture";
-import { FrameworkScorecard } from "../components/compliance/FrameworkScorecard";
 import { ControlList } from "../components/compliance/ControlList";
 import { ReportHistory } from "../components/compliance/ReportHistory";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
@@ -70,10 +69,9 @@ export function Compliance() {
 
       <ComplianceKpis findings={findings} scorecard={scorecard} />
 
-      <FrameworkPosture scorecard={scorecard} loading={scorecardLoading} />
-
-      <FrameworkScorecard
-        findings={findings}
+      <FrameworkPosture
+        scorecard={scorecard}
+        loading={scorecardLoading}
         selected={framework}
         onSelect={setFramework}
       />

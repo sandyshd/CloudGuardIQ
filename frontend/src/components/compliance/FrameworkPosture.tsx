@@ -5,6 +5,11 @@ import type { FrameworkScore } from "../../api/compliance";
 interface FrameworkPostureProps {
   scorecard: FrameworkScore[];
   loading: boolean;
+  /** Currently selected framework_id (e.g. ``CIS_1.5``). When provided, the
+   * matching row is highlighted and clicking a row toggles the filter. */
+  selected?: string | null;
+  /** Called with the framework_id to select, or ``null`` to clear. */
+  onSelect?: (frameworkId: string | null) => void;
 }
 
 type SortKey = "score" | "failing" | "label";
@@ -76,7 +81,12 @@ const BUCKET_COLOR: Record<ReturnType<typeof statusBucket>, string> = {
  * screen while surfacing more information per framework (severity mix,
  * family aggregation) than the old layout.
  */
-export function FrameworkPosture({ scorecard, loading }: FrameworkPostureProps) {
+export function FrameworkPosture({
+  scorecard,
+  loading,
+  selected = null,
+  onSelect,
+}: FrameworkPostureProps) {
   const [activeFamily, setActiveFamily] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("score");
@@ -147,6 +157,15 @@ export function FrameworkPosture({ scorecard, loading }: FrameworkPostureProps) 
           Frameworks · controls passing
         </h2>
         <div className="flex items-center gap-2 text-[11px] text-[hsl(var(--muted-foreground))]">
+          {selected && onSelect && (
+            <button
+              type="button"
+              onClick={() => onSelect(null)}
+              className="rounded-full border border-[hsl(var(--border))] px-2 py-0.5 hover:bg-[hsl(var(--muted))]"
+            >
+              Clear: {selected}
+            </button>
+          )}
           {activeFamily && (
             <button
               type="button"
@@ -274,10 +293,39 @@ export function FrameworkPosture({ scorecard, loading }: FrameworkPostureProps) 
                 const color = scoreColor(fw.score, evaluated);
                 const pct = evaluated ? Math.max(2, fw.score) : 0;
                 const sb = fw.severity_breakdown;
+                const isSelected = selected === fw.framework_id;
+                const clickable = !!onSelect;
                 return (
                   <li
                     key={fw.framework_id}
-                    className="grid grid-cols-[1fr_120px_120px_70px] items-center gap-3 px-3 py-2 text-[12px]"
+                    onClick={
+                      clickable
+                        ? () =>
+                            onSelect!(isSelected ? null : fw.framework_id)
+                        : undefined
+                    }
+                    role={clickable ? "button" : undefined}
+                    tabIndex={clickable ? 0 : undefined}
+                    onKeyDown={
+                      clickable
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onSelect!(isSelected ? null : fw.framework_id);
+                            }
+                          }
+                        : undefined
+                    }
+                    aria-pressed={clickable ? isSelected : undefined}
+                    className={`grid grid-cols-[1fr_120px_120px_70px] items-center gap-3 px-3 py-2 text-[12px] ${
+                      clickable
+                        ? "cursor-pointer hover:bg-[hsl(var(--muted))]/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]/40"
+                        : ""
+                    } ${
+                      isSelected
+                        ? "bg-[hsl(var(--ring))]/10 ring-1 ring-inset ring-[hsl(var(--ring))]/40"
+                        : ""
+                    }`}
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
