@@ -20,6 +20,8 @@ export interface OnboardingSessionCreateRequestV1 {
 export interface VerificationCheck {
   check: string;
   status: string;
+  /** Optional human-readable explanation surfaced when status !== "pass". */
+  message?: string | null;
 }
 
 export interface DiscoveredScope {

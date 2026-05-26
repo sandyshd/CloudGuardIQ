@@ -79,6 +79,10 @@ class VerificationCheck(BaseModel):
 
     check: str
     status: str
+    # Optional human-readable explanation surfaced to the operator when a
+    # check produces a non-``pass`` outcome (e.g. ``warn`` because scope
+    # discovery succeeded but returned zero subscriptions).
+    message: str | None = None
 
 
 class DiscoveredScope(BaseModel):
@@ -1041,8 +1045,39 @@ async def verify_onboarding_session_v1(
     checks = [
         VerificationCheck(check="token_exchange", status="pass"),
         VerificationCheck(check="permission_probe", status="pass"),
-        VerificationCheck(check="scope_discovery", status="pass"),
     ]
+    # ``discover_onboarding_session_subscriptions`` only returns subscriptions
+    # the app principal can actually read AND that are not already linked to
+    # this customer. An empty list therefore means one of:
+    #   - the Reader RBAC assignment hasn't propagated yet (typical: <2 min)
+    #   - admin consent was granted but no Reader role was assigned anywhere
+    #   - the customer's only subscription(s) are already linked
+    # In all three cases ``scope_discovery`` is technically a successful API
+    # call, but surfacing it as PASS is misleading because there's nothing
+    # for the operator to connect.
+    if not legacy.discovered_subscription_ids:
+        checks.append(
+            VerificationCheck(
+                check="scope_discovery",
+                status="warn",
+                message=(
+                    "Authentication succeeded but no new subscriptions were "
+                    "returned. Most common causes: (1) the CloudGuardIQ "
+                    "enterprise application has no Reader (or higher) role "
+                    "assigned on any subscription yet -- assign one and "
+                    "wait ~2 minutes for Azure RBAC to propagate; (2) you "
+                    "are linking an additional subscription and the "
+                    "onboarding ARM template was only deployed at the "
+                    "first subscription's scope -- re-run the Deploy step "
+                    "(Step 2) targeting the new subscription, or assign "
+                    "Reader to the app on it manually; (3) every "
+                    "subscription in this tenant is already linked, in "
+                    "which case there is nothing further to connect."
+                ),
+            )
+        )
+    else:
+        checks.append(VerificationCheck(check="scope_discovery", status="pass"))
     await _append_audit_event(
         user=user,
         action="session_verified",

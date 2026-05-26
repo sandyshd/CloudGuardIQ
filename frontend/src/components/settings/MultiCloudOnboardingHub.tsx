@@ -538,11 +538,18 @@ export function MultiCloudOnboardingHub(): JSX.Element {
           kind: "success",
           message: "Verification passed. Select the scopes you want CloudGuardIQ to monitor.",
         });
-      } else if (allPassed) {
+      } else if (updated.discovered_scopes.length === 0) {
+        // Covers both ``all pass but 0 scopes`` and ``scope_discovery=warn``
+        // emitted by the API when discovery returned an empty list. The
+        // warn chip carries the full diagnostic; this banner gives the
+        // top-line remediation including the "adding another subscription
+        // later" path, which is easy to miss because the ARM template
+        // only grants Reader at the subscription scope it was deployed
+        // to.
         setNotice({
           kind: "info",
           message:
-            "Verification passed but no scopes were discovered yet. Check your trust setup and re-run Verify.",
+            "No new subscriptions were returned. If you are linking an additional subscription, go back to Step 2 and re-deploy the ARM template targeting the new subscription (or assign the CloudGuardIQ enterprise application the Reader role on it). Wait ~2 minutes for Azure RBAC to propagate, then re-run Verify.",
         });
       } else {
         setNotice({
@@ -923,6 +930,11 @@ export function MultiCloudOnboardingHub(): JSX.Element {
                       >
                         {check.status}
                       </Badge>
+                      {check.message && (
+                        <p className="mt-2 text-xs leading-snug text-[hsl(var(--muted-foreground))]">
+                          {check.message}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
