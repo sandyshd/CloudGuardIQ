@@ -105,7 +105,17 @@ export function FrameworkPosture({
         const evaluated = items.filter((i) => i.controls_total > 0);
         const totalCtrls = evaluated.reduce((a, b) => a + b.controls_total, 0);
         const passedCtrls = evaluated.reduce((a, b) => a + b.controls_passed, 0);
-        const aggScore = totalCtrls > 0 ? Math.round((passedCtrls / totalCtrls) * 100) : 0;
+        // When a family contains a single evaluated framework, reuse the
+        // backend's authoritative score so the tile and the row agree
+        // bit-for-bit. Re-computing here with ``Math.round`` would diverge
+        // on exact half-values (Python uses banker's rounding, JS does
+        // round-half-up), e.g. 5/8 -> 62 (backend) vs 63 (frontend).
+        const aggScore =
+          totalCtrls === 0
+            ? 0
+            : evaluated.length === 1
+              ? evaluated[0].score
+              : Math.round((passedCtrls / totalCtrls) * 100);
         const open = items.reduce((a, b) => a + b.open_findings, 0);
         return { name, items, aggScore, open, evaluatedCount: evaluated.length, totalCtrls };
       })
