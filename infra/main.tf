@@ -727,7 +727,7 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     # pre-populate cloudGuardIQPrincipalId, and (b) when CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI
     # is empty, auto-route the Portal at the bundled
     # /subscriptions/onboarding-template.json route so the GitHub repo can stay private.
-    CLOUDGUARDIQ_PUBLIC_API_BASE_URL   = "https://${azurerm_linux_function_app.cloudguardiq.default_hostname}"
+    CLOUDGUARDIQ_PUBLIC_API_BASE_URL   = "https://${var.prefix}-${var.environment}-func.azurewebsites.net"
     CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS = "10"
     # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID = home-tenant SP object id of the
     # CloudGuardIQ multi-tenant app registration (NOT the function app's MI).
