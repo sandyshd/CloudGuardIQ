@@ -722,7 +722,13 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     CLOUDGUARDIQ_AZURE_CLIENT_SECRET                  = azuread_application_password.cloudguardiq.value
     CLOUDGUARDIQ_CONSENT_REDIRECT_URI                 = "https://${azurerm_static_web_app.frontend.default_host_name}/settings?consent=callback"
     CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI              = var.onboarding_template_uri
-    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS                = "10"
+    # Public base URL of this Function App. Used by /subscriptions/onboarding-template
+    # to (a) emit a parameters_uri the Azure Portal Deploy-to-Azure blade fetches to
+    # pre-populate cloudGuardIQPrincipalId, and (b) when CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI
+    # is empty, auto-route the Portal at the bundled
+    # /subscriptions/onboarding-template.json route so the GitHub repo can stay private.
+    CLOUDGUARDIQ_PUBLIC_API_BASE_URL   = "https://${azurerm_linux_function_app.cloudguardiq.default_hostname}"
+    CLOUDGUARDIQ_PRO_MAX_SUBSCRIPTIONS = "10"
     # CLOUDGUARDIQ_AZURE_PRINCIPAL_ID = home-tenant SP object id of the
     # CloudGuardIQ multi-tenant app registration (NOT the function app's MI).
     CLOUDGUARDIQ_AZURE_PRINCIPAL_ID      = azuread_service_principal.cloudguardiq.object_id
