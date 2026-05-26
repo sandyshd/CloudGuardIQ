@@ -131,7 +131,7 @@ export function Sidebar() {
             <img
               src="/brand/cloudguardiq-primary-dark.svg"
               alt="CloudGuardIQ"
-              className="h-8 w-auto select-none"
+              className="h-12 w-auto select-none"
               draggable={false}
             />
           )}
