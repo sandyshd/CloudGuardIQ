@@ -251,8 +251,9 @@ export function FrameworkPosture({ scorecard, loading }: FrameworkPostureProps) 
               type="button"
               className="hidden text-left hover:text-[hsl(var(--foreground))] sm:block"
               onClick={() => toggleSort("failing")}
+              title="Findings in this framework only. A finding cross-mapped to multiple frameworks is counted in each — so this column can sum higher than the 'Open findings' KPI above, which deduplicates."
             >
-              Open findings {sortKey === "failing" ? (sortAsc ? "↑" : "↓") : ""}
+              In this framework {sortKey === "failing" ? (sortAsc ? "↑" : "↓") : ""}
             </button>
             <button
               type="button"
@@ -355,8 +356,11 @@ export function FrameworkPosture({ scorecard, loading }: FrameworkPostureProps) 
                         </span>
                       )}
                     </div>
-                    <div className="hidden text-[11px] tabular-nums text-[hsl(var(--muted-foreground))] sm:block">
-                      {fw.open_findings} open
+                    <div
+                      className="hidden text-[11px] tabular-nums text-[hsl(var(--muted-foreground))] sm:block"
+                      title="Findings tagged to this framework (cross-mapped findings appear in multiple rows)."
+                    >
+                      {fw.open_findings} in framework
                     </div>
                     <div
                       className="text-right text-sm font-semibold tabular-nums"

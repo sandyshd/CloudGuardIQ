@@ -1,10 +1,15 @@
 import { useMemo } from "react";
-import { ShieldCheck, ShieldAlert, AlertOctagon, ListChecks } from "lucide-react";
+import { ShieldCheck, ShieldAlert, AlertOctagon, ListChecks, ListX } from "lucide-react";
 import { StatCard } from "../common/StatCard";
 import type { FindingResult } from "../../types";
+import type { FrameworkScore } from "../../api/compliance";
 
 interface ComplianceKpisProps {
   findings: FindingResult[];
+  /** Optional scorecard from /compliance/scorecard. When provided, surfaces a
+   * deduplicated "Failing controls" tile (sum of unique rule ids that failed
+   * across the evaluated framework set). */
+  scorecard?: FrameworkScore[];
 }
 
 function computeScore(findings: FindingResult[]): number {
@@ -15,7 +20,7 @@ function computeScore(findings: FindingResult[]): number {
   return Math.round(((findings.length - failing) / findings.length) * 100);
 }
 
-export function ComplianceKpis({ findings }: ComplianceKpisProps) {
+export function ComplianceKpis({ findings, scorecard }: ComplianceKpisProps) {
   const stats = useMemo(() => {
     const compliance = findings.filter((f) => f.compliance_frameworks.length > 0);
     const frameworks = new Set<string>();
@@ -24,13 +29,22 @@ export function ComplianceKpis({ findings }: ComplianceKpisProps) {
     );
     const critical = compliance.filter((f) => f.severity === "CRITICAL").length;
     const high = compliance.filter((f) => f.severity === "HIGH").length;
+    // ``controls_failed`` is per framework, so the same backing rule (and
+    // therefore the same finding) appears in every framework it is mapped
+    // to. We surface the raw sum because each row in the list below uses
+    // the same convention -- the tile and the row totals reconcile.
+    const failingControls = (scorecard ?? []).reduce(
+      (acc, fw) => acc + fw.controls_failed,
+      0,
+    );
     return {
       score: computeScore(compliance),
       frameworks: frameworks.size,
       open: compliance.length,
       criticalHigh: critical + high,
+      failingControls,
     };
-  }, [findings]);
+  }, [findings, scorecard]);
 
   const scoreTone =
     stats.score >= 90
@@ -39,8 +53,14 @@ export function ComplianceKpis({ findings }: ComplianceKpisProps) {
         ? "warning"
         : "danger";
 
+  const showFailingControlsTile = (scorecard ?? []).length > 0;
+
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+    <div
+      className={`grid gap-4 md:grid-cols-2 ${
+        showFailingControlsTile ? "lg:grid-cols-5" : "lg:grid-cols-4"
+      }`}
+    >
       <StatCard
         label="Compliance score"
         value={`${stats.score}%`}
@@ -66,14 +86,29 @@ export function ComplianceKpis({ findings }: ComplianceKpisProps) {
         tone="brand"
       />
       <StatCard
-        label="Open controls"
+        label="Open findings"
         value={stats.open}
         hint={
-          stats.open === 0 ? "Nothing failing" : "Failing across frameworks"
+          stats.open === 0
+            ? "Nothing failing"
+            : "Unique findings · counted once across frameworks"
         }
         icon={<ShieldAlert className="h-4 w-4" />}
         tone={stats.open === 0 ? "success" : "warning"}
       />
+      {showFailingControlsTile && (
+        <StatCard
+          label="Failing controls"
+          value={stats.failingControls}
+          hint={
+            stats.failingControls === 0
+              ? "All evaluated controls passing"
+              : "Sum across frameworks · cross-mapped controls counted in each"
+          }
+          icon={<ListX className="h-4 w-4" />}
+          tone={stats.failingControls > 0 ? "warning" : "success"}
+        />
+      )}
       <StatCard
         label="Critical / High"
         value={stats.criticalHigh}
@@ -88,3 +123,4 @@ export function ComplianceKpis({ findings }: ComplianceKpisProps) {
     </div>
   );
 }
+

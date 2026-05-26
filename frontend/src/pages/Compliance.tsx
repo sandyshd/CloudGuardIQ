@@ -68,7 +68,7 @@ export function Compliance() {
     <div className="space-y-6">
       <PageHeader title="Compliance" subtitle={subtitle} />
 
-      <ComplianceKpis findings={findings} />
+      <ComplianceKpis findings={findings} scorecard={scorecard} />
 
       <FrameworkPosture scorecard={scorecard} loading={scorecardLoading} />
 
