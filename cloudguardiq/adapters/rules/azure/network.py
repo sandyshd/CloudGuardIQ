@@ -130,7 +130,12 @@ class SSHOpenToInternetRule(PolicyRule):
     rule_name: str = "SSH port 22 open to internet"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_6.1", "NIST_AC-17"]
+    compliance_frameworks: list[str] = [
+        "CIS_6.1",
+        "NIST_AC-17",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if any inbound rule allows port 22 from the internet."""
@@ -160,7 +165,11 @@ class RDPOpenToInternetRule(PolicyRule):
     rule_name: str = "RDP port 3389 open to internet"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_6.2"]
+    compliance_frameworks: list[str] = [
+        "CIS_6.2",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if any inbound rule allows port 3389 from the internet."""
@@ -190,7 +199,11 @@ class AnyPortOpenToInternetRule(PolicyRule):
     rule_name: str = "Any port open to internet"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_6.3"]
+    compliance_frameworks: list[str] = [
+        "CIS_6.3",
+        "ISO_27001_A.8.22",
+        "PCI_DSS_1.3.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if any inbound allow rule has destination port '*'."""
@@ -220,7 +233,12 @@ class NSGFlowLogsRule(PolicyRule):
     rule_name: str = "NSG flow logs not enabled"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_6.5", "SOC2_CC7.1"]
+    compliance_frameworks: list[str] = [
+        "CIS_6.5",
+        "SOC2_CC7.1",
+        "ISO_27001_A.8.16",
+        "PCI_DSS_10.2.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if ``flow_logs_enabled`` is not True."""
@@ -250,7 +268,11 @@ class InboundAllowAllRule(PolicyRule):
     rule_name: str = "Inbound allow-all rule exists"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_6.4"]
+    compliance_frameworks: list[str] = [
+        "CIS_6.4",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.2.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if any rule allows all ports from all sources inbound."""
@@ -280,7 +302,11 @@ class DDoSProtectionRule(PolicyRule):
     rule_name: str = "No DDoS protection on VNet"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["NIST_SC-5"]
+    compliance_frameworks: list[str] = [
+        "NIST_SC-5",
+        "ISO_27001_A.8.21",
+        "PCI_DSS_1.2.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if DDoS protection is disabled on an internet-facing VNet."""

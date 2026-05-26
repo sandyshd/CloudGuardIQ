@@ -15,7 +15,12 @@ class InstancePublicIpRule(PolicyRule):
     resource_types: list[str] = ["google.compute.Instance"]
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_GCP_4.9", "NIST_SC-7"]
+    compliance_frameworks: list[str] = [
+        "CIS_GCP_4.9",
+        "NIST_SC-7",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding when the VM has at least one external IP."""
@@ -55,6 +60,8 @@ class DiskCmekEncryptionRule(PolicyRule):
         "CIS_GCP_4.7",
         "NIST_SC-28",
         "SOC2_CC6.1",
+        "ISO_27001_A.8.24",
+        "PCI_DSS_3.5.1",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:

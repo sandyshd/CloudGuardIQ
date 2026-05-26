@@ -16,7 +16,12 @@ class ServiceAccountUserManagedKeyRule(PolicyRule):
     resource_types: list[str] = ["google.iam.ServiceAccount"]
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_GCP_1.4", "NIST_IA-5"]
+    compliance_frameworks: list[str] = [
+        "CIS_GCP_1.4",
+        "NIST_IA-5",
+        "ISO_27001_A.5.17",
+        "PCI_DSS_8.3.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding when ``user_managed_keys > 0``."""

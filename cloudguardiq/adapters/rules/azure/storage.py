@@ -83,7 +83,13 @@ class PublicBlobAccessRule(PolicyRule):
     rule_name: str = "Public blob access enabled"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_3.1", "SOC2_CC6.1", "NIST_SC-8"]
+    compliance_frameworks: list[str] = [
+        "CIS_3.1",
+        "SOC2_CC6.1",
+        "NIST_SC-8",
+        "ISO_27001_A.8.24",
+        "PCI_DSS_4.2.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if ``allow_blob_public_access`` is True."""
@@ -111,7 +117,11 @@ class HttpTrafficAllowedRule(PolicyRule):
     rule_name: str = "HTTP traffic allowed (not HTTPS-only)"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_3.2"]
+    compliance_frameworks: list[str] = [
+        "CIS_3.2",
+        "ISO_27001_A.8.24",
+        "PCI_DSS_3.5.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if ``enable_https_traffic_only`` is False."""
@@ -139,7 +149,11 @@ class MinTlsVersionRule(PolicyRule):
     rule_name: str = "Minimum TLS version below 1.2"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_3.3", "PCI_DSS_6.5.4"]
+    compliance_frameworks: list[str] = [
+        "CIS_3.3",
+        "PCI_DSS_6.5.4",
+        "ISO_27001_A.8.24",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if ``minimum_tls_version`` is TLS1_0 or TLS1_1."""
@@ -168,7 +182,11 @@ class SharedKeyAuthRule(PolicyRule):
     rule_name: str = "Shared key authentication enabled"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_3.4"]
+    compliance_frameworks: list[str] = [
+        "CIS_3.4",
+        "ISO_27001_A.8.24",
+        "PCI_DSS_3.7.4",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if ``allow_shared_key_access`` is not False."""
@@ -200,7 +218,12 @@ class NetworkDefaultActionRule(PolicyRule):
     rule_name: str = "Network default action not Deny"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_3.5", "NIST_SC-7"]
+    compliance_frameworks: list[str] = [
+        "CIS_3.5",
+        "NIST_SC-7",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if ``network_default_action`` is not 'Deny'."""
@@ -229,7 +252,11 @@ class BlobSoftDeleteRule(PolicyRule):
     rule_name: str = "Soft delete not enabled for blobs"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_3.8"]
+    compliance_frameworks: list[str] = [
+        "CIS_3.8",
+        "ISO_27001_A.8.24",
+        "PCI_DSS_3.6.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if ``blob_soft_delete_enabled`` is not True."""
@@ -261,7 +288,11 @@ class BlobVersioningRule(PolicyRule):
     rule_name: str = "Blob versioning not enabled"
     severity: Severity = Severity.LOW
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_3.9"]
+    compliance_frameworks: list[str] = [
+        "CIS_3.9",
+        "ISO_27001_A.8.15",
+        "PCI_DSS_10.2.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if ``blob_versioning_enabled`` is not True."""
@@ -293,7 +324,10 @@ class InfrastructureEncryptionRule(PolicyRule):
     rule_name: str = "Infrastructure encryption not enabled"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_3.10"]
+    compliance_frameworks: list[str] = [
+        "CIS_3.10",
+        "ISO_27001_A.8.13",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if ``infrastructure_encryption_enabled`` is not True."""
@@ -325,7 +359,12 @@ class DiagnosticLoggingRule(PolicyRule):
     rule_name: str = "No diagnostic logging configured"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["SOC2_CC7.2", "NIST_AU-2"]
+    compliance_frameworks: list[str] = [
+        "SOC2_CC7.2",
+        "NIST_AU-2",
+        "ISO_27001_A.8.15",
+        "PCI_DSS_10.2.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if ``diagnostic_logging_enabled`` is not True."""

@@ -88,7 +88,12 @@ class OSDiskEncryptionRule(PolicyRule):
     rule_name: str = "OS disk encryption not enabled"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_7.2", "NIST_SC-28"]
+    compliance_frameworks: list[str] = [
+        "CIS_7.2",
+        "NIST_SC-28",
+        "ISO_27001_A.8.24",
+        "PCI_DSS_3.5.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if OS disk encryption is disabled."""
@@ -120,7 +125,11 @@ class UnmanagedDiskRule(PolicyRule):
     rule_name: str = "Unmanaged disk in use"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_7.1"]
+    compliance_frameworks: list[str] = [
+        "CIS_7.1",
+        "ISO_27001_A.8.9",
+        "PCI_DSS_2.2.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if unmanaged (VHD) disks are in use."""
@@ -148,7 +157,11 @@ class NoBackupPolicyRule(PolicyRule):
     rule_name: str = "No backup policy assigned"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_7.4"]
+    compliance_frameworks: list[str] = [
+        "CIS_7.4",
+        "ISO_27001_A.8.13",
+        "PCI_DSS_12.10.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if no backup policy is configured."""
@@ -180,7 +193,11 @@ class PublicIPDirectAttachedRule(PolicyRule):
     rule_name: str = "Public IP directly attached to VM"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_7.3"]
+    compliance_frameworks: list[str] = [
+        "CIS_7.3",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if a public IP is directly attached to the VM NIC."""
@@ -208,7 +225,11 @@ class OutdatedOSImageRule(PolicyRule):
     rule_name: str = "Outdated OS image"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["NIST_SI-2"]
+    compliance_frameworks: list[str] = [
+        "NIST_SI-2",
+        "ISO_27001_A.8.8",
+        "PCI_DSS_6.3.3",
+    ]
 
     _outdated_patterns: tuple[str, ...] = (
         "windows2016",

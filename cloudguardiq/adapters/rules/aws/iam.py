@@ -19,6 +19,8 @@ class RootAccessKeysRule(PolicyRule):
         "CIS_AWS_1.4",
         "NIST_AC-6",
         "SOC2_CC6.1",
+        "ISO_27001_A.8.2",
+        "PCI_DSS_7.2.5",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -54,6 +56,8 @@ class IamUserNoMfaRule(PolicyRule):
         "CIS_AWS_1.10",
         "NIST_IA-2",
         "SOC2_CC6.1",
+        "ISO_27001_A.8.5",
+        "PCI_DSS_8.4.2",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:

@@ -49,6 +49,8 @@ class SSHOpenToInternetRule(PolicyRule):
         "CIS_AWS_5.2",
         "NIST_SC-7",
         "SOC2_CC6.6",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -83,6 +85,8 @@ class RDPOpenToInternetRule(PolicyRule):
         "CIS_AWS_5.2",
         "NIST_SC-7",
         "SOC2_CC6.6",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:

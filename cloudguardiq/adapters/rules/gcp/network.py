@@ -53,7 +53,12 @@ class FirewallSshOpenRule(PolicyRule):
     resource_types: list[str] = ["google.compute.Firewall"]
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_GCP_3.6", "NIST_SC-7"]
+    compliance_frameworks: list[str] = [
+        "CIS_GCP_3.6",
+        "NIST_SC-7",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding when the rule opens TCP/22 to the world."""
@@ -84,7 +89,12 @@ class FirewallRdpOpenRule(PolicyRule):
     resource_types: list[str] = ["google.compute.Firewall"]
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_GCP_3.7", "NIST_SC-7"]
+    compliance_frameworks: list[str] = [
+        "CIS_GCP_3.7",
+        "NIST_SC-7",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding when the rule opens TCP/3389 to the world."""

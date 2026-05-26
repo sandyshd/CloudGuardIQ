@@ -84,7 +84,11 @@ class SoftDeleteRule(PolicyRule):
     rule_name: str = "Soft delete not enabled"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_8.1"]
+    compliance_frameworks: list[str] = [
+        "CIS_8.1",
+        "ISO_27001_A.8.13",
+        "PCI_DSS_3.6.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if soft delete is not enabled."""
@@ -116,7 +120,11 @@ class PurgeProtectionRule(PolicyRule):
     rule_name: str = "Purge protection not enabled"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_8.2"]
+    compliance_frameworks: list[str] = [
+        "CIS_8.2",
+        "ISO_27001_A.8.13",
+        "PCI_DSS_3.6.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if purge protection is not enabled."""
@@ -148,7 +156,12 @@ class PublicNetworkAccessRule(PolicyRule):
     rule_name: str = "Public network access enabled"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_8.5", "NIST_SC-7"]
+    compliance_frameworks: list[str] = [
+        "CIS_8.5",
+        "NIST_SC-7",
+        "ISO_27001_A.8.22",
+        "PCI_DSS_1.3.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if public network access is enabled."""
@@ -176,7 +189,12 @@ class NoDiagnosticLoggingRule(PolicyRule):
     rule_name: str = "No diagnostic logging configured"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_8.6", "SOC2_CC7.2"]
+    compliance_frameworks: list[str] = [
+        "CIS_8.6",
+        "SOC2_CC7.2",
+        "ISO_27001_A.8.15",
+        "PCI_DSS_10.2.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if diagnostic logging is not configured."""
@@ -208,7 +226,11 @@ class SecretNoExpiryRule(PolicyRule):
     rule_name: str = "Secrets with no expiry date set"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_8.3"]
+    compliance_frameworks: list[str] = [
+        "CIS_8.3",
+        "ISO_27001_A.8.24",
+        "PCI_DSS_3.7.4",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if secrets have no expiry date."""

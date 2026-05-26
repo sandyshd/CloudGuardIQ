@@ -40,6 +40,8 @@ class S3PublicAclRule(PolicyRule):
         "CIS_AWS_2.1.5",
         "NIST_AC-3",
         "SOC2_CC6.1",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -70,7 +72,12 @@ class S3PublicAccessBlockRule(PolicyRule):
     resource_types: list[str] = ["AWS::S3::Bucket"]
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_AWS_2.1.5", "NIST_AC-3"]
+    compliance_frameworks: list[str] = [
+        "CIS_AWS_2.1.5",
+        "NIST_AC-3",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
+    ]
 
     REQUIRED_KEYS = (
         "BlockPublicAcls",
@@ -112,6 +119,8 @@ class S3BucketEncryptionRule(PolicyRule):
         "CIS_AWS_2.1.1",
         "NIST_SC-28",
         "SOC2_CC6.1",
+        "ISO_27001_A.8.24",
+        "PCI_DSS_3.5.1",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:

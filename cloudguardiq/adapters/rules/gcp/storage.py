@@ -20,6 +20,8 @@ class BucketPublicAccessRule(PolicyRule):
         "CIS_GCP_5.1",
         "NIST_AC-3",
         "SOC2_CC6.1",
+        "ISO_27001_A.8.20",
+        "PCI_DSS_1.3.1",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -50,7 +52,11 @@ class BucketUniformAccessRule(PolicyRule):
     resource_types: list[str] = ["google.storage.Bucket"]
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_GCP_5.2"]
+    compliance_frameworks: list[str] = [
+        "CIS_GCP_5.2",
+        "ISO_27001_A.8.3",
+        "PCI_DSS_7.2.4",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding when uniform bucket-level access is disabled."""

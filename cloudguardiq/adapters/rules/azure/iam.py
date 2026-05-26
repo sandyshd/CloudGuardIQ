@@ -59,7 +59,12 @@ class OwnerRoleDirectUserRule(PolicyRule):
     rule_name: str = "Owner role assigned directly to a user"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_1.1", "NIST_AC-6"]
+    compliance_frameworks: list[str] = [
+        "CIS_1.1",
+        "NIST_AC-6",
+        "ISO_27001_A.5.18",
+        "PCI_DSS_7.2.1",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if Owner role is assigned to a user principal."""
@@ -93,7 +98,11 @@ class OwnerRoleSubscriptionScopeRule(PolicyRule):
     rule_name: str = "Owner role at subscription root scope"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_1.2"]
+    compliance_frameworks: list[str] = [
+        "CIS_1.2",
+        "ISO_27001_A.8.5",
+        "PCI_DSS_8.4.2",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if Owner is assigned at subscription root."""
@@ -123,7 +132,11 @@ class SPOwnerMultipleSubscriptionsRule(PolicyRule):
     rule_name: str = "Service principal Owner on multiple subscriptions"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_1.3"]
+    compliance_frameworks: list[str] = [
+        "CIS_1.3",
+        "ISO_27001_A.8.5",
+        "PCI_DSS_8.4.2",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if SP has Owner on >1 subscription."""
@@ -157,7 +170,11 @@ class GuestPrivilegedRoleRule(PolicyRule):
     rule_name: str = "Guest user with privileged role"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_1.6"]
+    compliance_frameworks: list[str] = [
+        "CIS_1.6",
+        "ISO_27001_A.5.18",
+        "PCI_DSS_7.2.4",
+    ]
 
     _privileged_roles: set[str] = {"Owner", "Contributor", "User Access Administrator"}
 
@@ -192,7 +209,11 @@ class ClassicAdminRoleRule(PolicyRule):
     rule_name: str = "Classic administrator roles still assigned"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_1.7"]
+    compliance_frameworks: list[str] = [
+        "CIS_1.7",
+        "ISO_27001_A.5.18",
+        "PCI_DSS_7.2.4",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if classic admin roles are in use."""
@@ -220,7 +241,12 @@ class NoMFAConditionalAccessRule(PolicyRule):
     rule_name: str = "No conditional access policy enforcing MFA"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_1.5", "SOC2_CC6.1"]
+    compliance_frameworks: list[str] = [
+        "CIS_1.5",
+        "SOC2_CC6.1",
+        "ISO_27001_A.8.2",
+        "PCI_DSS_7.2.2",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if MFA is not enforced via conditional access."""
@@ -250,7 +276,11 @@ class ExternalUserPrivilegedRoleRule(PolicyRule):
     rule_name: str = "External user with privileged role"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_1.8"]
+    compliance_frameworks: list[str] = [
+        "CIS_1.8",
+        "ISO_27001_A.8.5",
+        "PCI_DSS_8.3.6",
+    ]
 
     _privileged_roles: set[str] = {"Owner", "Contributor"}
 
@@ -285,7 +315,11 @@ class SPPasswordExpiryRule(PolicyRule):
     rule_name: str = "Service principal password expiry not set"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
-    compliance_frameworks: list[str] = ["CIS_1.9"]
+    compliance_frameworks: list[str] = [
+        "CIS_1.9",
+        "ISO_27001_A.8.5",
+        "PCI_DSS_8.3.6",
+    ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if SP credential expiry exceeds 365 days or is absent."""
