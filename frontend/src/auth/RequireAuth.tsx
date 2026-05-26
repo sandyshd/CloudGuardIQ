@@ -3,7 +3,6 @@ import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { loginRequest } from "./msalConfig";
 import { Button } from "../components/ui/button";
-import { Shield } from "lucide-react";
 import { getConfig } from "../api/config";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
@@ -41,10 +40,12 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (!isAuthenticated) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-6">
-        <div className="flex items-center gap-3">
-          <Shield className="h-10 w-10 text-[hsl(var(--primary))]" />
-          <h1 className="text-3xl font-bold">CloudGuardIQ</h1>
-        </div>
+        <img
+          src="/brand/cloudguardiq-primary-dark.svg"
+          alt="CloudGuardIQ"
+          className="h-12 w-auto select-none"
+          draggable={false}
+        />
         <p className="text-[hsl(var(--muted-foreground))]">Cloud Security & FinOps Platform</p>
         <Button size="lg" onClick={() => instance.loginRedirect(loginRequest)}>
           Sign in with Azure AD

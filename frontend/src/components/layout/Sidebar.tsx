@@ -121,18 +121,19 @@ export function Sidebar() {
       {/* Brand + Switcher */}
       <div className="flex flex-col gap-3 border-b border-[hsl(var(--sidebar-border))] p-3">
         <div className={cn("flex items-center gap-2", collapsed && "justify-center")}>
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[hsl(var(--primary))] to-[hsl(var(--accent))] shadow-sm">
-            <ShieldCheck className="h-4 w-4 text-white" />
-          </div>
-          {!collapsed && (
-            <div className="min-w-0">
-              <div className="truncate text-[15px] font-semibold leading-tight text-[hsl(var(--sidebar-accent-foreground))]">
-                CloudGuardIQ
-              </div>
-              <div className="truncate text-[10px] uppercase tracking-wider text-[hsl(var(--sidebar-muted))]">
-                CSPM &middot; FinOps
-              </div>
+          {collapsed ? (
+            // Collapsed rail: keep the iconic gradient tile so the brand
+            // mark stays recognizable at 64 px.
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[hsl(var(--primary))] to-[hsl(var(--accent))] shadow-sm">
+              <ShieldCheck className="h-4 w-4 text-white" />
             </div>
+          ) : (
+            <img
+              src="/brand/cloudguardiq-primary-dark.svg"
+              alt="CloudGuardIQ"
+              className="h-8 w-auto select-none"
+              draggable={false}
+            />
           )}
         </div>
         <TenantSwitcher collapsed={collapsed} />
