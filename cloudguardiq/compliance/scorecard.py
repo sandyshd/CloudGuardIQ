@@ -77,6 +77,12 @@ FRAMEWORKS: tuple[FrameworkDef, ...] = (
         short_label="SOC 2",
         prefixes=("SOC2_", "SOC_2_"),
     ),
+    FrameworkDef(
+        id="HIPAA",
+        label="HIPAA Security Rule (45 CFR §164)",
+        short_label="HIPAA",
+        prefixes=("HIPAA_",),
+    ),
 )
 
 

@@ -89,6 +89,7 @@ class PublicBlobAccessRule(PolicyRule):
         "NIST_SC-8",
         "ISO_27001_A.8.24",
         "PCI_DSS_4.2.1",
+        "HIPAA_164.312(e)(2)(ii)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -121,6 +122,7 @@ class HttpTrafficAllowedRule(PolicyRule):
         "CIS_3.2",
         "ISO_27001_A.8.24",
         "PCI_DSS_3.5.1",
+        "HIPAA_164.312(a)(2)(iv)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -153,6 +155,7 @@ class MinTlsVersionRule(PolicyRule):
         "CIS_3.3",
         "PCI_DSS_6.5.4",
         "ISO_27001_A.8.24",
+        "HIPAA_164.312(e)(2)(ii)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -186,6 +189,7 @@ class SharedKeyAuthRule(PolicyRule):
         "CIS_3.4",
         "ISO_27001_A.8.24",
         "PCI_DSS_3.7.4",
+        "HIPAA_164.312(a)(2)(iv)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -223,6 +227,7 @@ class NetworkDefaultActionRule(PolicyRule):
         "NIST_SC-7",
         "ISO_27001_A.8.20",
         "PCI_DSS_1.3.1",
+        "HIPAA_164.312(e)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -256,6 +261,7 @@ class BlobSoftDeleteRule(PolicyRule):
         "CIS_3.8",
         "ISO_27001_A.8.24",
         "PCI_DSS_3.6.1",
+        "HIPAA_164.312(a)(2)(iv)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -292,6 +298,7 @@ class BlobVersioningRule(PolicyRule):
         "CIS_3.9",
         "ISO_27001_A.8.15",
         "PCI_DSS_10.2.1",
+        "HIPAA_164.312(b)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -327,6 +334,7 @@ class InfrastructureEncryptionRule(PolicyRule):
     compliance_frameworks: list[str] = [
         "CIS_3.10",
         "ISO_27001_A.8.13",
+        "HIPAA_164.312(c)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -364,6 +372,7 @@ class DiagnosticLoggingRule(PolicyRule):
         "NIST_AU-2",
         "ISO_27001_A.8.15",
         "PCI_DSS_10.2.1",
+        "HIPAA_164.312(b)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:

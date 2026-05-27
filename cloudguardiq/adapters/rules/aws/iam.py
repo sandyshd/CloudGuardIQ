@@ -21,6 +21,7 @@ class RootAccessKeysRule(PolicyRule):
         "SOC2_CC6.1",
         "ISO_27001_A.8.2",
         "PCI_DSS_7.2.5",
+        "HIPAA_164.312(a)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -58,6 +59,7 @@ class IamUserNoMfaRule(PolicyRule):
         "SOC2_CC6.1",
         "ISO_27001_A.8.5",
         "PCI_DSS_8.4.2",
+        "HIPAA_164.312(d)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:

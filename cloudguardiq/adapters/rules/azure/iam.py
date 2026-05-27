@@ -64,6 +64,7 @@ class OwnerRoleDirectUserRule(PolicyRule):
         "NIST_AC-6",
         "ISO_27001_A.5.18",
         "PCI_DSS_7.2.1",
+        "HIPAA_164.308(a)(4)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -102,6 +103,7 @@ class OwnerRoleSubscriptionScopeRule(PolicyRule):
         "CIS_1.2",
         "ISO_27001_A.8.5",
         "PCI_DSS_8.4.2",
+        "HIPAA_164.312(d)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -136,6 +138,7 @@ class SPOwnerMultipleSubscriptionsRule(PolicyRule):
         "CIS_1.3",
         "ISO_27001_A.8.5",
         "PCI_DSS_8.4.2",
+        "HIPAA_164.312(d)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -174,6 +177,7 @@ class GuestPrivilegedRoleRule(PolicyRule):
         "CIS_1.6",
         "ISO_27001_A.5.18",
         "PCI_DSS_7.2.4",
+        "HIPAA_164.308(a)(4)",
     ]
 
     _privileged_roles: set[str] = {"Owner", "Contributor", "User Access Administrator"}
@@ -213,6 +217,7 @@ class ClassicAdminRoleRule(PolicyRule):
         "CIS_1.7",
         "ISO_27001_A.5.18",
         "PCI_DSS_7.2.4",
+        "HIPAA_164.308(a)(4)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -246,6 +251,7 @@ class NoMFAConditionalAccessRule(PolicyRule):
         "SOC2_CC6.1",
         "ISO_27001_A.8.2",
         "PCI_DSS_7.2.2",
+        "HIPAA_164.312(a)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -280,6 +286,7 @@ class ExternalUserPrivilegedRoleRule(PolicyRule):
         "CIS_1.8",
         "ISO_27001_A.8.5",
         "PCI_DSS_8.3.6",
+        "HIPAA_164.308(a)(5)(ii)(D)",
     ]
 
     _privileged_roles: set[str] = {"Owner", "Contributor"}
@@ -319,6 +326,7 @@ class SPPasswordExpiryRule(PolicyRule):
         "CIS_1.9",
         "ISO_27001_A.8.5",
         "PCI_DSS_8.3.6",
+        "HIPAA_164.308(a)(5)(ii)(D)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:

@@ -88,6 +88,7 @@ class SoftDeleteRule(PolicyRule):
         "CIS_8.1",
         "ISO_27001_A.8.13",
         "PCI_DSS_3.6.1",
+        "HIPAA_164.308(a)(7)(ii)(A)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -124,6 +125,7 @@ class PurgeProtectionRule(PolicyRule):
         "CIS_8.2",
         "ISO_27001_A.8.13",
         "PCI_DSS_3.6.1",
+        "HIPAA_164.308(a)(7)(ii)(A)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -161,6 +163,7 @@ class PublicNetworkAccessRule(PolicyRule):
         "NIST_SC-7",
         "ISO_27001_A.8.22",
         "PCI_DSS_1.3.1",
+        "HIPAA_164.312(e)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -194,6 +197,7 @@ class NoDiagnosticLoggingRule(PolicyRule):
         "SOC2_CC7.2",
         "ISO_27001_A.8.15",
         "PCI_DSS_10.2.1",
+        "HIPAA_164.312(b)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -230,6 +234,7 @@ class SecretNoExpiryRule(PolicyRule):
         "CIS_8.3",
         "ISO_27001_A.8.24",
         "PCI_DSS_3.7.4",
+        "HIPAA_164.312(a)(2)(iv)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:

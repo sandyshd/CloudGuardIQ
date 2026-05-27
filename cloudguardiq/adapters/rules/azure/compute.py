@@ -93,6 +93,7 @@ class OSDiskEncryptionRule(PolicyRule):
         "NIST_SC-28",
         "ISO_27001_A.8.24",
         "PCI_DSS_3.5.1",
+        "HIPAA_164.312(a)(2)(iv)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -129,6 +130,7 @@ class UnmanagedDiskRule(PolicyRule):
         "CIS_7.1",
         "ISO_27001_A.8.9",
         "PCI_DSS_2.2.1",
+        "HIPAA_164.312(c)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -161,6 +163,7 @@ class NoBackupPolicyRule(PolicyRule):
         "CIS_7.4",
         "ISO_27001_A.8.13",
         "PCI_DSS_12.10.1",
+        "HIPAA_164.308(a)(7)(ii)(A)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -197,6 +200,7 @@ class PublicIPDirectAttachedRule(PolicyRule):
         "CIS_7.3",
         "ISO_27001_A.8.20",
         "PCI_DSS_1.3.1",
+        "HIPAA_164.312(e)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -229,6 +233,7 @@ class OutdatedOSImageRule(PolicyRule):
         "NIST_SI-2",
         "ISO_27001_A.8.8",
         "PCI_DSS_6.3.3",
+        "HIPAA_164.308(a)(5)(ii)(B)",
     ]
 
     _outdated_patterns: tuple[str, ...] = (

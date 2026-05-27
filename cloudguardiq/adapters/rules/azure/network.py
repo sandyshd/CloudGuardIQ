@@ -135,6 +135,7 @@ class SSHOpenToInternetRule(PolicyRule):
         "NIST_AC-17",
         "ISO_27001_A.8.20",
         "PCI_DSS_1.3.1",
+        "HIPAA_164.312(e)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -169,6 +170,7 @@ class RDPOpenToInternetRule(PolicyRule):
         "CIS_6.2",
         "ISO_27001_A.8.20",
         "PCI_DSS_1.3.1",
+        "HIPAA_164.312(e)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -203,6 +205,7 @@ class AnyPortOpenToInternetRule(PolicyRule):
         "CIS_6.3",
         "ISO_27001_A.8.22",
         "PCI_DSS_1.3.1",
+        "HIPAA_164.312(e)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -238,6 +241,7 @@ class NSGFlowLogsRule(PolicyRule):
         "SOC2_CC7.1",
         "ISO_27001_A.8.16",
         "PCI_DSS_10.2.1",
+        "HIPAA_164.312(b)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -272,6 +276,7 @@ class InboundAllowAllRule(PolicyRule):
         "CIS_6.4",
         "ISO_27001_A.8.20",
         "PCI_DSS_1.2.1",
+        "HIPAA_164.312(e)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -306,6 +311,7 @@ class DDoSProtectionRule(PolicyRule):
         "NIST_SC-5",
         "ISO_27001_A.8.21",
         "PCI_DSS_1.2.1",
+        "HIPAA_164.308(a)(1)(ii)(D)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:

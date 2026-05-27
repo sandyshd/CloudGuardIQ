@@ -77,6 +77,7 @@ export function ControlList({
       ISO_27001: ["ISO_27001_", "ISO27001_", "ISO_"],
       PCI_DSS: ["PCI_DSS_", "PCI_", "PCIDSS_"],
       SOC2: ["SOC2_", "SOC_2_"],
+      HIPAA: ["HIPAA_"],
     };
     const matchesFramework = (tags: string[]): boolean => {
       if (!framework) return true;

@@ -21,6 +21,7 @@ class EbsEncryptionRule(PolicyRule):
         "SOC2_CC6.1",
         "ISO_27001_A.8.24",
         "PCI_DSS_3.5.1",
+        "HIPAA_164.312(a)(2)(iv)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
@@ -55,6 +56,7 @@ class InstancePublicIpRule(PolicyRule):
         "NIST_SC-7",
         "ISO_27001_A.8.20",
         "PCI_DSS_1.3.1",
+        "HIPAA_164.312(e)(1)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:

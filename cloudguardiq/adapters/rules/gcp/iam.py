@@ -21,6 +21,7 @@ class ServiceAccountUserManagedKeyRule(PolicyRule):
         "NIST_IA-5",
         "ISO_27001_A.5.17",
         "PCI_DSS_8.3.1",
+        "HIPAA_164.308(a)(5)(ii)(D)",
     ]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
