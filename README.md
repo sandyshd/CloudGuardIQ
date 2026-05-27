@@ -10,7 +10,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://react.dev/)
 [![Terraform](https://img.shields.io/badge/Terraform-1.8%2B-7B42BC.svg)](https://www.terraform.io/)
-[![Tests](https://img.shields.io/badge/tests-324%20passing-success.svg)](#16-testing--quality)
+[![Tests](https://img.shields.io/badge/tests-664%20passing-success.svg)](#16-testing--quality)
 [![Coverage](https://img.shields.io/badge/coverage-80%25%2B-success.svg)](#16-testing--quality)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](#20-license)
 
@@ -82,7 +82,7 @@ hand-crafting fixes. CloudGuardIQ collapses this stack:
 - **70+ built-in policy rules** across Storage, Compute, Network, IAM, Key Vault, Containers
 - **Cross-cloud rule packs**: Azure (52), AWS (11+), GCP (early access)
 - **Continuous configuration drift detection** with SHA-256 baselining
-- **Compliance mapping** for CIS Benchmarks, SOC 2, ISO 27001, PCI-DSS, NIST 800-53
+- **Compliance mapping** — every rule carries explicit control citations for CIS Benchmarks, NIST 800-53, ISO/IEC 27001:2022, PCI-DSS v4.0, SOC 2, and HIPAA Security Rule (45 CFR §164)
 - **Tier-aware enrichment** — auto-detects and consumes Microsoft Defender for Cloud,
   AWS Security Hub, and Google SCC when available, with graceful fallback
 
@@ -152,9 +152,20 @@ hand-crafting fixes. CloudGuardIQ collapses this stack:
 
 ### Compliance frameworks
 
-CIS Microsoft Azure Foundations · CIS AWS Foundations · CIS GCP Foundations ·
-SOC 2 (Type II) · ISO/IEC 27001 · PCI-DSS v4.0 · NIST SP 800-53 ·
-HIPAA (selected controls) · Azure Well-Architected Framework
+Every built-in rule is tagged with explicit control citations across six
+framework families. The **Compliance** page renders a family-grouped scorecard
+with click-through filtering to the underlying controls.
+
+| Family | Coverage |
+|--------|----------|
+| CIS Benchmarks | Microsoft Azure Foundations, AWS Foundations, GCP Foundations |
+| NIST SP 800-53 | Rev. 5 control IDs (`AC-*`, `SC-*`, `SI-*`, `AU-*`, …) |
+| ISO/IEC 27001:2022 | Annex A controls (`A.5.*`, `A.8.*`, …) |
+| PCI-DSS v4.0 | Numbered requirements (e.g. `PCI_DSS_3.5.1`, `PCI_DSS_8.3.1`) |
+| SOC 2 (Type II) | Trust Services Criteria (`CC6.*`, `CC7.*`) |
+| HIPAA Security Rule | 45 CFR §164.308 / §164.312 citations |
+
+Also aligned with the Azure Well-Architected Framework Security pillar.
 
 ### Built-in rule packs
 
@@ -363,7 +374,7 @@ cloudguardiq/
 ├── cloudguardiq/api/templates/      # cloudguardiq-reader.json (Deploy-to-Azure ARM,
 │                                    #   bundled into the wheel and served anonymously
 │                                    #   by GET /subscriptions/onboarding-template.json)
-├── tests/                           # 324 pytest tests, 80%+ coverage
+├── tests/                           # 664 pytest tests, 80%+ coverage
 ├── scripts/                         # Operational scripts (audit, backfill)
 ├── docs/                            # Design docs (multicloud-onboarding, SaaS plan)
 ├── function_app.py                  # Azure Functions entry point
@@ -835,11 +846,14 @@ All endpoints except `/health`, `/config`, `/billing/plans`, and
 
 ### 14.5 Compliance frameworks mapped
 
-CIS Microsoft Azure Foundations · CIS AWS Foundations · CIS GCP Foundations ·
-SOC 2 (Type II) · ISO/IEC 27001 · PCI-DSS v4.0 · NIST SP 800-53 · HIPAA.
+CIS Microsoft Azure / AWS / GCP Foundations · NIST SP 800-53 Rev. 5 ·
+ISO/IEC 27001:2022 · PCI-DSS v4.0 · SOC 2 (Type II) · HIPAA Security Rule.
 
-Each `FindingResult` carries `compliance_frameworks: list[str]`
-(e.g. `["CIS_3.1", "SOC2_CC6.1"]`) so auditors can pivot directly to controls.
+Each `FindingResult` carries `compliance_frameworks: list[str]` with prefixed
+control IDs (e.g. `["CIS_AWS_2.2.1", "NIST_SC-28", "ISO_27001_A.8.24",
+"PCI_DSS_3.5.1", "SOC2_CC6.1", "HIPAA_164.312(a)(2)(iv)"]`) so auditors can
+pivot directly from a finding to a specific control. Framework registry and
+prefix matching live in [`cloudguardiq/compliance/scorecard.py`](cloudguardiq/compliance/scorecard.py).
 
 ---
 
@@ -859,8 +873,8 @@ Each `FindingResult` carries `compliance_frameworks: list[str]`
 
 ## 16. Testing & Quality
 
-- **324 tests** across adapters, API, policy engine, AI remediation, pipeline,
-  healing, billing, onboarding, and tenant isolation.
+- **664 tests** across adapters, API, policy engine, AI remediation, pipeline,
+  healing, billing, onboarding, compliance scorecard, and tenant isolation.
 - **Minimum coverage: 80 %** (enforced in CI).
 - All external services (Azure SDK, OpenAI, Cosmos, Stripe) are **mocked** in
   tests — no live network calls in the test suite.
