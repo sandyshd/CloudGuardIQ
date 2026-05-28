@@ -16,7 +16,7 @@ interface TimeRangeContextValue {
   setCustomRange: (from: Date, to: Date) => void;
 }
 
-const STORAGE_KEY = "cguardiq.timeRange";
+const STORAGE_KEY = "cguardiq.timeRange.v2";
 
 const PRESETS: Record<Exclude<TimeRangeId, "custom">, { label: string; ms: number }> = {
   "24h": { label: "Last 24 hours", ms: 24 * 60 * 60 * 1000 },
