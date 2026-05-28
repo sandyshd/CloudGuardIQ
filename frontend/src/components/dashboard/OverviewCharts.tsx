@@ -25,39 +25,85 @@ function dayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+function hourKey(d: Date): string {
+  // ISO up to the hour: 2026-05-28T14
+  return d.toISOString().slice(0, 13);
+}
+
 export function FindingsOverTimeChart({
   findings,
-  days = 30,
+  from,
+  to,
+  days,
 }: {
   findings: FindingResult[];
+  /** Window start (inclusive). When omitted, falls back to `days` back from now. */
+  from?: Date;
+  /** Window end (inclusive). When omitted, defaults to now. */
+  to?: Date;
+  /** Legacy: number of days back from today. Used when `from`/`to` aren't given. */
   days?: number;
 }) {
+  const end = to ?? new Date();
+  const start = from ?? (() => {
+    const d = new Date(end);
+    d.setDate(d.getDate() - ((days ?? 30) - 1));
+    d.setHours(0, 0, 0, 0);
+    return d;
+  })();
+
+  const spanMs = end.getTime() - start.getTime();
+  // For windows <= 48h, bucket by hour; otherwise by calendar day.
+  const byHour = spanMs <= 48 * 60 * 60 * 1000;
+
   const buckets: Record<string, Record<Severity, number>> = {};
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    buckets[dayKey(d)] = {
-      CRITICAL: 0,
-      HIGH: 0,
-      MEDIUM: 0,
-      LOW: 0,
-      INFORMATIONAL: 0,
-    };
+  if (byHour) {
+    const cursor = new Date(start);
+    cursor.setMinutes(0, 0, 0);
+    while (cursor.getTime() <= end.getTime()) {
+      buckets[hourKey(cursor)] = {
+        CRITICAL: 0,
+        HIGH: 0,
+        MEDIUM: 0,
+        LOW: 0,
+        INFORMATIONAL: 0,
+      };
+      cursor.setHours(cursor.getHours() + 1);
+    }
+  } else {
+    const cursor = new Date(start);
+    cursor.setHours(0, 0, 0, 0);
+    const endDay = new Date(end);
+    endDay.setHours(0, 0, 0, 0);
+    while (cursor.getTime() <= endDay.getTime()) {
+      buckets[dayKey(cursor)] = {
+        CRITICAL: 0,
+        HIGH: 0,
+        MEDIUM: 0,
+        LOW: 0,
+        INFORMATIONAL: 0,
+      };
+      cursor.setDate(cursor.getDate() + 1);
+    }
   }
+
   findings.forEach((f) => {
     // Prefer first_seen_at so the chart reflects when each finding was
     // initially discovered. detected_at is rewritten on every scan, which
     // would cause a single spike at the most recent scan date.
     const ts = f.first_seen_at ?? f.detected_at;
-    const k = ts?.slice(0, 10);
-    if (k && buckets[k]) {
+    if (!ts) return;
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return;
+    if (d.getTime() < start.getTime() || d.getTime() > end.getTime()) return;
+    const k = byHour ? hourKey(d) : dayKey(d);
+    if (buckets[k]) {
       buckets[k][f.severity] = (buckets[k][f.severity] || 0) + 1;
     }
   });
-  const data = Object.entries(buckets).map(([date, sev]) => ({
-    date: date.slice(5),
+
+  const data = Object.entries(buckets).map(([key, sev]) => ({
+    date: byHour ? `${key.slice(11)}:00` : key.slice(5),
     CRITICAL: sev.CRITICAL,
     HIGH: sev.HIGH,
     MEDIUM: sev.MEDIUM,

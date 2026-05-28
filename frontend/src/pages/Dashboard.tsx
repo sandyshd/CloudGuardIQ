@@ -35,6 +35,7 @@ import { useFindings } from "../hooks/useFindings";
 import { useComplianceScorecard } from "../hooks/useComplianceScorecard";
 import { usePostureScore } from "../hooks/usePostureScore";
 import { useSubscriptions } from "../hooks/useSubscriptions";
+import { useTimeRange } from "../contexts/TimeRangeContext";
 import { triggerScan } from "../api/scans";
 import { TIER2_VALUES, TIER3_VALUES } from "../types";
 import type { FindingResult, Severity, DataTier } from "../types";
@@ -112,6 +113,7 @@ export function Dashboard() {
   const { findings, loading, refresh } = useFindings(selectedSub?.subscription_id);
   const { scorecard, loading: scorecardLoading } = useComplianceScorecard(selectedSub?.subscription_id);
   const { posture } = usePostureScore(selectedSub?.subscription_id);
+  const { range } = useTimeRange();
   const [selectedFinding, setSelectedFinding] = useState<FindingResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -465,10 +467,10 @@ export function Dashboard() {
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Findings over time</CardTitle>
-            <span className="text-xs text-[hsl(var(--muted-foreground))]">Last 30 days</span>
+            <span className="text-xs text-[hsl(var(--muted-foreground))]">{range.label}</span>
           </CardHeader>
           <CardContent>
-            <FindingsOverTimeChart findings={findings} days={30} />
+            <FindingsOverTimeChart findings={findings} from={range.from} to={range.to} />
             <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
               {(["CRITICAL", "HIGH", "MEDIUM", "LOW"] as Severity[]).map((s) => (
                 <span key={s} className="inline-flex items-center gap-1.5">
