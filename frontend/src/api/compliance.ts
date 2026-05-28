@@ -24,8 +24,12 @@ export interface FrameworkScore {
 
 export async function getComplianceScorecard(
   subscriptionId?: string,
+  range?: { from?: string; to?: string },
 ): Promise<FrameworkScore[]> {
-  const params = subscriptionId ? { subscription_id: subscriptionId } : {};
+  const params: Record<string, string> = {};
+  if (subscriptionId) params.subscription_id = subscriptionId;
+  if (range?.from) params.from_date = range.from;
+  if (range?.to) params.to_date = range.to;
   const { data } = await apiClient.get<FrameworkScore[]>("/compliance/scorecard", { params });
   return data;
 }

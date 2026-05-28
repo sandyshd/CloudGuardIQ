@@ -29,7 +29,11 @@ logger = logging.getLogger(__name__)
 
 
 def _build_findings_query(
-    tenant_id: str, subscription_id: str, limit: int = 50
+    tenant_id: str,
+    subscription_id: str,
+    limit: int = 50,
+    from_date: str | None = None,
+    to_date: str | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
     """Return (query, params) for listing findings within a tenant.
 
@@ -38,25 +42,30 @@ def _build_findings_query(
     (no tenant filter) so pre-backfill rows remain readable; once the
     backfill script runs, all rows have a tenant_id and callers must pass
     one.
+
+    ``from_date`` / ``to_date`` are ISO-8601 strings; when provided they
+    constrain ``c.detected_at`` (lexicographic comparison is correct for
+    ISO-8601 UTC timestamps).
     """
     params: list[dict[str, object]] = [
         {"name": "@limit", "value": limit},
         {"name": "@sub_id", "value": subscription_id},
         {"name": "@tenant_id", "value": tenant_id},
     ]
+    clauses: list[str] = ["c.subscription_id = @sub_id"]
     if tenant_id:
-        query = (
-            "SELECT TOP @limit * FROM c "
-            "WHERE c.tenant_id = @tenant_id "
-            "AND c.subscription_id = @sub_id "
-            "ORDER BY c.detected_at DESC"
-        )
-    else:
-        query = (
-            "SELECT TOP @limit * FROM c "
-            "WHERE c.subscription_id = @sub_id "
-            "ORDER BY c.detected_at DESC"
-        )
+        clauses.insert(0, "c.tenant_id = @tenant_id")
+    if from_date:
+        params.append({"name": "@from_date", "value": from_date})
+        clauses.append("c.detected_at >= @from_date")
+    if to_date:
+        params.append({"name": "@to_date", "value": to_date})
+        clauses.append("c.detected_at <= @to_date")
+    query = (
+        "SELECT TOP @limit * FROM c WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY c.detected_at DESC"
+    )
     return query, params
 
 
@@ -365,15 +374,22 @@ class CosmosRepository:
         limit: int = 50,
         *,
         tenant_id: str = "",
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> list[FindingResult]:
         """Return findings for a subscription, newest first.
 
         When `tenant_id` is provided, the query is scoped to that tenant
         (Phase 1 isolation). When empty, legacy behaviour is preserved for
-        pre-backfill data.
+        pre-backfill data. ``from_date`` / ``to_date`` are ISO-8601 strings
+        that constrain ``detected_at``.
         """
         query, params = _build_findings_query(
-            tenant_id=tenant_id, subscription_id=subscription_id, limit=limit
+            tenant_id=tenant_id,
+            subscription_id=subscription_id,
+            limit=limit,
+            from_date=from_date,
+            to_date=to_date,
         )
         items: list[dict[str, Any]] = []
         async for item in self._findings_container().query_items(

@@ -973,6 +973,8 @@ async def scan_subscription(
 async def list_findings(
     subscription_id: str = Query(default=""),
     limit: int = Query(default=50, ge=1, le=5000),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
     user: TokenPayload = _auth,
 ) -> list[FindingResult]:
     """Return FindingResults for a subscription, sorted by priority_score descending."""
@@ -985,7 +987,13 @@ async def list_findings(
     tenant_id = None if settings.auth_disabled else get_tenant_id(user)
     if repo is not None and sub_id:
         try:
-            findings = await repo.get_findings(sub_id, tenant_id=tenant_id, limit=limit)
+            findings = await repo.get_findings(
+                sub_id,
+                tenant_id=tenant_id,
+                limit=limit,
+                from_date=from_date,
+                to_date=to_date,
+            )
             return sorted(
                 findings,
                 key=lambda f: f.priority_score,
@@ -1357,6 +1365,8 @@ async def _providers_for_scope(
 )
 async def get_compliance_scorecard(
     subscription_id: str = Query(default=""),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
     user: TokenPayload = _auth,
 ) -> list[ComplianceFrameworkScore]:
     """Return per-framework compliance scores for the requested subscription.
@@ -1382,7 +1392,13 @@ async def get_compliance_scorecard(
     findings: list[FindingResult] = []
     if repo is not None and sub_id:
         try:
-            findings = await repo.get_findings(sub_id, tenant_id=tenant_id, limit=5000)
+            findings = await repo.get_findings(
+                sub_id,
+                tenant_id=tenant_id,
+                limit=5000,
+                from_date=from_date,
+                to_date=to_date,
+            )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(
                 "Compliance scorecard: failed to query findings from Cosmos: %s",
@@ -1403,6 +1419,8 @@ async def get_compliance_scorecard(
 )
 async def get_posture_score(
     subscription_id: str = Query(default=""),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
     user: TokenPayload = _auth,
 ) -> PostureScore:
     """Return the weighted control-pass posture score for the scope.
@@ -1428,7 +1446,13 @@ async def get_posture_score(
     findings: list[FindingResult] = []
     if repo is not None and sub_id:
         try:
-            findings = await repo.get_findings(sub_id, tenant_id=tenant_id, limit=5000)
+            findings = await repo.get_findings(
+                sub_id,
+                tenant_id=tenant_id,
+                limit=5000,
+                from_date=from_date,
+                to_date=to_date,
+            )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(
                 "Posture score: failed to query findings from Cosmos: %s",
