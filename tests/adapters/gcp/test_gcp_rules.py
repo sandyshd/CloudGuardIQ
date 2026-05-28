@@ -42,8 +42,8 @@ def _snap(resource_type: str, name: str, config: dict) -> ResourceSnapshot:
 
 
 def test_registry_has_expected_rule_count() -> None:
-    """Sanity: rule pack ships 8 rules."""
-    assert len(GCP_RULE_REGISTRY) == 8
+    """Sanity: rule pack ships 47 rules."""
+    assert len(GCP_RULE_REGISTRY) == 47
 
 
 def test_instance_public_ip_rule_fires_when_external_ip_present() -> None:
@@ -178,7 +178,7 @@ def test_firewall_open_rules_pass_for_restricted_range(rule_cls, port) -> None:
 
 
 def test_engine_auto_discovers_gcp_rules() -> None:
-    """PolicyEngine should pick up all 8 GCP rules via walk_packages."""
+    """PolicyEngine should pick up all GCP rules via walk_packages."""
     from cloudguardiq.policy.engine import PolicyEngine
 
     engine = PolicyEngine()
@@ -187,9 +187,48 @@ def test_engine_auto_discovers_gcp_rules() -> None:
         "GCP-CE-001",
         "GCP-CE-002",
         "GCP-CE-003",
+        "GCP-CE-004",
+        "GCP-CE-005",
+        "GCP-CE-006",
         "GCP-GCS-001",
         "GCP-GCS-002",
+        "GCP-GCS-003",
+        "GCP-GCS-004",
         "GCP-IAM-001",
+        "GCP-IAM-002",
+        "GCP-IAM-003",
+        "GCP-IAM-004",
         "GCP-NET-001",
         "GCP-NET-002",
+        "GCP-NET-003",
+        "GCP-NET-004",
+        "GCP-SQL-001",
+        "GCP-SQL-002",
+        "GCP-SQL-003",
+        "GCP-GKE-001",
+        "GCP-GKE-002",
+        "GCP-GKE-003",
+        "GCP-GKE-004",
+        "GCP-GKE-005",
+        "GCP-GKE-006",
+        "GCP-BQ-001",
+        "GCP-BQ-002",
+        "GCP-BQ-003",
+        "GCP-LOG-001",
+        "GCP-LOG-002",
+        "GCP-CF-001",
+        "GCP-CF-002",
+        "GCP-CR-001",
+        "GCP-CR-002",
+        "GCP-KMS-001",
+        "GCP-KMS-002",
+        "GCP-PS-001",
+        "GCP-PS-002",
+        "GCP-DNS-001",
+        "GCP-SEC-001",
+        "GCP-AR-001",
+        "GCP-AR-002",
+        "GCP-SPN-001",
+        "GCP-MEM-001",
+        "GCP-MEM-002",
     }

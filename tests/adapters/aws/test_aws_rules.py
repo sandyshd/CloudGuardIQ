@@ -46,10 +46,10 @@ def _snap(resource_type: str, config: dict[str, Any], name: str = "r1") -> Resou
 # ---------------------------------------------------------------------------
 
 
-def test_registry_contains_eleven_unique_rules() -> None:
+def test_registry_contains_unique_rules() -> None:
     rule_ids = [r.rule_id for r in AWS_RULE_REGISTRY]
-    assert len(rule_ids) == 11
-    assert len(set(rule_ids)) == 11
+    assert len(rule_ids) == 50
+    assert len(set(rule_ids)) == 50
 
 
 def test_every_registered_rule_targets_aws_resource_types() -> None:

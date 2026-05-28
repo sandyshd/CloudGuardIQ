@@ -152,9 +152,9 @@ def _build_scanner_with_mock_rg(
 
 
 class TestNativeScannerRuleRegistry:
-    def test_rule_registry_has_44_rules(self) -> None:
-        """All 44 PolicyRule instances should be in the registry."""
-        assert len(RULE_REGISTRY) == 44
+    def test_rule_registry_has_55_rules(self) -> None:
+        """All 55 PolicyRule instances should be in the registry."""
+        assert len(RULE_REGISTRY) == 55
 
     def test_all_rules_have_rule_id(self) -> None:
         """Every rule must have a non-empty rule_id."""
