@@ -54,7 +54,7 @@ export function TimeRangeProvider({ children }: { children: ReactNode }) {
     } catch {
       /* ignore */
     }
-    return buildPreset("7d");
+    return buildPreset("90d");
   });
 
   const persist = useCallback((r: TimeRange) => {
