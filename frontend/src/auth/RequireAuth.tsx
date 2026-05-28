@@ -46,30 +46,37 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
 function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[hsl(var(--background))] text-[hsl(var(--foreground))]">
-      {/* Ambient background */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(80%_60%_at_15%_10%,hsl(var(--primary)/0.18),transparent_60%),radial-gradient(70%_55%_at_90%_90%,hsl(var(--accent)/0.18),transparent_60%)]"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 opacity-[0.07] [background-image:linear-gradient(hsl(var(--foreground))_1px,transparent_1px),linear-gradient(90deg,hsl(var(--foreground))_1px,transparent_1px)] [background-size:40px_40px]"
-      />
+    <div className="flex min-h-screen flex-col bg-[hsl(var(--sidebar-background))] text-[hsl(var(--foreground))]">
+      {/* Top bar (dark, sidebar color) -- logo lives here */}
+      <header className="flex items-center justify-between px-6 py-4 sm:px-10">
+        <img
+          src="/brand/cloudguardiq-primary-dark.svg"
+          alt="CloudGuardIQ"
+          className="h-9 w-auto select-none"
+          draggable={false}
+        />
+        <a
+          href="#"
+          className="hidden text-sm text-[hsl(var(--sidebar-foreground))] hover:text-[hsl(var(--sidebar-accent-foreground))] sm:inline"
+        >
+          Contact sales
+        </a>
+      </header>
 
-      <div className="mx-auto grid min-h-screen w-full max-w-7xl grid-cols-1 lg:grid-cols-2">
-        {/* Left: brand + value props */}
-        <section className="hidden flex-col justify-between px-10 py-12 lg:flex">
-          <header className="flex items-center gap-3">
-            <img
-              src="/brand/cloudguardiq-primary-dark.svg"
-              alt="CloudGuardIQ"
-              className="h-9 w-auto select-none"
-              draggable={false}
-            />
-          </header>
+      {/* Main panel (light background with ambient gradients) */}
+      <main className="relative flex flex-1 overflow-hidden bg-[hsl(var(--background))]">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(80%_60%_at_15%_10%,hsl(var(--primary)/0.18),transparent_60%),radial-gradient(70%_55%_at_90%_90%,hsl(var(--accent)/0.18),transparent_60%)]"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 opacity-[0.07] [background-image:linear-gradient(hsl(var(--foreground))_1px,transparent_1px),linear-gradient(90deg,hsl(var(--foreground))_1px,transparent_1px)] [background-size:40px_40px]"
+        />
 
-          <div className="space-y-8">
+        <div className="relative mx-auto grid w-full max-w-7xl flex-1 grid-cols-1 items-center gap-10 px-6 py-12 sm:px-10 lg:grid-cols-2">
+          {/* Left: value props */}
+          <section className="hidden flex-col gap-8 lg:flex">
             <div className="space-y-4">
               <span className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))]/70 px-3 py-1 text-xs font-medium text-[hsl(var(--muted-foreground))] backdrop-blur">
                 <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))]" />
@@ -108,87 +115,75 @@ function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
                 </li>
               ))}
             </ul>
-          </div>
+          </section>
 
-          <footer className="flex items-center justify-between text-xs text-[hsl(var(--muted-foreground))]">
-            <span>© {new Date().getFullYear()} CloudGuardIQ</span>
-            <span>SOC 2 · ISO 27001 ready</span>
-          </footer>
-        </section>
+          {/* Right: sign-in card */}
+          <section className="flex items-center justify-center">
+            <div className="w-full max-w-md">
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/85 p-8 shadow-xl shadow-black/5 backdrop-blur-xl">
+                <div className="space-y-2 text-center">
+                  <h2 className="text-2xl font-semibold tracking-tight">
+                    Welcome back
+                  </h2>
+                  <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                    Sign in with your work account to access your tenant.
+                  </p>
+                </div>
 
-        {/* Right: sign-in card */}
-        <section className="flex items-center justify-center px-6 py-12 sm:px-10">
-          <div className="w-full max-w-md">
-            {/* Mobile brand */}
-            <div className="mb-8 flex flex-col items-center gap-2 lg:hidden">
-              <img
-                src="/brand/cloudguardiq-primary-dark.svg"
-                alt="CloudGuardIQ"
-                className="h-10 w-auto select-none"
-                draggable={false}
-              />
-              <p className="text-sm text-[hsl(var(--muted-foreground))]">
-                Cloud Security &amp; FinOps Platform
+                <div className="mt-8 space-y-3">
+                  <Button
+                    size="lg"
+                    className="w-full gap-2"
+                    onClick={onSignIn}
+                  >
+                    <MicrosoftLogo className="h-4 w-4" />
+                    Sign in with Microsoft
+                  </Button>
+                  <p className="text-center text-xs text-[hsl(var(--muted-foreground))]">
+                    Single sign-on via Microsoft Entra ID
+                  </p>
+                </div>
+
+                <div className="my-6 flex items-center gap-3 text-[10px] uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
+                  <span className="h-px flex-1 bg-[hsl(var(--border))]" />
+                  <span>Secure by design</span>
+                  <span className="h-px flex-1 bg-[hsl(var(--border))]" />
+                </div>
+
+                <ul className="space-y-2 text-xs text-[hsl(var(--muted-foreground))]">
+                  <li className="flex items-center gap-2">
+                    <CheckIcon /> Zero credentials stored — tokens minted via OBO
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <CheckIcon /> Read-only cloud access by default
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <CheckIcon /> Customer data isolated per tenant
+                  </li>
+                </ul>
+              </div>
+
+              <p className="mt-6 text-center text-xs text-[hsl(var(--muted-foreground))]">
+                By signing in you accept our{" "}
+                <a href="#" className="underline underline-offset-2 hover:text-[hsl(var(--foreground))]">
+                  Terms
+                </a>{" "}
+                and{" "}
+                <a href="#" className="underline underline-offset-2 hover:text-[hsl(var(--foreground))]">
+                  Privacy Policy
+                </a>
+                .
               </p>
             </div>
+          </section>
+        </div>
+      </main>
 
-            <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/80 p-8 shadow-xl shadow-black/5 backdrop-blur-xl">
-              <div className="space-y-2 text-center">
-                <h2 className="text-2xl font-semibold tracking-tight">
-                  Welcome back
-                </h2>
-                <p className="text-sm text-[hsl(var(--muted-foreground))]">
-                  Sign in with your work account to access your tenant.
-                </p>
-              </div>
-
-              <div className="mt-8 space-y-3">
-                <Button
-                  size="lg"
-                  className="w-full gap-2"
-                  onClick={onSignIn}
-                >
-                  <MicrosoftLogo className="h-4 w-4" />
-                  Sign in with Microsoft
-                </Button>
-                <p className="text-center text-xs text-[hsl(var(--muted-foreground))]">
-                  Single sign-on via Microsoft Entra ID
-                </p>
-              </div>
-
-              <div className="my-6 flex items-center gap-3 text-[10px] uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
-                <span className="h-px flex-1 bg-[hsl(var(--border))]" />
-                <span>Secure by design</span>
-                <span className="h-px flex-1 bg-[hsl(var(--border))]" />
-              </div>
-
-              <ul className="space-y-2 text-xs text-[hsl(var(--muted-foreground))]">
-                <li className="flex items-center gap-2">
-                  <CheckIcon /> Zero credentials stored — tokens minted via OBO
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckIcon /> Read-only cloud access by default
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckIcon /> Customer data isolated per tenant
-                </li>
-              </ul>
-            </div>
-
-            <p className="mt-6 text-center text-xs text-[hsl(var(--muted-foreground))]">
-              By signing in you accept our{" "}
-              <a href="#" className="underline underline-offset-2 hover:text-[hsl(var(--foreground))]">
-                Terms
-              </a>{" "}
-              and{" "}
-              <a href="#" className="underline underline-offset-2 hover:text-[hsl(var(--foreground))]">
-                Privacy Policy
-              </a>
-              .
-            </p>
-          </div>
-        </section>
-      </div>
+      {/* Bottom bar (dark, sidebar color) */}
+      <footer className="flex flex-col items-center justify-between gap-2 border-t border-[hsl(var(--sidebar-border))] px-6 py-4 text-xs text-[hsl(var(--sidebar-foreground))] sm:flex-row sm:px-10">
+        <span>© {new Date().getFullYear()} CloudGuardIQ · Cloud Security &amp; FinOps Platform</span>
+        <span className="text-[hsl(var(--sidebar-muted))]">SOC 2 · ISO 27001 ready</span>
+      </footer>
     </div>
   );
 }
