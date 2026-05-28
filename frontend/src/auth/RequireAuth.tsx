@@ -52,7 +52,7 @@ function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
         <img
           src="/brand/cloudguardiq-primary-dark.svg"
           alt="CloudGuardIQ"
-          className="h-9 w-auto select-none"
+          className="h-16 w-auto select-none"
           draggable={false}
         />
         <a
@@ -101,7 +101,7 @@ function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
                 { title: "Multi-cloud", body: "Azure, AWS &amp; GCP scanners" },
                 { title: "AI remediation", body: "GPT-5.1 fix templates" },
                 { title: "FinOps", body: "Waste &amp; rightsizing" },
-                { title: "Compliance", body: "CIS · NIST · PCI · ISO" },
+                { title: "Compliance", body: "SOC2 · CIS · NIST · PCI · ISO · HIPAA" },
               ].map((feature) => (
                 <li
                   key={feature.title}
@@ -182,7 +182,7 @@ function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
       {/* Bottom bar (dark, sidebar color) */}
       <footer className="flex flex-col items-center justify-between gap-2 border-t border-[hsl(var(--sidebar-border))] px-6 py-4 text-xs text-[hsl(var(--sidebar-foreground))] sm:flex-row sm:px-10">
         <span>© {new Date().getFullYear()} CloudGuardIQ · Cloud Security &amp; FinOps Platform</span>
-        <span className="text-[hsl(var(--sidebar-muted))]">SOC 2 · ISO 27001 ready</span>
+        <span className="text-[hsl(var(--sidebar-muted))]">SOC2 · CIS · NIST · PCI · ISO · HIPAA ready</span>
       </footer>
     </div>
   );
