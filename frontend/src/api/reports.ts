@@ -28,13 +28,25 @@ export async function listReports(
   return data.reports;
 }
 
+export interface GenerateReportOptions {
+  from?: string;
+  to?: string;
+}
+
 export async function generateReport(
   subscriptionId: string,
   framework = "CIS",
+  options: GenerateReportOptions = {},
 ): Promise<ReportRecord> {
+  const params: Record<string, string> = {
+    subscription_id: subscriptionId,
+    framework,
+  };
+  if (options.from) params.from_date = options.from;
+  if (options.to) params.to_date = options.to;
   const { data } = await apiClient.get<{ report: ReportRecord }>(
     "/reports/generate",
-    { params: { subscription_id: subscriptionId, framework } },
+    { params },
   );
   return data.report;
 }

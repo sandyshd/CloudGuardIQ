@@ -234,6 +234,7 @@ async def lifespan(
         service=_build_reports_service(_repo),
         validate_owned_subscription=_validate_owned_subscription,
         get_repo=get_repo,
+        get_providers_for_scope=_providers_for_scope,
     )
 
     # Wire the Azure Retail Prices service. Warmup pulls the last-known
@@ -359,6 +360,8 @@ def _build_reports_service(cosmos_repo: CosmosRepository | None) -> ReportsServi
 
 
 _bootstrap_reports_service = _build_reports_service(None)
+# ``_providers_for_scope`` is defined later in this module; bootstrap leaves it
+# unset and the lifespan handler re-configures with the live helper.
 reports_module.configure(
     service=_bootstrap_reports_service,
     validate_owned_subscription=_validate_owned_subscription,

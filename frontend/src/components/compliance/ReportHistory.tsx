@@ -8,6 +8,7 @@ import {
   triggerBrowserDownload,
   type ReportRecord,
 } from "../../api/reports";
+import { useTimeRange } from "../../contexts/TimeRangeContext";
 
 interface ReportHistoryProps {
   subscriptionId?: string;
@@ -43,6 +44,7 @@ export function ReportHistory({
   subscriptionId,
   framework = "CIS",
 }: ReportHistoryProps) {
+  const { range } = useTimeRange();
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -75,7 +77,10 @@ export function ReportHistory({
     setGenerating(true);
     setError(null);
     try {
-      await generateReport(subscriptionId, framework);
+      await generateReport(subscriptionId, framework, {
+        from: range.from.toISOString(),
+        to: range.to.toISOString(),
+      });
       await reload();
     } catch (err) {
       setError(

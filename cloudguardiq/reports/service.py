@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 
 from cloudguardiq.compliance.scorecard import FRAMEWORKS, compute_scorecard
+from cloudguardiq.core.enums import CloudProvider
 from cloudguardiq.core.models import FindingResult
 from cloudguardiq.reports.models import ReportRecord
 from cloudguardiq.reports.pdf_generator import ComplianceReportGenerator
@@ -40,6 +41,7 @@ class ReportsService:
         tenant_id: str = "",
         customer_name: str = "",
         generated_by: str = "",
+        providers: set[CloudProvider] | None = None,
     ) -> tuple[ReportRecord, bytes]:
         """Generate a PDF, upload it, persist metadata, and return both."""
         framework_id = ComplianceReportGenerator._normalise_framework(framework)
@@ -54,7 +56,7 @@ class ReportsService:
         blob_name = f"{subscription_id}/{framework_id}/{report_id}.pdf"
         download_url = await self._storage.upload(blob_name, pdf_bytes)
 
-        scorecard = compute_scorecard(findings_list)
+        scorecard = compute_scorecard(findings_list, providers=providers)
         row = next(
             (r for r in scorecard if r.framework_id == framework_id),
             None,
