@@ -960,6 +960,23 @@ class DiscoverResponse(BaseModel):
     subscriptions: list[DiscoveredSubscription]
 
 
+class AvailableInitiative(BaseModel):
+    """One framework mapped to its latest built-in Policy initiative."""
+
+    framework_id: str
+    definition_id: str
+    display_name: str = ""
+    version: str = ""
+    source: str = "static"  # 'discovered' (live) or 'static' (pinned)
+
+
+class AvailableInitiativesResponse(BaseModel):
+    """Response payload for GET /subscriptions/available-initiatives."""
+
+    customer_tenant_id: str
+    initiatives: list[AvailableInitiative] = Field(default_factory=list)
+
+
 class OnboardingTemplateResponse(BaseModel):
     """Response payload for GET /subscriptions/onboarding-template."""
 
@@ -969,6 +986,9 @@ class OnboardingTemplateResponse(BaseModel):
     deploy_url: str
     parameters_uri: str = ""
     scope: str  # 'subscription' or 'managementGroup'
+    assigned_initiatives: list[AvailableInitiative] = Field(
+        default_factory=list
+    )
 
 
 _GITHUB_BLOB_RE = re.compile(
@@ -1032,22 +1052,118 @@ def _resolve_template_uri(settings: Settings) -> str:
     return f"{base.rstrip('/')}{_BUNDLED_TEMPLATE_PATH}"
 
 
-def _build_parameters_uri(base_url: str, principal_id: str) -> str:
+# Built-in Azure Policy set definitions live under this provider path.
+_POLICY_SET_DEF_PREFIX = (
+    "/providers/Microsoft.Authorization/policySetDefinitions/"
+)
+
+
+def _definition_guid(definition_id: str) -> str:
+    """Return the trailing GUID of a policy set definition resource id."""
+    return definition_id.rstrip("/").split("/")[-1]
+
+
+def _parse_requested_frameworks(value: str) -> list[str]:
+    """Map an ``all`` / CSV selector to known framework ids.
+
+    Returns every supported framework when *value* is blank or ``all``;
+    otherwise the intersection of the requested ids with the supported
+    set, preserving the canonical order from ``FRAMEWORK_INITIATIVES``.
+    """
+    from cloudguardiq.adapters.azure.azure_policy_compliance_adapter import (
+        FRAMEWORK_INITIATIVES,
+    )
+
+    known = list(FRAMEWORK_INITIATIVES)
+    raw = (value or "").strip()
+    if not raw or raw.lower() == "all":
+        return known
+    requested = {p.strip().upper() for p in raw.split(",") if p.strip()}
+    return [fw for fw in known if fw in requested]
+
+
+async def _resolve_available_initiatives(
+    *, customer_tid: str, subscription_id: str, frameworks: list[str],
+) -> list[AvailableInitiative]:
+    """Resolve frameworks to their latest built-in initiative ids.
+
+    Single source of truth for both ``GET /available-initiatives`` and the
+    auto-populated Deploy-to-Azure parameters. Prefers live discovery
+    (Reader-only, tenant-independent built-in catalogue) when a
+    cross-tenant credential and a subscription are available, and falls
+    back to the pinned ``FRAMEWORK_INITIATIVES`` map so the result is
+    always populated. Never raises.
+    """
+    from cloudguardiq.adapters.azure.azure_policy_compliance_adapter import (
+        FRAMEWORK_INITIATIVES,
+        AzurePolicyComplianceAdapter,
+    )
+
+    discovered: dict[str, Any] = {}
+    if subscription_id and _credential_factory is not None:
+        try:
+            credential = _credential_factory.for_tenant(customer_tid)
+            adapter = AzurePolicyComplianceAdapter(
+                credential=credential,
+                subscription_id=subscription_id,
+            )
+            discovered = await adapter.discover_latest_initiatives()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Latest-initiative discovery failed tenant=%s: %s",
+                customer_tid, exc,
+            )
+
+    out: list[AvailableInitiative] = []
+    for fw in frameworks:
+        found = discovered.get(fw)
+        if found is not None:
+            out.append(AvailableInitiative(
+                framework_id=fw,
+                definition_id=found.definition_id,
+                display_name=found.display_name,
+                version=found.version,
+                source="discovered",
+            ))
+            continue
+        static_id = FRAMEWORK_INITIATIVES.get(fw)
+        if static_id:
+            out.append(AvailableInitiative(
+                framework_id=fw,
+                definition_id=static_id,
+                source="static",
+            ))
+    return out
+
+
+def _build_parameters_uri(
+    base_url: str,
+    principal_id: str,
+    initiative_ids: list[str] | None = None,
+) -> str:
     """Return a public URL that serves ARM deployment parameters.
 
     The URL is fed into the Azure Portal Deploy-to-Azure blade via
     ``/uriParameters/<encoded>`` so the customer-tenant CloudGuardIQ
     service principal id is pre-populated and the operator only has
-    to click Review + create. Returns an empty string when either
-    ``base_url`` is unset (prefill disabled) or ``principal_id`` is
-    not a well-formed GUID (defensive: never emit malformed URLs).
+    to click Review + create. When *initiative_ids* (built-in policy
+    set definition GUIDs) are supplied, they are appended as an
+    ``initiatives`` query parameter so the deployment also assigns the
+    latest regulatory initiatives in the same one click. Returns an
+    empty string when either ``base_url`` is unset (prefill disabled)
+    or ``principal_id`` is not a well-formed GUID (defensive: never
+    emit malformed URLs).
     """
     if not base_url or not principal_id:
         return ""
     if not _GUID_RE.match(principal_id):
         return ""
     base = base_url.rstrip("/")
-    return f"{base}/subscriptions/onboarding-parameters/{principal_id}"
+    uri = f"{base}/subscriptions/onboarding-parameters/{principal_id}"
+    guids = [g for g in (initiative_ids or []) if _GUID_RE.match(g)]
+    if guids:
+        uri += "?" + urlencode({"initiatives": ",".join(guids)})
+    return uri
 
 
 def _build_deploy_url(
@@ -1306,6 +1422,8 @@ async def _resolve_principal_for_tenant(
 async def get_onboarding_template(
     tenant_id: str = "",
     scope: str = "managementGroup",
+    assign_frameworks: str = "",
+    subscription_id: str = "",
     user: TokenPayload = _auth,
 ) -> OnboardingTemplateResponse:
     """Return the Deploy-to-Azure URL that grants Reader to CloudGuardIQ.
@@ -1313,6 +1431,15 @@ async def get_onboarding_template(
     *scope* is ``subscription`` or ``managementGroup``. Pick
     ``managementGroup`` to cover all current and future subs in one
     deployment; pick ``subscription`` to scope the grant tightly.
+
+    *assign_frameworks* opts the deployment into automatically assigning
+    the latest built-in regulatory initiatives (``all`` or a CSV of
+    framework ids such as ``CIS_AZURE,NIST_800_53``). When set, the
+    resolved initiative GUIDs are pre-populated into the deploy
+    parameters so the one click grants Reader *and* assigns the
+    initiatives. Omitting it keeps the Reader-only default.
+    *subscription_id* lets the resolver fetch the live latest version;
+    without it the pinned catalogue is used.
     """
     if scope not in ("subscription", "managementGroup"):
         raise HTTPException(
@@ -1335,8 +1462,19 @@ async def get_onboarding_template(
     principal_id = await _resolve_principal_for_tenant(
         settings, caller_tid=caller_tid, customer_tid=customer_tid,
     )
+    assigned: list[AvailableInitiative] = []
+    initiative_guids: list[str] = []
+    if assign_frameworks.strip():
+        assigned = await _resolve_available_initiatives(
+            customer_tid=customer_tid,
+            subscription_id=subscription_id.strip(),
+            frameworks=_parse_requested_frameworks(assign_frameworks),
+        )
+        initiative_guids = [
+            _definition_guid(a.definition_id) for a in assigned
+        ]
     parameters_uri = _build_parameters_uri(
-        settings.public_api_base_url, principal_id,
+        settings.public_api_base_url, principal_id, initiative_guids,
     )
     return OnboardingTemplateResponse(
         customer_tenant_id=customer_tid,
@@ -1347,6 +1485,38 @@ async def get_onboarding_template(
         ),
         parameters_uri=parameters_uri,
         scope=scope,
+        assigned_initiatives=assigned,
+    )
+
+
+@router.get(
+    "/available-initiatives",
+    response_model=AvailableInitiativesResponse,
+)
+async def get_available_initiatives(
+    tenant_id: str = "",
+    subscription_id: str = "",
+    frameworks: str = "all",
+    user: TokenPayload = _auth,
+) -> AvailableInitiativesResponse:
+    """List the latest built-in regulatory initiative per framework.
+
+    Read-only (Reader role is sufficient). Prefers live discovery when a
+    *subscription_id* and a cross-tenant credential are available, and
+    falls back to the pinned catalogue otherwise. The returned
+    ``definition_id`` values are exactly what the Deploy-to-Azure flow
+    assigns when ``assign_frameworks`` is used.
+    """
+    caller_tid = get_tenant_id(user)
+    customer_tid = (tenant_id or caller_tid).strip().lower()
+    initiatives = await _resolve_available_initiatives(
+        customer_tid=customer_tid,
+        subscription_id=subscription_id.strip(),
+        frameworks=_parse_requested_frameworks(frameworks),
+    )
+    return AvailableInitiativesResponse(
+        customer_tenant_id=customer_tid,
+        initiatives=initiatives,
     )
 
 
@@ -1355,29 +1525,45 @@ async def get_onboarding_template(
     include_in_schema=False,
     responses={200: {"content": {"application/json": {}}}},
 )
-async def get_onboarding_parameters(principal_id: str) -> Response:
+async def get_onboarding_parameters(
+    principal_id: str, initiatives: str = "",
+) -> Response:
     """Return the ARM deployment parameters file for one principal.
 
     The Azure Portal Deploy-to-Azure blade fetches this URL (anonymously)
     to pre-populate ``cloudGuardIQPrincipalId`` in the customer-tenant
     role-assignment template. The endpoint is intentionally unauthenticated
     so the portal can fetch it; the only data echoed back is the GUID the
-    caller already provides in the path, so no information is leaked.
+    caller already provides plus, optionally, public built-in policy set
+    definition GUIDs (via *initiatives*, a CSV), so no information is
+    leaked. When *initiatives* contains valid GUIDs they are expanded to
+    full resource ids and emitted as ``policySetDefinitionIds`` so the
+    deployment also assigns the latest regulatory initiatives.
     """
     if not _GUID_RE.match(principal_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="principal_id must be a valid GUID.",
         )
+    parameters: dict[str, Any] = {
+        "cloudGuardIQPrincipalId": {"value": principal_id},
+    }
+    guids = [
+        g.strip()
+        for g in initiatives.split(",")
+        if g.strip() and _GUID_RE.match(g.strip())
+    ]
+    if guids:
+        parameters["policySetDefinitionIds"] = {
+            "value": [_POLICY_SET_DEF_PREFIX + g for g in guids],
+        }
     body = {
         "$schema": (
             "https://schema.management.azure.com/schemas/"
             "2019-04-01/deploymentParameters.json#"
         ),
         "contentVersion": "1.0.0.0",
-        "parameters": {
-            "cloudGuardIQPrincipalId": {"value": principal_id},
-        },
+        "parameters": parameters,
     }
     import json
     return Response(

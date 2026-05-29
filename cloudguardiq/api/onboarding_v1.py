@@ -952,6 +952,7 @@ async def generate_onboarding_artifacts_v1(
     template = await subscriptions_module.get_onboarding_template(
         tenant_id=legacy.customer_tenant_id,
         scope="subscription",
+        assign_frameworks="all",
         user=user,
     )
     azure_artifacts["template_uri"] = template.template_uri
@@ -959,6 +960,10 @@ async def generate_onboarding_artifacts_v1(
     azure_artifacts["azure_principal_id"] = template.azure_principal_id
     if template.parameters_uri:
         azure_artifacts["parameters_uri"] = template.parameters_uri
+    if template.assigned_initiatives:
+        azure_artifacts["assigned_initiatives"] = ",".join(
+            a.framework_id for a in template.assigned_initiatives
+        )
     await _append_audit_event(
         user=user,
         action="artifacts_generated",

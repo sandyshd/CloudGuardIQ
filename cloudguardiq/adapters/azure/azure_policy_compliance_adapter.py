@@ -176,7 +176,7 @@ class AzurePolicyComplianceAdapter(AdapterBase):
         self,
         credential: TokenCredential,
         subscription_id: str,
-        db: CosmosRepository,
+        db: CosmosRepository | None = None,
         initiatives: list[str] | None = None,
     ) -> None:
         self._credential = credential
