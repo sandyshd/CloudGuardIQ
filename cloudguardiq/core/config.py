@@ -111,6 +111,12 @@ class Settings(BaseSettings):
     azure_principal_id: str = ""
     azure_principal_display_name: str = "CloudGuardIQ"
 
+    # Compliance report storage (Phase 5.1)
+    # When ``azure_storage_account_url`` is empty the API falls back to an
+    # in-memory store and serves PDFs via /reports/{id}/download.
+    azure_storage_account_url: str = ""
+    reports_blob_container: str = "cloudguardiq-reports"
+
 
 @lru_cache
 def get_settings() -> Settings:

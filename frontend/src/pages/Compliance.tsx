@@ -58,7 +58,7 @@ export function Compliance() {
           primaryLabel="Go to Findings"
           primaryTo="/findings"
         />
-        <ReportHistory />
+        <ReportHistory subscriptionId={selectedSub?.subscription_id} />
       </div>
     );
   }
@@ -84,7 +84,10 @@ export function Compliance() {
         scorecard={scorecard}
       />
 
-      <ReportHistory />
+      <ReportHistory
+        subscriptionId={selectedSub?.subscription_id}
+        framework={framework?.split(/[_-]/)[0] || "CIS"}
+      />
 
       {selected && (
         <FindingDetailPanel

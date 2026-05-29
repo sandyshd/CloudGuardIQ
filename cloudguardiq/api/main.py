@@ -228,6 +228,14 @@ async def lifespan(
         audit_event_repository=_audit_event_repo,
     )
 
+    # Re-wire the reports service so its repository shares the live
+    # Cosmos connection (the bootstrap service uses in-memory storage).
+    reports_module.configure(
+        service=_build_reports_service(_repo),
+        validate_owned_subscription=_validate_owned_subscription,
+        get_repo=get_repo,
+    )
+
     # Wire the Azure Retail Prices service. Warmup pulls the last-known
     # cache from Cosmos so the very first scan after a cold start has
     # live prices; the refresh runs in the background so startup is not
@@ -318,6 +326,45 @@ onboarding_v1_module.configure(
 app.include_router(onboarding_module.router)
 app.include_router(onboarding_v1_module.router)
 app.include_router(onboarding_v1_module.cloud_connections_router)
+
+# Compliance report routes (Phase 5.1)
+from cloudguardiq.api import reports as reports_module  # noqa: E402
+from cloudguardiq.reports import (  # noqa: E402
+    BlobReportStorage,
+    ComplianceReportGenerator,
+    InMemoryReportStorage,
+    ReportsRepository,
+    ReportsService,
+)
+
+
+def _build_reports_service(cosmos_repo: CosmosRepository | None) -> ReportsService:
+    """Construct the ReportsService, picking a storage backend by config."""
+    settings = get_settings()
+    account_url = getattr(settings, "azure_storage_account_url", "") or ""
+    container = getattr(settings, "reports_blob_container", "") or "cloudguardiq-reports"
+    storage: BlobReportStorage | InMemoryReportStorage
+    if account_url:
+        storage = BlobReportStorage(
+            account_url=account_url,
+            container=container,
+        )
+    else:
+        storage = InMemoryReportStorage()
+    return ReportsService(
+        generator=ComplianceReportGenerator(),
+        storage=storage,
+        repository=ReportsRepository(cosmos_repo),
+    )
+
+
+_bootstrap_reports_service = _build_reports_service(None)
+reports_module.configure(
+    service=_bootstrap_reports_service,
+    validate_owned_subscription=_validate_owned_subscription,
+    get_repo=get_repo,
+)
+app.include_router(reports_module.router)
 
 
 # ------------------------------------------------------------------
