@@ -23,6 +23,10 @@ import {
   X as XIcon,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import {
+  findingSource,
+  type FindingSource,
+} from "../components/common/SourceBadge";
 import type { FindingResult, Severity, FindingType, FindingStatus } from "../types";
 
 function formatScanError(err: unknown): string {
@@ -104,6 +108,12 @@ const TYPE_OPTIONS: { id: FindingType | "ALL"; label: string }[] = [
   { id: "COMPLIANCE", label: "Compliance" },
 ];
 
+const SOURCE_OPTIONS: { id: FindingSource | "ALL"; label: string }[] = [
+  { id: "ALL", label: "All sources" },
+  { id: "AZURE_POLICY", label: "Azure Policy" },
+  { id: "NATIVE", label: "CloudGuardIQ" },
+];
+
 export function Findings() {
   const [subscriptionFilter, setSubscriptionFilter] = useState<string | "ALL" | "">("");
   const { subscriptions, selected: selectedSub } = useSubscriptions();
@@ -122,6 +132,7 @@ export function Findings() {
   const [severityFilter, setSeverityFilter] = useState<Severity | "ALL">("ALL");
   const [typeFilter, setTypeFilter] = useState<FindingType | "ALL">("ALL");
   const [statusFilter, setStatusFilter] = useState<FindingStatus | "ALL">("ALL");
+  const [sourceFilter, setSourceFilter] = useState<FindingSource | "ALL">("ALL");
   const [search, setSearch] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -183,6 +194,7 @@ export function Findings() {
       if (severityFilter !== "ALL" && f.severity !== severityFilter) return false;
       if (typeFilter !== "ALL" && f.finding_type !== typeFilter) return false;
       if (statusFilter !== "ALL" && (f.status ?? "OPEN") !== statusFilter) return false;
+      if (sourceFilter !== "ALL" && findingSource(f.rule_id) !== sourceFilter) return false;
       if (q) {
         const blob = [
           f.rule_name,
@@ -199,12 +211,13 @@ export function Findings() {
       }
       return true;
     });
-  }, [findings, severityFilter, typeFilter, statusFilter, search]);
+  }, [findings, severityFilter, typeFilter, statusFilter, sourceFilter, search]);
 
   const hasActiveFilters =
     severityFilter !== "ALL" ||
     typeFilter !== "ALL" ||
     statusFilter !== "ALL" ||
+    sourceFilter !== "ALL" ||
     search.length > 0;
 
   if (loading) {
@@ -373,6 +386,19 @@ export function Findings() {
         </select>
 
         <select
+          aria-label="Source"
+          className="h-9 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value as FindingSource | "ALL")}
+        >
+          {SOURCE_OPTIONS.map((opt) => (
+            <option key={opt.id} value={opt.id}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+
+        <select
           aria-label="Subscription"
           className="h-9 max-w-[200px] truncate rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
           value={subscriptionFilter}
@@ -395,6 +421,7 @@ export function Findings() {
               setSeverityFilter("ALL");
               setTypeFilter("ALL");
               setStatusFilter("ALL");
+              setSourceFilter("ALL");
               setSearch("");
             }}
           >

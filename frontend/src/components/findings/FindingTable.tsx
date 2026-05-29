@@ -9,6 +9,7 @@ import {
 } from "../ui/table";
 import { SeverityBadge } from "../common/SeverityBadge";
 import { DataTierBadge } from "../common/DataTierBadge";
+import { SourceBadge } from "../common/SourceBadge";
 import { Badge } from "../ui/badge";
 import { ChevronRight, Copy, Check } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -174,8 +175,11 @@ export function FindingTable({ findings, onSelect }: FindingTableProps) {
                   />
                 </TableCell>
                 <TableCell className="max-w-[360px]">
-                  <div className="truncate text-[13px] font-medium text-[hsl(var(--foreground))]">
-                    {f.rule_name || f.rule_id}
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate text-[13px] font-medium text-[hsl(var(--foreground))]">
+                      {f.rule_name || f.rule_id}
+                    </span>
+                    <SourceBadge ruleId={f.rule_id} />
                   </div>
                   <div className="truncate text-xs text-[hsl(var(--muted-foreground))]">
                     {f.description}

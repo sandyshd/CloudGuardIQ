@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { SeverityBadge } from "../common/SeverityBadge";
 import { DataTierBadge } from "../common/DataTierBadge";
+import { SourceBadge } from "../common/SourceBadge";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { useToast } from "../ui/toast";
@@ -199,6 +200,7 @@ export function FindingDetailPanel({ finding, onClose, onUpdate }: FindingDetail
                 <SeverityBadge severity={local.severity} />
                 <Badge variant="outline">{local.finding_type}</Badge>
                 {r?.data_tier && <DataTierBadge tier={r.data_tier} />}
+                <SourceBadge ruleId={local.rule_id} showNative />
               </div>
               <h2 className="mt-2 text-lg font-semibold leading-tight tracking-tight text-[hsl(var(--foreground))]">
                 {local.rule_name || local.rule_id}
