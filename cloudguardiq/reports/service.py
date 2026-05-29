@@ -51,6 +51,7 @@ class ReportsService:
             framework=framework_id,
             findings=findings_list,
             customer_name=customer_name,
+            providers=providers,
         )
         report_id = uuid.uuid4().hex
         blob_name = f"{subscription_id}/{framework_id}/{report_id}.pdf"

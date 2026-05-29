@@ -32,7 +32,7 @@ from cloudguardiq.compliance.scorecard import (
     _classify,  # noqa: PLC2701 -- internal helper used to map tags to control ids
     compute_scorecard,
 )
-from cloudguardiq.core.enums import FindingStatus, Severity
+from cloudguardiq.core.enums import CloudProvider, FindingStatus, Severity
 from cloudguardiq.core.models import FindingResult
 
 logger = logging.getLogger(__name__)
@@ -117,13 +117,19 @@ class ComplianceReportGenerator:
         framework: str,
         findings: Iterable[FindingResult],
         customer_name: str = "",
+        providers: set[CloudProvider] | None = None,
     ) -> bytes:
-        """Generate a compliance report PDF and return its raw bytes."""
+        """Generate a compliance report PDF and return its raw bytes.
+
+        ``providers`` restricts the rule catalogue used in the denominator
+        to the clouds the subscription has connected, matching the
+        ``/compliance/scorecard`` endpoint that powers the Compliance page.
+        """
         framework_id = self._normalise_framework(framework)
         fw = _framework_def(framework_id)
         findings_list = list(findings)
 
-        scorecard = compute_scorecard(findings_list)
+        scorecard = compute_scorecard(findings_list, providers=providers)
         score_row = next(
             (row for row in scorecard if row.framework_id == framework_id),
             None,
