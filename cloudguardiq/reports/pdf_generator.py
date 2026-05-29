@@ -46,6 +46,132 @@ _SEVERITY_ORDER: dict[Severity, int] = {
     Severity.INFORMATIONAL: 4,
 }
 
+_CIS_AZURE_CATEGORY_LABELS: dict[str, str] = {
+    "1": "Identity and Access Management",
+    "2": "Microsoft Defender for Cloud",
+    "3": "Storage Accounts",
+    "4": "Database Services",
+    "5": "Logging and Monitoring",
+    "6": "Networking",
+    "7": "Virtual Machines",
+    "8": "Key Vault",
+    "9": "App Service",
+    "10": "Miscellaneous",
+}
+
+_NIST_800_53_CATEGORY_LABELS: dict[str, str] = {
+    "AC": "Access Control",
+    "AT": "Awareness and Training",
+    "AU": "Audit and Accountability",
+    "CA": "Assessment, Authorization, and Monitoring",
+    "CM": "Configuration Management",
+    "CP": "Contingency Planning",
+    "IA": "Identification and Authentication",
+    "IR": "Incident Response",
+    "MA": "Maintenance",
+    "MP": "Media Protection",
+    "PE": "Physical and Environmental Protection",
+    "PL": "Planning",
+    "PM": "Program Management",
+    "PS": "Personnel Security",
+    "PT": "PII Processing and Transparency",
+    "RA": "Risk Assessment",
+    "SA": "System and Services Acquisition",
+    "SC": "System and Communications Protection",
+    "SI": "System and Information Integrity",
+    "SR": "Supply Chain Risk Management",
+}
+
+_ISO_27001_CATEGORY_LABELS: dict[str, str] = {
+    "A.5": "Information security policies",
+    "A.6": "Organization of information security",
+    "A.7": "Human resource security",
+    "A.8": "Asset management",
+    "A.9": "Access control",
+    "A.10": "Cryptography",
+    "A.11": "Physical and environmental security",
+    "A.12": "Operations security",
+    "A.13": "Communications security",
+    "A.14": "System acquisition, development and maintenance",
+    "A.15": "Supplier relationships",
+    "A.16": "Information security incident management",
+    "A.17": "Information security aspects of business continuity",
+    "A.18": "Compliance",
+}
+
+_PCI_DSS_CATEGORY_LABELS: dict[str, str] = {
+    "1": "Install and maintain network security controls",
+    "2": "Apply secure configurations",
+    "3": "Protect stored account data",
+    "4": "Protect cardholder data with strong cryptography during transmission",
+    "5": "Protect systems and networks from malicious software",
+    "6": "Develop and maintain secure systems and software",
+    "7": "Restrict access to system components and cardholder data",
+    "8": "Identify users and authenticate access to system components",
+    "9": "Restrict physical access to cardholder data",
+    "10": "Log and monitor all access to system components and cardholder data",
+    "11": "Test security of systems and networks regularly",
+    "12": "Support information security with organizational policies and programs",
+}
+
+_SOC2_CATEGORY_LABELS: dict[str, str] = {
+    "CC1": "Control Environment",
+    "CC2": "Communication and Information",
+    "CC3": "Risk Assessment",
+    "CC4": "Monitoring Activities",
+    "CC5": "Control Activities",
+    "CC6": "Logical and Physical Access Controls",
+    "CC7": "System Operations",
+    "CC8": "Change Management",
+    "CC9": "Risk Mitigation",
+}
+
+_HIPAA_CATEGORY_LABELS: dict[str, str] = {
+    "164.308": "Administrative Safeguards",
+    "164.310": "Physical Safeguards",
+    "164.312": "Technical Safeguards",
+    "164.314": "Organizational Requirements",
+    "164.316": "Policies and Procedures",
+}
+
+_FRAMEWORK_CATEGORY_LABELS: dict[str, dict[str, str]] = {
+    "CIS_AZURE": _CIS_AZURE_CATEGORY_LABELS,
+    "NIST_800_53": _NIST_800_53_CATEGORY_LABELS,
+    "ISO_27001": _ISO_27001_CATEGORY_LABELS,
+    "PCI_DSS": _PCI_DSS_CATEGORY_LABELS,
+    "SOC2": _SOC2_CATEGORY_LABELS,
+    "HIPAA": _HIPAA_CATEGORY_LABELS,
+}
+
+
+def _category_for(framework_id: str, control_id: str) -> str:
+    """Return the category bucket for a control id under *framework_id*."""
+    if not control_id:
+        return "Other"
+    if framework_id in ("CIS_AZURE", "PCI_DSS"):
+        return control_id.split(".", 1)[0]
+    if framework_id == "NIST_800_53":
+        return control_id.split("-", 1)[0]
+    if framework_id == "SOC2":
+        return control_id.split(".", 1)[0]
+    if framework_id == "ISO_27001":
+        parts = control_id.split(".")
+        return ".".join(parts[:2]) if len(parts) >= 2 else control_id
+    if framework_id == "HIPAA":
+        head = control_id.split("(", 1)[0]
+        return head.rstrip(".")
+    return control_id
+
+
+def _category_label(framework_id: str, category: str) -> str:
+    """Map a category bucket to a human-readable display label."""
+    table = _FRAMEWORK_CATEGORY_LABELS.get(framework_id, {})
+    label = table.get(category)
+    if label:
+        return f"{category} — {label}"
+    return category
+
+
 _SEVERITY_COLOR: dict[Severity, colors.Color] = {
     Severity.CRITICAL: colors.HexColor("#b91c1c"),
     Severity.HIGH: colors.HexColor("#c2410c"),
@@ -286,23 +412,30 @@ class ComplianceReportGenerator:
         relevant: list[FindingResult],
     ) -> list:
         styles = self._styles
-        category_totals: dict[str, dict[str, int]] = {}
+        # Track distinct failing control ids and total open findings per
+        # category so the two columns aren't duplicates of each other.
+        category_controls: dict[str, set[str]] = {}
+        category_findings: dict[str, int] = {}
         for f in relevant:
             control_id = self._first_control_id(f, fw)
             if not control_id:
                 continue
-            category = control_id.split(".")[0].split("-")[0] or "Other"
-            bucket = category_totals.setdefault(
-                category, {"pass": 0, "fail": 0}
-            )
-            bucket["fail"] += 1
+            category = _category_for(fw.id, control_id)
+            category_controls.setdefault(category, set()).add(control_id)
+            category_findings[category] = category_findings.get(category, 0) + 1
         rows = [["Category", "Failing controls", "Open findings"]]
-        if category_totals:
-            for cat, counts in sorted(category_totals.items()):
-                rows.append([cat, str(counts["fail"]), str(counts["fail"])])
+        if category_controls:
+            for cat in sorted(category_controls):
+                rows.append(
+                    [
+                        _category_label(fw.id, cat),
+                        str(len(category_controls[cat])),
+                        str(category_findings[cat]),
+                    ]
+                )
         else:
             rows.append(["—", "0", "0"])
-        table = Table(rows, colWidths=[3.0 * inch, 1.75 * inch, 1.75 * inch])
+        table = Table(rows, colWidths=[4.0 * inch, 1.25 * inch, 1.25 * inch])
         table.setStyle(self._header_table_style())
         return [
             Paragraph("Score Breakdown", styles["SectionHeader"]),
