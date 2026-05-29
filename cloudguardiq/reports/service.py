@@ -46,14 +46,16 @@ class ReportsService:
         """Generate a PDF, upload it, persist metadata, and return both."""
         framework_id = ComplianceReportGenerator._normalise_framework(framework)
         findings_list = list(findings)
+        report_id = uuid.uuid4().hex
         pdf_bytes = await self._generator.generate(
             subscription_id=subscription_id,
             framework=framework_id,
             findings=findings_list,
             customer_name=customer_name,
             providers=providers,
+            generated_by=generated_by,
+            report_id=report_id,
         )
-        report_id = uuid.uuid4().hex
         blob_name = f"{subscription_id}/{framework_id}/{report_id}.pdf"
         download_url = await self._storage.upload(blob_name, pdf_bytes)
 

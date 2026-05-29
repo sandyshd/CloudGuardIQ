@@ -36,7 +36,7 @@ export function Reports() {
         <EmptyState
           icon={<Link2 className="h-12 w-12" />}
           title="Link a subscription to generate reports"
-          message="PDF compliance reports are generated from scan results for a specific subscription. Connect an Azure subscription on the Settings page to begin."
+          message="Compliance readiness reports are generated from scan results for a specific subscription. Connect an Azure subscription on the Settings page to begin."
           primaryLabel="Go to Settings"
           primaryTo="/settings"
         />
@@ -55,9 +55,9 @@ export function Reports() {
               <FileText className="h-5 w-5" />
             </div>
             <div>
-              <div className="text-sm font-medium">Generate a compliance report</div>
+              <div className="text-sm font-medium">Generate a compliance readiness report</div>
               <div className="text-xs text-[hsl(var(--muted-foreground))]">
-                Pick a framework and click <em>Generate PDF report</em> below. Reports use the same scoring as the Compliance page for the active time range.
+                Pick a framework and click <em>Generate readiness report</em> below. Output is an informational readiness assessment (not an audit) using the same scoring as the Compliance page for the active time range.
               </div>
             </div>
           </div>

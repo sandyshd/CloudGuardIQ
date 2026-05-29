@@ -121,7 +121,7 @@ export function ReportHistory({
           ) : (
             <FileText className="h-4 w-4" />
           )}
-          {generating ? "Generating…" : "Generate PDF report"}
+          {generating ? "Generating…" : "Generate readiness report"}
         </button>
       </CardHeader>
       <CardContent>
@@ -139,8 +139,8 @@ export function ReportHistory({
           <div className="flex items-center gap-3 rounded-md border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted)/0.4)] p-4 text-sm text-[hsl(var(--muted-foreground))]">
             <FileText className="h-4 w-4 shrink-0" />
             {subscriptionId
-              ? "No reports generated yet. Click ‘Generate PDF report’ to create one."
-              : "Select a subscription to generate compliance reports."}
+              ? "No reports generated yet. Click ‘Generate readiness report’ to create one."
+              : "Select a subscription to generate readiness reports."}
           </div>
         ) : (
           <div className="overflow-x-auto">
