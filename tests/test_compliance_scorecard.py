@@ -138,3 +138,52 @@ class TestComputeScorecard:
         assert rows["CIS_AZURE"].controls_total > 0
         assert rows["NIST_800_53"].controls_total > 0
         assert rows["PCI_DSS"].controls_total >= 1
+
+
+class TestAzurePolicyFindings:
+    """Verify Azure Policy (AZPOL-) findings route to the right framework.
+
+    AzurePolicyComplianceAdapter emits FindingResults tagged like
+    ``CIS_AZURE:3.1`` -- the existing ``_classify`` helper must route these to
+    the matching framework via the compliance_frameworks tag, with no special
+    casing for the ``AZPOL-`` rule_id prefix.
+    """
+
+    def test_azpol_finding_counts_against_framework(self) -> None:
+        f = _finding(
+            rule_id="AZPOL-DenyHttpStorage",
+            severity=Severity.HIGH,
+            frameworks=["CIS_AZURE:3.1"],
+        )
+        rows = {r.framework_id: r for r in compute_scorecard([f])}
+        assert rows["CIS_AZURE"].controls_failed == 1
+        assert rows["CIS_AZURE"].open_findings == 1
+        assert rows["CIS_AZURE"].score < 100
+
+    def test_azpol_finding_framework_only_tag_routes(self) -> None:
+        # Framework-id-only fallback (no resolved control id) still routes.
+        f = _finding(
+            rule_id="AZPOL-RequireNistAC2",
+            severity=Severity.MEDIUM,
+            frameworks=["NIST_800_53:AC-2"],
+        )
+        rows = {r.framework_id: r for r in compute_scorecard([f])}
+        assert rows["NIST_800_53"].open_findings == 1
+
+    def test_azpol_soc2_and_hipaa_route(self) -> None:
+        # SOC2/HIPAA framework-id tags use ":" not "_" -- must still route.
+        findings = [
+            _finding(
+                rule_id="AZPOL-Soc2Logging",
+                severity=Severity.MEDIUM,
+                frameworks=["SOC2:CC6.1"],
+            ),
+            _finding(
+                rule_id="AZPOL-HipaaEncryption",
+                severity=Severity.HIGH,
+                frameworks=["HIPAA:164.312"],
+            ),
+        ]
+        rows = {r.framework_id: r for r in compute_scorecard(findings)}
+        assert rows["SOC2"].open_findings == 1
+        assert rows["HIPAA"].open_findings == 1

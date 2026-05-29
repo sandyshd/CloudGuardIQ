@@ -104,6 +104,18 @@ class ScanPipeline:
 
         # Step 2: Evaluate policies
         findings = self._policy_engine.evaluate(snapshots)
+
+        # Step 2b: Merge Azure Policy regulatory-compliance findings (Tier 1,
+        # free) the adapter emits directly, bypassing the rule registry. The
+        # local rules above still run unchanged for FinOps + safety checks.
+        policy_findings = getattr(self._adapter, "policy_findings", None)
+        if policy_findings:
+            findings.extend(policy_findings)
+            logger.info(
+                "Merged %d Azure Policy compliance finding(s) into scan %s",
+                len(policy_findings),
+                scan_id,
+            )
         if tenant_id:
             for finding in findings:
                 finding.tenant_id = tenant_id

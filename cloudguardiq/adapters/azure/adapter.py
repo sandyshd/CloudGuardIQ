@@ -8,6 +8,7 @@ AzureAdapter inherits AdapterBase and orchestrates:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -16,11 +17,14 @@ from azure.core.credentials_async import AsyncTokenCredential
 from azure.mgmt.resourcegraph import ResourceGraphClient
 from azure.mgmt.resourcegraph.models import QueryRequest, QueryRequestOptions
 
+from cloudguardiq.adapters.azure.azure_policy_compliance_adapter import (
+    AzurePolicyComplianceAdapter,
+)
 from cloudguardiq.adapters.base import AdapterBase
 from cloudguardiq.adapters.capability_detector import CapabilityDetector
 from cloudguardiq.adapters.native_scanner import NativeScanner
 from cloudguardiq.core.enums import DataTier
-from cloudguardiq.core.models import ResourceSnapshot
+from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
 if TYPE_CHECKING:
     from cloudguardiq.core.database import CosmosRepository
@@ -63,6 +67,16 @@ class AzureAdapter(AdapterBase):
             subscription_id=subscription_id,
             db=db,
         )
+        # Tier 1 (free, Reader-accessible): ingest Microsoft's authoritative
+        # per-control compliance evaluation from Azure Policy. Emits
+        # FindingResult objects directly; the local rules keep running.
+        self._policy_adapter = AzurePolicyComplianceAdapter(
+            credential=credential,
+            subscription_id=subscription_id,
+            db=db,
+        )
+        # Populated by scan(); merged into the pipeline's findings list.
+        self._policy_findings: list[FindingResult] = []
 
     # ------------------------------------------------------------------
     # AdapterBase abstract methods
@@ -86,8 +100,20 @@ class AzureAdapter(AdapterBase):
             flags.tier3_available,
         )
 
-        snapshots = await self._scanner.scan()
-        logger.info("Tier 1 scan returned %d snapshots", len(snapshots))
+        # Run the Tier 1 Resource Graph scan and the (free, Reader-accessible)
+        # Azure Policy regulatory-compliance ingestion concurrently. Policy
+        # findings are stashed on the adapter and merged by the pipeline; a
+        # Policy failure never blocks the resource scan (fetch_findings never
+        # raises -- it returns []).
+        snapshots, self._policy_findings = await asyncio.gather(
+            self._scanner.scan(),
+            self._policy_adapter.fetch_findings(),
+        )
+        logger.info(
+            "Tier 1 scan returned %d snapshots, %d policy finding(s)",
+            len(snapshots),
+            len(self._policy_findings),
+        )
 
         if flags.tier2_available:
             try:
@@ -112,6 +138,17 @@ class AzureAdapter(AdapterBase):
                 )
 
         return snapshots
+
+    @property
+    def policy_findings(self) -> list[FindingResult]:
+        """Azure Policy compliance findings from the most recent scan().
+
+        The scan pipeline merges these into the rule-engine findings so they
+        flow through the scorecard, PDF readiness report, and GPT remediation.
+        Empty until scan() has run (or when no regulatory initiative is
+        assigned).
+        """
+        return self._policy_findings
 
     async def get_api_contract(self) -> dict[str, Any]:
         """Return current API response schema fingerprint for self-healing monitor.

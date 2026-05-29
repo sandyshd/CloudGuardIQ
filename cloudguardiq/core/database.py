@@ -9,6 +9,7 @@ Partition key mapping (must match Terraform container definitions):
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -586,6 +587,9 @@ class CosmosRepository:
                 tier1_available=item.get("tier1_available", True),
                 tier2_available=item.get("tier2_available", False),
                 tier3_available=item.get("tier3_available", False),
+                policy_compliance_available=item.get(
+                    "policy_compliance_available", False
+                ),
                 detected_at=datetime.fromisoformat(item["detected_at"]).replace(
                     tzinfo=timezone.utc
                 )
@@ -595,6 +599,62 @@ class CosmosRepository:
         except Exception:
             logger.debug("No capability flags found for %s", sub_id)
             return None
+    # ------------------------------------------------------------------
+    # Azure Policy regulatory-compliance control maps
+    # ------------------------------------------------------------------
+
+    async def get_policy_control_map(
+        self, initiative_id: str
+    ) -> dict[str, str] | None:
+        """Return the cached ``policy_definition_id -> control_id`` map.
+
+        Used by ``AzurePolicyComplianceAdapter`` to avoid re-reading initiative
+        metadata on every scan. Returns ``None`` on a cache miss, an expired
+        entry, or any read error.
+        """
+        import time as _time
+
+        digest = hashlib.sha256(initiative_id.encode()).hexdigest()
+        doc_id = f"policy_control_map:{digest}"
+        try:
+            item = await self._system_container().read_item(
+                item=doc_id, partition_key="policy_control_map"
+            )
+        except Exception:
+            logger.debug("No policy control map cached for %s", initiative_id)
+            return None
+        expires_ts = item.get("expires_ts")
+        if isinstance(expires_ts, (int, float)) and expires_ts < _time.time():
+            logger.debug("Policy control map for %s expired", initiative_id)
+            return None
+        mapping = item.get("mapping")
+        return dict(mapping) if isinstance(mapping, dict) else None
+
+    async def save_policy_control_map(
+        self,
+        initiative_id: str,
+        mapping: dict[str, str],
+        *,
+        ttl_days: int = 30,
+    ) -> None:
+        """Upsert a ``policy_definition_id -> control_id`` map for an initiative.
+
+        Stored under partition_key ``policy_control_map`` with an
+        application-level expiry timestamp (``ttl_days`` days from now).
+        """
+        import time as _time
+
+        digest = hashlib.sha256(initiative_id.encode()).hexdigest()
+        doc_id = f"policy_control_map:{digest}"
+        doc: dict[str, Any] = {
+            "id": doc_id,
+            "type": "policy_control_map",
+            "initiative_id": initiative_id,
+            "mapping": dict(mapping),
+            "expires_ts": int(_time.time()) + ttl_days * 86400,
+        }
+        await self._system_container().upsert_item(doc)
+        logger.info("Saved policy control map for %s", initiative_id)
 
     # ------------------------------------------------------------------
     # Cascading purge (Phase 2.7 -- soft-delete retention)
