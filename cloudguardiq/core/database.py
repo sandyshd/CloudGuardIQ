@@ -656,6 +656,58 @@ class CosmosRepository:
         await self._system_container().upsert_item(doc)
         logger.info("Saved policy control map for %s", initiative_id)
 
+    async def get_latest_initiatives(
+        self, subscription_id: str
+    ) -> dict[str, Any] | None:
+        """Return the cached latest-initiative-per-framework map for a sub.
+
+        Used by ``AzurePolicyComplianceAdapter.discover_latest_initiatives`` to
+        avoid re-listing every built-in policy set definition on each scan.
+        Returns ``None`` on a cache miss, an expired entry, or any read error.
+        """
+        import time as _time
+
+        digest = hashlib.sha256(subscription_id.encode()).hexdigest()
+        doc_id = f"latest_initiatives:{digest}"
+        try:
+            item = await self._system_container().read_item(
+                item=doc_id, partition_key="latest_initiatives"
+            )
+        except Exception:
+            logger.debug("No latest-initiative map cached for %s", subscription_id)
+            return None
+        expires_ts = item.get("expires_ts")
+        if isinstance(expires_ts, (int, float)) and expires_ts < _time.time():
+            logger.debug("Latest-initiative map for %s expired", subscription_id)
+            return None
+        mapping = item.get("initiatives")
+        return dict(mapping) if isinstance(mapping, dict) else None
+
+    async def save_latest_initiatives(
+        self,
+        subscription_id: str,
+        initiatives: dict[str, Any],
+        *,
+        ttl_days: int = 7,
+    ) -> None:
+        """Upsert the latest-initiative-per-framework map for a subscription.
+
+        Stored under partition_key ``latest_initiatives`` with an
+        application-level expiry timestamp (``ttl_days`` days from now).
+        """
+        import time as _time
+
+        digest = hashlib.sha256(subscription_id.encode()).hexdigest()
+        doc_id = f"latest_initiatives:{digest}"
+        doc: dict[str, Any] = {
+            "id": doc_id,
+            "type": "latest_initiatives",
+            "subscription_id": subscription_id,
+            "initiatives": dict(initiatives),
+            "expires_ts": int(_time.time()) + ttl_days * 86400,
+        }
+        await self._system_container().upsert_item(doc)
+        logger.info("Saved latest-initiative map for %s", subscription_id)
     # ------------------------------------------------------------------
     # Cascading purge (Phase 2.7 -- soft-delete retention)
     # ------------------------------------------------------------------

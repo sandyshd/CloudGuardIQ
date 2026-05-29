@@ -273,3 +273,125 @@ class TestMisc:
         assert contract["endpoint"] == "policy_states"
         assert "resourceId" in contract["schema"]
         assert contract["schema"]["resourceId"] == "str"
+
+
+class TestDiscoverLatestInitiatives:
+    @staticmethod
+    def _def(*, display_name, name, category="Regulatory Compliance", version=None):
+        d = MagicMock()
+        d.display_name = display_name
+        d.name = name
+        d.id = "/providers/Microsoft.Authorization/policySetDefinitions/" + name
+        meta = {"category": category}
+        if version is not None:
+            meta["version"] = version
+        d.metadata = meta
+        return d
+
+    @pytest.mark.asyncio
+    async def test_picks_highest_version_per_framework(
+        self, adapter: AzurePolicyComplianceAdapter
+    ) -> None:
+        defs = [
+            self._def(
+                display_name="CIS Microsoft Azure Foundations Benchmark v1.4.0",
+                name="cis-140",
+                version="1.4.0",
+            ),
+            self._def(
+                display_name="CIS Microsoft Azure Foundations Benchmark v2.0.0",
+                name="cis-200",
+                version="2.0.0",
+            ),
+            self._def(display_name="ISO 27001:2013", name="iso", version="3.0.0"),
+            self._def(
+                display_name="Unrelated thing", name="x", version="9.0.0"
+            ),
+            self._def(
+                display_name="CIS thing but not regulatory",
+                name="y",
+                category="Security Center",
+                version="5.0.0",
+            ),
+        ]
+        with patch.object(mod, "PolicyClient") as policy_client:
+            policy_client.return_value.policy_set_definitions.list_built_in.return_value = (  # noqa: E501
+                defs
+            )
+            result = await adapter.discover_latest_initiatives()
+        assert result["CIS_AZURE"].name == "cis-200"
+        assert result["CIS_AZURE"].version == "2.0.0"
+        assert result["ISO_27001"].framework_id == "ISO_27001"
+        assert "Unrelated thing" not in {r.display_name for r in result.values()}
+        assert "y" not in {r.name for r in result.values()}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_policyclient_unavailable(
+        self, adapter: AzurePolicyComplianceAdapter
+    ) -> None:
+        with patch.object(mod, "PolicyClient", None):
+            result = await adapter.discover_latest_initiatives()
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_list_error(
+        self, adapter: AzurePolicyComplianceAdapter
+    ) -> None:
+        with patch.object(mod, "PolicyClient") as policy_client:
+            policy_client.return_value.policy_set_definitions.list_built_in.side_effect = (  # noqa: E501
+                HttpResponseError("boom")
+            )
+            result = await adapter.discover_latest_initiatives()
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_uses_cache_and_skips_listing(
+        self, adapter: AzurePolicyComplianceAdapter, mock_db: AsyncMock
+    ) -> None:
+        cached = {
+            "CIS_AZURE": {
+                "framework_id": "CIS_AZURE",
+                "definition_id": (
+                    "/providers/Microsoft.Authorization/"
+                    "policySetDefinitions/cached"
+                ),
+                "name": "cached",
+                "display_name": "CIS cached",
+                "version": "2.0.0",
+            }
+        }
+        mock_db.get_latest_initiatives = AsyncMock(return_value=cached)
+        with patch.object(mod, "PolicyClient") as policy_client:
+            result = await adapter.discover_latest_initiatives()
+            policy_client.assert_not_called()
+        assert result["CIS_AZURE"].name == "cached"
+
+    @pytest.mark.asyncio
+    async def test_saves_discovered_map_to_cache(
+        self, adapter: AzurePolicyComplianceAdapter, mock_db: AsyncMock
+    ) -> None:
+        mock_db.get_latest_initiatives = AsyncMock(return_value=None)
+        mock_db.save_latest_initiatives = AsyncMock()
+        defs = [self._def(display_name="PCI DSS v4", name="pci4", version="4.0.0")]
+        with patch.object(mod, "PolicyClient") as policy_client:
+            policy_client.return_value.policy_set_definitions.list_built_in.return_value = (  # noqa: E501
+                defs
+            )
+            await adapter.discover_latest_initiatives()
+        mock_db.save_latest_initiatives.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_version_from_display_name_when_metadata_missing(
+        self, adapter: AzurePolicyComplianceAdapter
+    ) -> None:
+        defs = [
+            self._def(
+                display_name="HIPAA HITRUST 9.2", name="hipaa", version=None
+            )
+        ]
+        with patch.object(mod, "PolicyClient") as policy_client:
+            policy_client.return_value.policy_set_definitions.list_built_in.return_value = (  # noqa: E501
+                defs
+            )
+            result = await adapter.discover_latest_initiatives()
+        assert result["HIPAA"].version == "9.2"

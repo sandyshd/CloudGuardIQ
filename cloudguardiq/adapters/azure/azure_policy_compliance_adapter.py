@@ -26,6 +26,8 @@ Architectural notes
 from __future__ import annotations
 
 import logging
+import re
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -124,6 +126,39 @@ POLICY_TO_SEVERITY: dict[str, Severity] = {
 
 #: Cache TTL (in days) for resolved policy-definition -> control-id maps.
 _CONTROL_MAP_TTL_DAYS = 30
+
+#: Cache TTL (in days) for the discovered latest-initiative-per-framework map.
+_LATEST_INITIATIVES_TTL_DAYS = 7
+
+#: Azure Policy ``metadata.category`` value for built-in regulatory initiatives.
+_REGULATORY_CATEGORY = "Regulatory Compliance"
+
+#: Per-framework substring matched (case-insensitively) against a built-in
+#: initiative's ``display_name`` to identify its family. Used by
+#: :meth:`AzurePolicyComplianceAdapter.discover_latest_initiatives` so the
+#: latest published version is found dynamically instead of pinning a GUID.
+_FRAMEWORK_FAMILY_KEYWORDS: dict[str, str] = {
+    "CIS_AZURE": "cis microsoft azure foundations",
+    "NIST_800_53": "nist sp 800-53",
+    "ISO_27001": "iso 27001",
+    "PCI_DSS": "pci dss",
+    "SOC2": "soc 2",
+    "HIPAA": "hipaa hitrust",
+}
+
+
+@dataclass(frozen=True)
+class ResolvedInitiative:
+    """A built-in regulatory initiative resolved to its latest published version.
+
+    Returned by :meth:`AzurePolicyComplianceAdapter.discover_latest_initiatives`.
+    """
+
+    framework_id: str
+    definition_id: str
+    name: str
+    display_name: str
+    version: str
 
 
 class AzurePolicyComplianceAdapter(AdapterBase):
@@ -618,6 +653,128 @@ class AzurePolicyComplianceAdapter(AdapterBase):
             if not k.startswith("_")
         }
 
+    async def discover_latest_initiatives(
+        self, *, use_cache: bool = True
+    ) -> dict[str, ResolvedInitiative]:
+        """Resolve the latest built-in initiative per supported framework.
+
+        Lists Microsoft's built-in policy set definitions, keeps only those in
+        the *Regulatory Compliance* category, matches each to a framework via
+        :data:`_FRAMEWORK_FAMILY_KEYWORDS`, and selects the highest published
+        version per framework. The result is cached per subscription for
+        :data:`_LATEST_INITIATIVES_TTL_DAYS` days.
+
+        This is a **read-only** operation (Reader role is sufficient); it never
+        assigns or modifies anything. On any error it returns ``{}`` and logs a
+        warning, so discovery failure never breaks a scan.
+        """
+        if use_cache:
+            cached = await self._get_cached_latest_initiatives()
+            if cached is not None:
+                return cached
+
+        if PolicyClient is None:
+            logger.warning(
+                "azure-mgmt-resource PolicyClient unavailable -- "
+                "cannot discover latest initiatives"
+            )
+            return {}
+
+        try:
+            client = PolicyClient(self._credential, self._subscription_id)
+            definitions = list(client.policy_set_definitions.list_built_in())
+        except Exception:
+            logger.warning(
+                "Failed to list built-in policy set definitions", exc_info=True
+            )
+            return {}
+
+        best: dict[str, tuple[tuple[int, ...], ResolvedInitiative]] = {}
+        for definition in definitions:
+            if _initiative_category(definition) != _REGULATORY_CATEGORY:
+                continue
+            display = str(getattr(definition, "display_name", "") or "")
+            framework_id = _match_framework(display)
+            if framework_id is None:
+                continue
+            version = _initiative_version(definition)
+            sort_key = _parse_version(version)
+            name = str(getattr(definition, "name", "") or "")
+            definition_id = str(getattr(definition, "id", "") or "")
+            if not definition_id and name:
+                definition_id = (
+                    "/providers/Microsoft.Authorization/"
+                    f"policySetDefinitions/{name}"
+                )
+            if not definition_id:
+                continue
+            resolved = ResolvedInitiative(
+                framework_id=framework_id,
+                definition_id=definition_id,
+                name=name,
+                display_name=display,
+                version=version,
+            )
+            current = best.get(framework_id)
+            if current is None or sort_key > current[0]:
+                best[framework_id] = (sort_key, resolved)
+
+        result = {fid: pair[1] for fid, pair in best.items()}
+        logger.info(
+            "Discovered latest initiatives for %d framework(s) in %s",
+            len(result),
+            self._subscription_id,
+        )
+        if result:
+            await self._save_cached_latest_initiatives(result)
+        return result
+
+    async def _get_cached_latest_initiatives(
+        self,
+    ) -> dict[str, ResolvedInitiative] | None:
+        """Return a cached latest-initiative map for the subscription, or None."""
+        getter = getattr(self._db, "get_latest_initiatives", None)
+        if getter is None:
+            return None
+        try:
+            raw = await getter(self._subscription_id)
+        except Exception:
+            logger.debug(
+                "Latest-initiative cache read failed for %s",
+                self._subscription_id,
+                exc_info=True,
+            )
+            return None
+        if not isinstance(raw, dict) or not raw:
+            return None
+        try:
+            return {
+                fid: ResolvedInitiative(**entry) for fid, entry in raw.items()
+            }
+        except (TypeError, ValueError):
+            logger.debug("Discarding malformed latest-initiative cache entry")
+            return None
+
+    async def _save_cached_latest_initiatives(
+        self, resolved: dict[str, ResolvedInitiative]
+    ) -> None:
+        """Persist the resolved latest-initiative map (best-effort)."""
+        setter = getattr(self._db, "save_latest_initiatives", None)
+        if setter is None:
+            return
+        payload = {fid: asdict(ri) for fid, ri in resolved.items()}
+        try:
+            await setter(
+                self._subscription_id,
+                payload,
+                ttl_days=_LATEST_INITIATIVES_TTL_DAYS,
+            )
+        except Exception:
+            logger.debug(
+                "Latest-initiative cache write failed for %s",
+                self._subscription_id,
+                exc_info=True,
+            )
     async def _get_cached_control_map(
         self, initiative_id: str
     ) -> dict[str, str] | None:
@@ -649,3 +806,57 @@ class AzurePolicyComplianceAdapter(AdapterBase):
                 initiative_id,
                 exc_info=True,
             )
+
+
+def _metadata_value(definition: Any, key: str) -> Any:
+    """Return ``metadata[key]`` whether metadata is a dict or an object."""
+    metadata = getattr(definition, "metadata", None)
+    if metadata is None:
+        return None
+    if isinstance(metadata, dict):
+        return metadata.get(key)
+    return getattr(metadata, key, None)
+
+
+def _initiative_category(definition: Any) -> str | None:
+    """Return the built-in initiative's metadata category, or None."""
+    value = _metadata_value(definition, "category")
+    return str(value) if value is not None else None
+
+
+def _initiative_version(definition: Any) -> str:
+    """Return a best-effort version string for a built-in initiative.
+
+    Prefers ``metadata.version``; falls back to a version token parsed from the
+    display name; returns ``""`` when neither is available.
+    """
+    version = _metadata_value(definition, "version")
+    if version:
+        return str(version)
+    display = str(getattr(definition, "display_name", "") or "")
+    match = re.search(r"\bv?(\d+(?:\.\d+)+)\b", display)
+    return match.group(1) if match else ""
+
+
+def _parse_version(version: str) -> tuple[int, ...]:
+    """Parse a version string into a comparable integer tuple.
+
+    Empty/unparseable versions sort lowest (empty tuple). Non-numeric segments
+    are ignored.
+    """
+    if not version:
+        return ()
+    parts: list[int] = []
+    for segment in re.split(r"[.\-_]", version):
+        if segment.isdigit():
+            parts.append(int(segment))
+    return tuple(parts)
+
+
+def _match_framework(display_name: str) -> str | None:
+    """Return the framework_id whose family keyword matches the display name."""
+    lowered = display_name.lower()
+    for framework_id, keyword in _FRAMEWORK_FAMILY_KEYWORDS.items():
+        if keyword in lowered:
+            return framework_id
+    return None

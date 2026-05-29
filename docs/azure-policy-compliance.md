@@ -65,6 +65,24 @@ have been superseded. A stale GUID degrades gracefully (the initiative simply
 appears unassigned and is skipped), but the corresponding Policy-sourced
 findings will silently stop appearing, so the review is important.
 
+### Automated discovery (preferred)
+
+`AzurePolicyComplianceAdapter.discover_latest_initiatives()` removes most of the
+need for a manual quarterly review. It lists Microsoft's built-in policy set
+definitions, keeps those whose `metadata.category` is `Regulatory Compliance`,
+matches each to a framework via `_FRAMEWORK_FAMILY_KEYWORDS` (a stable
+display-name keyword per framework rather than a pinned GUID), and selects the
+**highest `metadata.version`** per framework. The result is cached per
+subscription for 7 days (`_LATEST_INITIATIVES_TTL_DAYS`) via
+`get_latest_initiatives` / `save_latest_initiatives` on the repository.
+
+It is **read-only** (Reader role is sufficient), never assigns or modifies
+anything, and returns `{}` on any error so discovery failure never breaks a
+scan. The static `FRAMEWORK_INITIATIVES` map remains as a deterministic
+fallback. Onboarding can call this to show the latest available benchmark per
+framework and (separately, behind an explicit opt-in requiring
+`Microsoft.Authorization/policyAssignments/write`) assign it.
+
 ## Control-id resolution and caching
 
 Policy state rows reference a `policyDefinitionReferenceId` / group name rather
