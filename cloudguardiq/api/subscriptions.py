@@ -1166,9 +1166,36 @@ def _build_parameters_uri(
     return uri
 
 
-def _build_deploy_url(
-    template_uri: str, scope: str, parameters_uri: str = ""
+def _append_template_prefill(
+    template_uri: str,
+    principal_id: str,
+    initiative_ids: list[str] | None = None,
 ) -> str:
+    """Append prefill query params to the Deploy-to-Azure template URL.
+
+    The Azure Portal Custom Deployment blade does not fetch a remote
+    parameters file, so parameter values are baked into the served
+    template as ``defaultValue`` (see ``get_onboarding_template_json``).
+    This helper adds the ``principal_id`` and ``initiatives`` query
+    parameters that the template endpoint reads to perform that
+    injection, so the portal blade opens with the fields pre-filled.
+    Returns *template_uri* unchanged when there is nothing to prefill.
+    """
+    if not template_uri:
+        return template_uri
+    query: dict[str, str] = {}
+    if principal_id and _GUID_RE.match(principal_id):
+        query["principal_id"] = principal_id
+    guids = [g for g in (initiative_ids or []) if _GUID_RE.match(g)]
+    if guids:
+        query["initiatives"] = ",".join(guids)
+    if not query:
+        return template_uri
+    sep = "&" if "?" in template_uri else "?"
+    return template_uri + sep + urlencode(query)
+
+
+def _build_deploy_url(template_uri: str, scope: str) -> str:
     """Return an Azure Portal Deploy-to-Azure URL.
 
     The universal, documented Deploy-to-Azure URL is
@@ -1188,10 +1215,10 @@ def _build_deploy_url(
     from urllib.parse import quote
     del scope  # informational only; portal routes via $schema
     encoded = quote(template_uri, safe="")
-    url = f"https://portal.azure.com/#create/Microsoft.Template/uri/{encoded}"
-    if parameters_uri:
-        url += f"/uriParameters/{quote(parameters_uri, safe='')}"
-    return url
+    return (
+        "https://portal.azure.com/#create/Microsoft.Template/uri/"
+        + encoded
+    )
 
 
 async def _list_customer_subscriptions(credential: Any) -> list[DiscoveredSubscription]:
@@ -1476,13 +1503,14 @@ async def get_onboarding_template(
     parameters_uri = _build_parameters_uri(
         settings.public_api_base_url, principal_id, initiative_guids,
     )
+    deploy_template_uri = _append_template_prefill(
+        template_uri, principal_id, initiative_guids,
+    )
     return OnboardingTemplateResponse(
         customer_tenant_id=customer_tid,
         azure_principal_id=principal_id,
         template_uri=template_uri,
-        deploy_url=_build_deploy_url(
-            template_uri, scope, parameters_uri=parameters_uri,
-        ),
+        deploy_url=_build_deploy_url(deploy_template_uri, scope),
         parameters_uri=parameters_uri,
         scope=scope,
         assigned_initiatives=assigned,
@@ -1605,7 +1633,9 @@ def _load_bundled_template() -> bytes:
     include_in_schema=False,
     responses={200: {"content": {"application/json": {}}}},
 )
-async def get_onboarding_template_json() -> Response:
+async def get_onboarding_template_json(
+    principal_id: str = "", initiatives: str = "",
+) -> Response:
     """Serve the CloudGuardIQ Reader ARM template anonymously.
 
     The Azure Portal Deploy-to-Azure blade fetches this URL when the
@@ -1614,15 +1644,41 @@ async def get_onboarding_template_json() -> Response:
     GitHub repository stay private and removes the GitHub branch/path
     coupling -- the template version always matches the running API.
 
+    The portal does NOT fetch a remote parameters file, so the deploy
+    blade is pre-filled by baking values into the template itself: when
+    ``principal_id`` (a GUID) and/or ``initiatives`` (a CSV of built-in
+    policy set definition GUIDs) are supplied, they are injected as the
+    ``cloudGuardIQPrincipalId`` and ``policySetDefinitionIds``
+    ``defaultValue`` so the operator only has to click Review + create.
+
     The route is intentionally unauthenticated and CORS-open for the
     Azure Portal origin. The body is a static, non-sensitive ARM template
     (no secrets, no tenant data), so anonymous access is safe.
     """
+    body = _load_bundled_template()
+    pid = principal_id.strip()
+    guids = [
+        g.strip()
+        for g in initiatives.split(",")
+        if g.strip() and _GUID_RE.match(g.strip())
+    ]
+    prefill_pid = bool(pid) and bool(_GUID_RE.match(pid))
+    if prefill_pid or guids:
+        import json
+        doc = json.loads(body)
+        params = doc["parameters"]
+        if prefill_pid:
+            params["cloudGuardIQPrincipalId"]["defaultValue"] = pid
+        if guids:
+            params["policySetDefinitionIds"]["defaultValue"] = [
+                _POLICY_SET_DEF_PREFIX + g for g in guids
+            ]
+        body = json.dumps(doc).encode("utf-8")
     return Response(
-        content=_load_bundled_template(),
+        content=body,
         media_type="application/json",
         headers={
-            "Cache-Control": "public, max-age=3600",
+            "Cache-Control": "public, max-age=300",
             "Access-Control-Allow-Origin": "*",
         },
     )

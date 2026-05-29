@@ -616,9 +616,8 @@ def test_onboarding_parameters_rejects_non_guid() -> None:
 def test_onboarding_template_emits_parameters_uri_when_base_url_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When public_api_base_url is configured the deploy_url embeds uriParameters."""
-    from urllib.parse import quote
-
+    """parameters_uri stays available for the manual CLI flow; the deploy
+    URL prefills parameters via template defaults, not /uriParameters/."""
     client = TestClient(app)
     _wire()
 
@@ -636,8 +635,12 @@ def test_onboarding_template_emits_parameters_uri_when_base_url_set(
     body = r.json()
     expected_params = f"https://api.example.com/subscriptions/onboarding-parameters/{pid}"
     assert body["parameters_uri"] == expected_params
-    assert "/uriParameters/" in body["deploy_url"]
-    assert quote(expected_params, safe="") in body["deploy_url"]
+    # The portal ignores remote parameter files, so the deploy URL
+    # prefills via template defaults (principal_id query), not
+    # /uriParameters/.
+    assert "/uriParameters/" not in body["deploy_url"]
+    assert "principal_id" in body["deploy_url"]
+    assert pid in body["deploy_url"]
 
 
 def test_onboarding_template_omits_parameters_uri_when_base_url_unset(
@@ -777,3 +780,30 @@ def test_available_initiatives_returns_static_fallback() -> None:
     cis = next(i for i in body["initiatives"] if i["framework_id"] == "CIS_AZURE")
     assert cis["definition_id"].endswith(_CIS_AZURE_GUID)
     assert cis["source"] == "static"
+
+
+def test_onboarding_template_json_prefills_defaults_from_query() -> None:
+    """Query params inject defaultValue so the Deploy blade opens
+    pre-filled (the portal does not fetch remote parameter files)."""
+    import json
+
+    _wire()
+    client = _client()
+    pid = "c237acc3-b7d8-4bb9-ad58-f0343ff8f331"
+    app.dependency_overrides.clear()
+    try:
+        r = client.get(
+            "/subscriptions/onboarding-template.json"
+            f"?principal_id={pid}&initiatives={_CIS_AZURE_GUID}"
+        )
+    finally:
+        app.dependency_overrides[verify_token] = lambda: TokenPayload(
+            sub="user-1", tid="tenant-A",
+        )
+    assert r.status_code == 200, r.text
+    body = json.loads(r.content)
+    params = body["parameters"]
+    assert params["cloudGuardIQPrincipalId"]["defaultValue"] == pid
+    assert params["policySetDefinitionIds"]["defaultValue"] == [
+        _POLICY_SET_PREFIX + _CIS_AZURE_GUID
+    ]
