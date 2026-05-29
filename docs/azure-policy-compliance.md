@@ -103,6 +103,24 @@ management group). It requires no extra licence and is compatible with a
 Microsoft's authoritative per-control compliance evaluation alongside
 CloudGuardIQ's native configuration checks.
 
+### One-click assignment via the onboarding ARM template
+
+The bundled onboarding template
+(`cloudguardiq/api/templates/cloudguardiq-reader.json`, served from
+`GET /subscriptions/onboarding-template.json`) supports an **opt-in**
+`policySetDefinitionIds` array parameter. When non-empty, the template assigns
+each listed built-in regulatory initiative as an **audit-only** policy
+assignment (a conditional ARM `copy` loop) in the same one-click deployment that
+grants the Reader role. Leaving the parameter empty (the default) deploys the
+Reader role only, so existing behaviour is unchanged.
+
+Assigning an initiative is a **write** action: the customer admin running the
+deployment needs `Microsoft.Authorization/policyAssignments/write` (Resource
+Policy Contributor or Owner) -- the CloudGuardIQ service principal still only
+needs Reader. Onboarding can populate `policySetDefinitionIds` from
+`discover_latest_initiatives()` so the customer assigns the latest published
+benchmark per framework.
+
 ## Capability detection
 
 `CapabilityDetector` probes for assigned initiatives and sets

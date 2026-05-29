@@ -432,6 +432,51 @@ def test_onboarding_template_json_route_serves_valid_arm_template() -> None:
     assert "cloudGuardIQPrincipalId" in body["parameters"]
 
 
+
+def test_onboarding_template_includes_optin_policy_assignment() -> None:
+    """The bundled template carries an opt-in policy-initiative assignment.
+
+    The Reader role assignment must remain resources[0] (Deploy blade and the
+    existing test rely on it); the policy assignment is a conditional copy loop
+    that produces nothing when policySetDefinitionIds is empty (the default).
+    """
+    import json
+
+    _wire()
+    client = _client()
+    app.dependency_overrides.clear()
+    try:
+        r = client.get("/subscriptions/onboarding-template.json")
+    finally:
+        app.dependency_overrides[verify_token] = lambda: TokenPayload(
+            sub="user-1", tid="tenant-A",
+        )
+    assert r.status_code == 200, r.text
+    body = json.loads(r.content)
+
+    # Reader stays first so the existing contract holds.
+    assert body["resources"][0]["type"] == (
+        "Microsoft.Authorization/roleAssignments"
+    )
+
+    # Opt-in initiative assignment is present, conditional, and a copy loop.
+    policy = next(
+        res
+        for res in body["resources"]
+        if res["type"] == "Microsoft.Authorization/policyAssignments"
+    )
+    assert "condition" in policy
+    assert policy["copy"]["count"] == (
+        "[length(parameters('policySetDefinitionIds'))]"
+    )
+    assert policy["properties"]["enforcementMode"] == "Default"
+
+    # Default is empty => Reader-only behaviour is unchanged.
+    param = body["parameters"]["policySetDefinitionIds"]
+    assert param["type"] == "array"
+    assert param["defaultValue"] == []
+    assert body["outputs"]["assignedInitiativeCount"]["type"] == "int"
+
 def test_onboarding_template_endpoint_uses_bundled_url_when_env_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
