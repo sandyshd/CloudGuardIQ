@@ -17,22 +17,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from cloudguardiq.adapters.azure_adapter import AzureAdapter
+from cloudguardiq.adapters.azure.adapter import AzureAdapter
 from cloudguardiq.adapters.native_scanner import NativeScanner
-from cloudguardiq.adapters.rules.compute import (
+from cloudguardiq.adapters.rules.azure.compute import (
     VMNoEncryptionRule,
     VMUnmanagedDisksRule,
 )
-from cloudguardiq.adapters.rules.finops import (
+from cloudguardiq.adapters.rules.azure.finops import (
     UnattachedDiskRule,
     UnderutilizedVMRule,
 )
-from cloudguardiq.adapters.rules.keyvault import (
+from cloudguardiq.adapters.rules.azure.keyvault import (
     KeyVaultPurgeProtectionRule,
     KeyVaultSoftDeleteRule,
 )
-from cloudguardiq.adapters.rules.network import NSGOpenRDPRule, NSGOpenSSHRule
-from cloudguardiq.adapters.rules.storage import (
+from cloudguardiq.adapters.rules.azure.network import NSGOpenRDPRule, NSGOpenSSHRule
+from cloudguardiq.adapters.rules.azure.storage import (
     StorageHttpsOnlyRule,
     StoragePublicAccessRule,
 )
@@ -54,6 +54,12 @@ from cloudguardiq.billing.quota import (
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.billing.stripe_service import StripeService
 from cloudguardiq.billing.usage import UsageRepository
+from cloudguardiq.compliance.scorecard import (
+    FrameworkScore as ComplianceFrameworkScore,
+)
+from cloudguardiq.compliance.scorecard import (
+    compute_scorecard as compute_compliance_scorecard,
+)
 from cloudguardiq.core.config import get_settings
 from cloudguardiq.core.database import CosmosRepository
 from cloudguardiq.core.enums import DataTier, FindingStatus, FindingType, Severity
@@ -73,6 +79,10 @@ from cloudguardiq.onboarding.cloud_connection_repository import CloudConnectionR
 from cloudguardiq.onboarding.credential_ref_repository import CredentialRefRepository
 from cloudguardiq.pipeline.scan_pipeline import ScanResult
 from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
+from cloudguardiq.posture.score import (
+    PostureScore,
+    compute_posture_score,
+)
 from cloudguardiq.subscriptions.repository import SubscriptionsRepository
 from cloudguardiq.tenants.consent_repository import TenantConsentRepository
 from cloudguardiq.tenants.onboarding_session_repository import (
@@ -218,6 +228,15 @@ async def lifespan(
         audit_event_repository=_audit_event_repo,
     )
 
+    # Re-wire the reports service so its repository shares the live
+    # Cosmos connection (the bootstrap service uses in-memory storage).
+    reports_module.configure(
+        service=_build_reports_service(_repo),
+        validate_owned_subscription=_validate_owned_subscription,
+        get_repo=get_repo,
+        get_providers_for_scope=_providers_for_scope,
+    )
+
     # Wire the Azure Retail Prices service. Warmup pulls the last-known
     # cache from Cosmos so the very first scan after a cold start has
     # live prices; the refresh runs in the background so startup is not
@@ -308,6 +327,47 @@ onboarding_v1_module.configure(
 app.include_router(onboarding_module.router)
 app.include_router(onboarding_v1_module.router)
 app.include_router(onboarding_v1_module.cloud_connections_router)
+
+# Compliance report routes (Phase 5.1)
+from cloudguardiq.api import reports as reports_module  # noqa: E402
+from cloudguardiq.reports import (  # noqa: E402
+    BlobReportStorage,
+    ComplianceReportGenerator,
+    InMemoryReportStorage,
+    ReportsRepository,
+    ReportsService,
+)
+
+
+def _build_reports_service(cosmos_repo: CosmosRepository | None) -> ReportsService:
+    """Construct the ReportsService, picking a storage backend by config."""
+    settings = get_settings()
+    account_url = getattr(settings, "azure_storage_account_url", "") or ""
+    container = getattr(settings, "reports_blob_container", "") or "cloudguardiq-reports"
+    storage: BlobReportStorage | InMemoryReportStorage
+    if account_url:
+        storage = BlobReportStorage(
+            account_url=account_url,
+            container=container,
+        )
+    else:
+        storage = InMemoryReportStorage()
+    return ReportsService(
+        generator=ComplianceReportGenerator(),
+        storage=storage,
+        repository=ReportsRepository(cosmos_repo),
+    )
+
+
+_bootstrap_reports_service = _build_reports_service(None)
+# ``_providers_for_scope`` is defined later in this module; bootstrap leaves it
+# unset and the lifespan handler re-configures with the live helper.
+reports_module.configure(
+    service=_bootstrap_reports_service,
+    validate_owned_subscription=_validate_owned_subscription,
+    get_repo=get_repo,
+)
+app.include_router(reports_module.router)
 
 
 # ------------------------------------------------------------------
@@ -962,7 +1022,9 @@ async def scan_subscription(
 @app.get("/findings", response_model=list[FindingResult])
 async def list_findings(
     subscription_id: str = Query(default=""),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=5000),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
     user: TokenPayload = _auth,
 ) -> list[FindingResult]:
     """Return FindingResults for a subscription, sorted by priority_score descending."""
@@ -975,7 +1037,13 @@ async def list_findings(
     tenant_id = None if settings.auth_disabled else get_tenant_id(user)
     if repo is not None and sub_id:
         try:
-            findings = await repo.get_findings(sub_id, tenant_id=tenant_id, limit=limit)
+            findings = await repo.get_findings(
+                sub_id,
+                tenant_id=tenant_id,
+                limit=limit,
+                from_date=from_date,
+                to_date=to_date,
+            )
             return sorted(
                 findings,
                 key=lambda f: f.priority_score,
@@ -1298,5 +1366,153 @@ async def get_finding_terraform(
 
 
 
+
+
+
+
+async def _providers_for_scope(
+    *,
+    user: TokenPayload,
+    subscription_id: str,
+) -> set | None:
+    """Return the set of CloudProvider values that the scoring functions
+    should restrict their rule catalogue to.
+
+    * If a specific ``subscription_id`` is supplied we look up the
+      SubscriptionRecord and return ``{record.provider}`` so we never
+      count rule packs for clouds the caller has not connected.
+    * If no subscription is specified (tenant-wide view in dev mode)
+      we return ``None`` to keep the legacy "all rules" denominator.
+    """
+    from cloudguardiq.core.enums import CloudProvider
+    settings = get_settings()
+    if not subscription_id or settings.auth_disabled:
+        return None
+    try:
+        repo = subscriptions_module._repository  # noqa: SLF001
+        if repo is None:
+            return None
+        tenant_id = get_tenant_id(user)
+        record = await repo.get(tenant_id, subscription_id.lower())
+        if record is None:
+            return None
+        provider = getattr(record, "provider", None)
+        if isinstance(provider, CloudProvider):
+            return {provider}
+        if isinstance(provider, str):
+            try:
+                return {CloudProvider(provider)}
+            except ValueError:
+                return None
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to resolve provider scope for %s: %s", subscription_id, exc)
+    return None
+
+
+@app.get(
+    "/compliance/scorecard",
+    response_model=list[ComplianceFrameworkScore],
+)
+async def get_compliance_scorecard(
+    subscription_id: str = Query(default=""),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
+    user: TokenPayload = _auth,
+) -> list[ComplianceFrameworkScore]:
+    """Return per-framework compliance scores for the requested subscription.
+
+    The score for each framework is computed as ``controls_passed /
+    controls_total * 100`` where the denominator is the set of controls
+    actively evaluated by CloudGuardIQ's rule registry (not the published
+    catalogue size). Only OPEN findings contribute to ``controls_failed``.
+    Resolved, snoozed, and applied findings are excluded.
+
+    Frameworks with zero evaluated controls return ``score=100`` with
+    ``controls_total=0`` so the UI can render a "Not yet evaluated" badge
+    without surfacing a misleading red ring.
+    """
+    repo = get_repo()
+    sub_id = ""
+    if subscription_id:
+        sub_id = await _validate_owned_subscription(user, subscription_id)
+        bind_context(subscription_id=sub_id, provider="azure")
+    settings = get_settings()
+    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
+
+    findings: list[FindingResult] = []
+    if repo is not None and sub_id:
+        try:
+            findings = await repo.get_findings(
+                sub_id,
+                tenant_id=tenant_id,
+                limit=5000,
+                from_date=from_date,
+                to_date=to_date,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Compliance scorecard: failed to query findings from Cosmos: %s",
+                exc,
+            )
+            findings = []
+    elif settings.auth_disabled and not sub_id:
+        # Local/dev mode: surface demo findings so the dashboard isn't blank.
+        findings = _demo_findings()
+
+    providers = await _providers_for_scope(user=user, subscription_id=sub_id)
+    return compute_compliance_scorecard(findings, providers=providers)
+
+
+@app.get(
+    "/posture/score",
+    response_model=PostureScore,
+)
+async def get_posture_score(
+    subscription_id: str = Query(default=""),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
+    user: TokenPayload = _auth,
+) -> PostureScore:
+    """Return the weighted control-pass posture score for the scope.
+
+    Methodology (industry-aligned, matches Microsoft Defender Secure
+    Score and AWS Security Hub):
+
+        score = 100 * (sum of severity-weights of passing rules)
+                       / (sum of severity-weights of all rules)
+
+    A rule is *passing* when no OPEN finding for that rule_id exists in
+    the scope. Severity weights are CRITICAL=10, HIGH=5, MEDIUM=2,
+    LOW=1, INFORMATIONAL=0.
+    """
+    repo = get_repo()
+    sub_id = ""
+    if subscription_id:
+        sub_id = await _validate_owned_subscription(user, subscription_id)
+        bind_context(subscription_id=sub_id, provider="azure")
+    settings = get_settings()
+    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
+
+    findings: list[FindingResult] = []
+    if repo is not None and sub_id:
+        try:
+            findings = await repo.get_findings(
+                sub_id,
+                tenant_id=tenant_id,
+                limit=5000,
+                from_date=from_date,
+                to_date=to_date,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Posture score: failed to query findings from Cosmos: %s",
+                exc,
+            )
+            findings = []
+    elif settings.auth_disabled and not sub_id:
+        findings = _demo_findings()
+
+    providers = await _providers_for_scope(user=user, subscription_id=sub_id)
+    return compute_posture_score(findings, providers=providers)
 
 

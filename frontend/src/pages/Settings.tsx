@@ -7,7 +7,8 @@ import { Alert, AlertDescription } from "../components/ui/alert";
 import { PageHeader } from "../components/common/PageHeader";
 import { recordConsentCallback } from "../api/subscriptions";
 import { PENDING_CONSENT_CALLBACK_KEY } from "../main";
-
+
+import { toFriendlyMessage } from "../lib/errors";
 const CONSENT_PARAM = "consent";
 
 interface PendingConsentCallback {
@@ -104,7 +105,7 @@ export function Settings() {
       } catch (err) {
         if (cancelled) return;
         const msg =
-          err instanceof Error ? err.message : "Failed to record consent.";
+          toFriendlyMessage(err, "Failed to record consent.");
         setBanner({ kind: "error", message: msg });
       }
     })();

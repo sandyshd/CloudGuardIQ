@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Table,
   TableBody,
@@ -56,7 +56,7 @@ function ResourceIdMono({ id, name }: { id?: string; name: string }) {
           type="button"
           onClick={onCopy}
           aria-label="Copy resource id"
-          className="rounded p-0.5 text-[hsl(var(--muted-foreground))] transition-colors hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]"
+          className="cgq-no-touch-target rounded p-0.5 text-[hsl(var(--muted-foreground))] transition-colors hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]"
           title={id}
         >
           {copied ? <Check className="h-3 w-3 text-[hsl(var(--success))]" /> : <Copy className="h-3 w-3" />}
@@ -66,7 +66,49 @@ function ResourceIdMono({ id, name }: { id?: string; name: string }) {
   );
 }
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return target.isContentEditable;
+}
+
 export function FindingTable({ findings, onSelect }: FindingTableProps) {
+  const [active, setActive] = useState(0);
+  const rowRefs = useRef<Array<HTMLTableRowElement | null>>([]);
+
+  useEffect(() => {
+    setActive((a) => Math.min(a, Math.max(findings.length - 1, 0)));
+  }, [findings.length]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (findings.length === 0) return;
+      const key = e.key.toLowerCase();
+      if (key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setActive((a) => Math.min(a + 1, findings.length - 1));
+      } else if (key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setActive((a) => Math.max(a - 1, 0));
+      } else if (e.key === "Enter") {
+        const f = findings[active];
+        if (f) {
+          e.preventDefault();
+          onSelect(f);
+        }
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [findings, active, onSelect]);
+
+  useEffect(() => {
+    const el = rowRefs.current[active];
+    el?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
   if (findings.length === 0) {
     return (
       <div className="overflow-hidden rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))]">
@@ -98,13 +140,23 @@ export function FindingTable({ findings, onSelect }: FindingTableProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {findings.map((f) => {
+          {findings.map((f, idx) => {
             const status = (f.status ?? "OPEN") as FindingStatus;
+            const isActive = idx === active;
             return (
               <TableRow
                 key={f.finding_id}
+                ref={(el) => {
+                  rowRefs.current[idx] = el;
+                }}
+                data-active={isActive ? "true" : undefined}
+                aria-selected={isActive}
                 className="group cursor-pointer"
-                onClick={() => onSelect(f)}
+                onClick={() => {
+                  setActive(idx);
+                  onSelect(f);
+                }}
+                onMouseEnter={() => setActive(idx)}
               >
                 <TableCell className="w-[3px] p-0">
                   <span

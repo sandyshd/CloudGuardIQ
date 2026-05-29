@@ -31,7 +31,17 @@ from azure.mgmt.resourcegraph.models import (
     QueryRequestOptions,
 )
 
-from cloudguardiq.adapters.rules.compute import (
+from cloudguardiq.adapters.rules.azure.aks import (
+    AKSNetworkPolicyMissingRule,
+    AKSPublicApiServerRule,
+    AKSRBACDisabledRule,
+)
+from cloudguardiq.adapters.rules.azure.appservice import (
+    AppServiceAuthDisabledRule,
+    AppServiceHttpsOnlyRule,
+    AppServiceMinTlsRule,
+)
+from cloudguardiq.adapters.rules.azure.compute import (
     IdleVMRule,
     MissingCostTagsRule,
     NoBackupPolicyRule,
@@ -40,7 +50,7 @@ from cloudguardiq.adapters.rules.compute import (
     PublicIPDirectAttachedRule,
     UnmanagedDiskRule,
 )
-from cloudguardiq.adapters.rules.finops import (
+from cloudguardiq.adapters.rules.azure.finops import (
     AKSNoAutoscalerRule,
     AppGatewayLowUtilisationRule,
     DevTestOutsideBusinessHoursRule,
@@ -50,7 +60,7 @@ from cloudguardiq.adapters.rules.finops import (
     UnassignedPublicIPRule,
     UnattachedManagedDiskRule,
 )
-from cloudguardiq.adapters.rules.iam import (
+from cloudguardiq.adapters.rules.azure.iam import (
     ClassicAdminRoleRule,
     ExternalUserPrivilegedRoleRule,
     GuestPrivilegedRoleRule,
@@ -60,14 +70,18 @@ from cloudguardiq.adapters.rules.iam import (
     SPOwnerMultipleSubscriptionsRule,
     SPPasswordExpiryRule,
 )
-from cloudguardiq.adapters.rules.keyvault import (
+from cloudguardiq.adapters.rules.azure.keyvault import (
     NoDiagnosticLoggingRule,
     PublicNetworkAccessRule,
     PurgeProtectionRule,
     SecretNoExpiryRule,
     SoftDeleteRule,
 )
-from cloudguardiq.adapters.rules.network import (
+from cloudguardiq.adapters.rules.azure.monitor import (
+    ActivityLogAlertsMissingRule,
+    LogProfileRetentionRule,
+)
+from cloudguardiq.adapters.rules.azure.network import (
     AnyPortOpenToInternetRule,
     DDoSProtectionRule,
     InboundAllowAllRule,
@@ -75,7 +89,12 @@ from cloudguardiq.adapters.rules.network import (
     RDPOpenToInternetRule,
     SSHOpenToInternetRule,
 )
-from cloudguardiq.adapters.rules.storage import (
+from cloudguardiq.adapters.rules.azure.sql import (
+    SqlAuditingDisabledRule,
+    SqlMinTlsVersionRule,
+    SqlPublicNetworkAccessRule,
+)
+from cloudguardiq.adapters.rules.azure.storage import (
     BlobSoftDeleteRule,
     BlobVersioningRule,
     DiagnosticLoggingRule,
@@ -104,7 +123,7 @@ class ScannerRule(Protocol):
     resource_types: list[str]
 
     def evaluate(self, snapshot: ResourceSnapshot) -> list[FindingResult]:
-        """Evaluate a snapshot and return any findings."""
+        """Evaluate a 55apshot and return any findings."""
         ...
 
 
@@ -163,6 +182,21 @@ RULE_REGISTRY = [
     DevTestOutsideBusinessHoursRule(),
     AppGatewayLowUtilisationRule(),
     AKSNoAutoscalerRule(),
+    # SQL / PostgreSQL (SQL-001 .. SQL-003)
+    SqlPublicNetworkAccessRule(),
+    SqlMinTlsVersionRule(),
+    SqlAuditingDisabledRule(),
+    # App Service (APP-001 .. APP-003)
+    AppServiceHttpsOnlyRule(),
+    AppServiceMinTlsRule(),
+    AppServiceAuthDisabledRule(),
+    # AKS (AKS-001 .. AKS-003)
+    AKSRBACDisabledRule(),
+    AKSPublicApiServerRule(),
+    AKSNetworkPolicyMissingRule(),
+    # Monitor (MON-001 .. MON-002)
+    ActivityLogAlertsMissingRule(),
+    LogProfileRetentionRule(),
 ]
 
 # ---------------------------------------------------------------------------

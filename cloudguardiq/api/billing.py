@@ -29,6 +29,12 @@ class CheckoutResponse(BaseModel):
     url: str
 
 
+class ChangeTierRequest(BaseModel):
+    """Body for ``POST /billing/downgrade``."""
+
+    tier: SubscriptionTier
+
+
 class BillingStatusResponse(BaseModel):
     """Response for ``GET /billing/status``."""
 
@@ -168,6 +174,53 @@ async def create_checkout(
     record.stripe_customer_id = customer_id
     await repo.upsert(record)
     return CheckoutResponse(url=url)
+
+
+@router.post("/downgrade", response_model=BillingStatusResponse)
+async def downgrade_tier(
+    body: ChangeTierRequest,
+    user: TokenPayload = _auth,
+) -> BillingStatusResponse:
+    """Move the caller tenant to a lower tier.
+
+    Direct tier write (no Stripe round-trip). Upgrades MUST go through
+    ``POST /billing/checkout`` so Stripe stays the source of truth for
+    paid subscriptions.
+    """
+    repo = _get_repository()
+    tenant_id = _tenant_id(user)
+    record = await repo.get(tenant_id) or BillingCustomer(tenant_id=tenant_id)
+
+    rank = {
+        SubscriptionTier.FREE: 0,
+        SubscriptionTier.PRO: 1,
+        SubscriptionTier.ENTERPRISE: 2,
+    }
+    if rank[body.tier] >= rank[record.tier]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Target tier must be lower than the current tier. "
+                "Use /billing/checkout to upgrade."
+            ),
+        )
+
+    record.tier = body.tier
+    if body.tier == SubscriptionTier.FREE:
+        record.stripe_subscription_id = ""
+    await repo.upsert(record)
+
+    if callable(_invalidate_cache):
+        try:
+            _invalidate_cache(record.tenant_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Cache invalidate failed: %s", exc)
+
+    return BillingStatusResponse(
+        tier=record.tier,
+        stripe_customer_id=record.stripe_customer_id,
+        stripe_subscription_id=record.stripe_subscription_id,
+    )
 
 
 @router.post("/webhook")

@@ -9,14 +9,17 @@ import {
   Wrench,
   CheckCircle2,
   Clock,
+  Loader2,
 } from "lucide-react";
+import { Skeleton } from "../components/ui/skeleton";
 import { EmptyState } from "../components/common/EmptyState";
 import { PageHeader } from "../components/common/PageHeader";
 import { useSubscriptions } from "../hooks/useSubscriptions";
-import { LoadingSpinner } from "../components/common/LoadingSpinner";
+import { DetailSkeleton } from "../components/common/PageSkeleton";
 import { SeverityBadge } from "../components/common/SeverityBadge";
 import { DataTierBadge } from "../components/common/DataTierBadge";
-import { Alert, AlertDescription } from "../components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
+import { toFriendlyError, toFriendlyMessage, type FriendlyError } from "../lib/errors";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -61,7 +64,7 @@ export function AIFix() {
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<ActionState>("idle");
   const [generating, setGenerating] = useState(false);
-  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<FriendlyError | null>(null);
 
   const load = useCallback(async () => {
     if (!findingId) return;
@@ -77,7 +80,7 @@ export function AIFix() {
       setFinding(f);
       setSimilar(all.filter((x) => x.finding_id !== findingId).slice(0, 3));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load finding");
+      setError(toFriendlyMessage(err, "Failed to load finding."));
     } finally {
       setLoading(false);
     }
@@ -96,9 +99,7 @@ export function AIFix() {
       setCard(newCard);
     } catch (err) {
       setGenerationError(
-        err instanceof Error
-          ? err.message
-          : "AI generation failed. Check that Azure OpenAI is configured.",
+        toFriendlyError(err, "AI generation failed. Please try again in a moment."),
       );
     } finally {
       setGenerating(false);
@@ -175,7 +176,7 @@ export function AIFix() {
     );
   }
 
-  if (loading && !finding) return <LoadingSpinner />;
+  if (loading && !finding) return <DetailSkeleton />;
   if (error) {
     return (
       <Alert variant="destructive">
@@ -306,19 +307,50 @@ export function AIFix() {
               {narrativeParagraphs.length > 0 ? (
                 narrativeParagraphs.map((p, i) => <p key={i}>{p}</p>)
               ) : generating ? (
-                <div className="flex items-center gap-2 text-[hsl(var(--muted-foreground))]">
-                  <Sparkles className="h-4 w-4 animate-pulse text-[hsl(var(--primary))]" />
-                  Generating AI remediation… this can take a few seconds.
+                <div
+                  role="status"
+                  aria-live="polite"
+                  aria-busy="true"
+                  className="space-y-3"
+                >
+                  <div className="flex items-center gap-2 rounded-md border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.06)] px-3 py-2 text-[hsl(var(--foreground))]">
+                    <Loader2 className="h-4 w-4 animate-spin text-[hsl(var(--primary))]" />
+                    <span className="text-sm font-medium">
+                      Generating AI remediation
+                      <span className="loading-dots" />
+                    </span>
+                    <span className="ml-auto text-xs text-[hsl(var(--muted-foreground))]">
+                      This can take 10–30 seconds
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    <Skeleton className="h-3 w-[95%]" />
+                    <Skeleton className="h-3 w-[88%]" />
+                    <Skeleton className="h-3 w-[75%]" />
+                  </div>
+                  <span className="sr-only">Generating AI remediation, please wait.</span>
                 </div>
               ) : generationError ? (
-                <>
-                  <p className="text-[hsl(var(--severity-critical))]">
-                    {generationError}
-                  </p>
-                  <Button size="sm" onClick={runGenerate} disabled={generating}>
-                    Retry generation
-                  </Button>
-                </>
+                <div className="space-y-3">
+                  <Alert variant={generationError.tone === "error" ? "destructive" : "warning"}>
+                    <AlertTitle>{generationError.title}</AlertTitle>
+                    <AlertDescription>{generationError.message}</AlertDescription>
+                  </Alert>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={runGenerate} disabled={generating}>
+                      Retry generation
+                    </Button>
+                    {generationError.actionHref && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => navigate(generationError.actionHref!)}
+                      >
+                        {generationError.actionLabel ?? "Open"}
+                      </Button>
+                    )}
+                  </div>
+                </div>
               ) : (
                 <p className="italic text-[hsl(var(--muted-foreground))]">
                   Preparing AI remediation…
@@ -361,21 +393,56 @@ export function AIFix() {
             </Card>
           )}
 
-          {card?.terraform_fix && (
+          {card?.terraform_fix ? (
             <TerraformBlock code={card.terraform_fix} title="Terraform fix" />
-          )}
-          {card?.cli_fix && (
+          ) : generating ? (
+            <Card aria-busy="true">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-[hsl(var(--primary))]" />
+                  <CardTitle>Terraform fix</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <Skeleton className="h-3 w-[60%]" />
+                <Skeleton className="h-3 w-[85%]" />
+                <Skeleton className="h-3 w-[70%]" />
+                <Skeleton className="h-3 w-[50%]" />
+              </CardContent>
+            </Card>
+          ) : null}
+          {card?.cli_fix ? (
             <CLIBlock command={card.cli_fix} title="Azure CLI equivalent" />
-          )}
+          ) : generating ? (
+            <Card aria-busy="true">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-[hsl(var(--primary))]" />
+                  <CardTitle>Azure CLI equivalent</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-3 w-[80%]" />
+              </CardContent>
+            </Card>
+          ) : null}
 
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 shadow-sm">
             <Button
               onClick={onApply}
-              disabled={action !== "idle" || !card?.terraform_fix}
+              disabled={action !== "idle" || generating || !card?.terraform_fix}
             >
-              <Wrench className="h-4 w-4" />
-              {action === "applying" ? "Applying…" : "Apply Terraform"}
+              {generating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Wrench className="h-4 w-4" />
+              )}
+              {generating
+                ? "Generating…"
+                : action === "applying"
+                  ? "Applying…"
+                  : "Apply Terraform"}
             </Button>
             <Button
               variant="secondary"
@@ -443,4 +510,5 @@ export function AIFix() {
     </div>
   );
 }
+
 

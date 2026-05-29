@@ -341,6 +341,121 @@ def test_normalize_template_uri_empty() -> None:
     assert _normalize_template_uri("") == ""
 
 
+def test_normalize_template_uri_strips_wrapping_quotes() -> None:
+    """Wrapping quotes/whitespace (a common misconfiguration in CI secrets or
+    .env files like ``ONBOARDING_TEMPLATE_URI='https://.../json'``) must be
+    stripped so the Portal Deploy-to-Azure link does not end with a trailing
+    URL-encoded ``%27`` and fail to download the template."""
+    from cloudguardiq.api.subscriptions import _normalize_template_uri
+    raw = "https://raw.githubusercontent.com/sandyshd/CloudGuardIQ/development/infra/templates/cloudguardiq-reader.json"
+    assert _normalize_template_uri(f"'{raw}'") == raw
+    assert _normalize_template_uri(f'"{raw}"') == raw
+    assert _normalize_template_uri(f"  {raw}\n") == raw
+    blob = "https://github.com/sandyshd/CloudGuardIQ/blob/development/infra/templates/cloudguardiq-reader.json"
+    assert _normalize_template_uri(f"'{blob}'") == raw
+
+
+# ---------------------------------------------------------------------------
+# Bundled ARM template served from the API (Option 1: private-repo-safe)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_template_uri_prefers_explicit() -> None:
+    """An explicit onboarding_template_uri wins over the auto-default."""
+    from cloudguardiq.api.subscriptions import _resolve_template_uri
+    s = Settings()
+    s.onboarding_template_uri = (
+        "https://cdn.example.com/templates/cloudguardiq-reader.json"
+    )
+    s.public_api_base_url = "https://api.example.com"
+    assert _resolve_template_uri(s) == (
+        "https://cdn.example.com/templates/cloudguardiq-reader.json"
+    )
+
+
+def test_resolve_template_uri_falls_back_to_bundled_endpoint() -> None:
+    """When no explicit URI is set, build the URL from public_api_base_url."""
+    from cloudguardiq.api.subscriptions import _resolve_template_uri
+    s = Settings()
+    s.onboarding_template_uri = ""
+    s.public_api_base_url = "https://api.example.com/"
+    assert _resolve_template_uri(s) == (
+        "https://api.example.com/subscriptions/onboarding-template.json"
+    )
+
+
+def test_resolve_template_uri_empty_when_unconfigured() -> None:
+    """Neither URI nor base URL set -> empty (callers raise 503)."""
+    from cloudguardiq.api.subscriptions import _resolve_template_uri
+    s = Settings()
+    s.onboarding_template_uri = ""
+    s.public_api_base_url = ""
+    assert _resolve_template_uri(s) == ""
+
+
+def test_resolve_template_uri_strips_wrapping_quotes_on_base_url() -> None:
+    """A misconfigured base URL with literal quotes must not produce a
+    URL ending in ``%27`` or stray whitespace."""
+    from cloudguardiq.api.subscriptions import _resolve_template_uri
+    s = Settings()
+    s.onboarding_template_uri = ""
+    s.public_api_base_url = "'https://api.example.com'"
+    assert _resolve_template_uri(s) == (
+        "https://api.example.com/subscriptions/onboarding-template.json"
+    )
+
+
+def test_onboarding_template_json_route_serves_valid_arm_template() -> None:
+    """The anonymous route returns the bundled ARM template body so the
+    Azure Portal Deploy-to-Azure blade can fetch it without auth."""
+    import json
+    _wire()
+    client = _client()
+    # Route is unauthenticated by design -- clear the override to confirm.
+    app.dependency_overrides.clear()
+    try:
+        r = client.get("/subscriptions/onboarding-template.json")
+    finally:
+        app.dependency_overrides[verify_token] = lambda: TokenPayload(
+            sub="user-1", tid="tenant-A",
+        )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("application/json")
+    assert r.headers.get("access-control-allow-origin") == "*"
+    body = json.loads(r.content)
+    assert body["$schema"].startswith(
+        "https://schema.management.azure.com/"
+    )
+    assert body["resources"][0]["type"] == (
+        "Microsoft.Authorization/roleAssignments"
+    )
+    assert "cloudGuardIQPrincipalId" in body["parameters"]
+
+
+def test_onboarding_template_endpoint_uses_bundled_url_when_env_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET /subscriptions/onboarding-template returns the API-hosted URL
+    when CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI is empty but
+    CLOUDGUARDIQ_PUBLIC_API_BASE_URL is configured."""
+    from urllib.parse import quote
+    _wire()
+    settings = Settings()
+    settings.onboarding_template_uri = ""
+    settings.public_api_base_url = "https://api.example.com"
+    monkeypatch.setattr(subs_module, "_get_settings", lambda: settings)
+
+    client = _client()
+    r = client.get("/subscriptions/onboarding-template?tenant_id=tenant-A")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    expected = (
+        "https://api.example.com/subscriptions/onboarding-template.json"
+    )
+    assert body["template_uri"] == expected
+    assert quote(expected, safe="") in body["deploy_url"]
+
+
 def test_build_deploy_url_uses_normalized_uri_via_get_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

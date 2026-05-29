@@ -60,6 +60,14 @@ class TestFindingsEndpoints:
         assert "rule_id" in data[0]
 
     @pytest.mark.asyncio
+    async def test_list_findings_allows_high_limit_for_dashboard_counts(
+        self, client: AsyncClient,
+    ) -> None:
+        """GET /findings accepts a high limit so UI totals are not capped at 50."""
+        response = await client.get("/findings", params={"limit": 5000})
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
     async def test_get_finding_by_id(self, client: AsyncClient) -> None:
         # First get a valid finding_id from the list
         list_resp = await client.get("/findings")
@@ -101,3 +109,16 @@ class TestFindingsEndpoints:
 # router (cloudguardiq.api.subscriptions). New behavior is covered by
 # tests/api/test_subscriptions_routes.py.
 
+
+class TestPostureScoreEndpoint:
+    @pytest.mark.asyncio
+    async def test_posture_score_returns_payload(self, client: AsyncClient) -> None:
+        """GET /posture/score returns a weighted control-pass score."""
+        response = await client.get("/posture/score")
+        assert response.status_code == 200
+        data = response.json()
+        assert 0 <= data["score"] <= 100
+        assert data["grade"] in {"A", "B", "C", "D", "F"}
+        assert data["methodology"] == "weighted-control-pass"
+        assert data["rules_evaluated"] >= 1
+        assert data["rules_passed"] + data["rules_failed"] == data["rules_evaluated"]

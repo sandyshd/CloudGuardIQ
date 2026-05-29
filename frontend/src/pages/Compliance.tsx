@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useFindings } from "../hooks/useFindings";
+import { useComplianceScorecard } from "../hooks/useComplianceScorecard";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { ComplianceKpis } from "../components/compliance/ComplianceKpis";
-import { FrameworkScorecard } from "../components/compliance/FrameworkScorecard";
+import { FrameworkPosture } from "../components/compliance/FrameworkPosture";
 import { ControlList } from "../components/compliance/ControlList";
-import { ReportHistory } from "../components/compliance/ReportHistory";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
-import { LoadingSpinner } from "../components/common/LoadingSpinner";
+import { PageSkeleton } from "../components/common/PageSkeleton";
 import { EmptyState } from "../components/common/EmptyState";
 import { PageHeader } from "../components/common/PageHeader";
 import { Link2, ClipboardCheck } from "lucide-react";
@@ -19,14 +19,17 @@ export function Compliance() {
     loading: subsLoading,
   } = useSubscriptions();
   const { findings, loading } = useFindings(selectedSub?.subscription_id);
+  const { scorecard, loading: scorecardLoading } = useComplianceScorecard(
+    selectedSub?.subscription_id,
+  );
   const [framework, setFramework] = useState<string | null>(null);
   const [selected, setSelected] = useState<FindingResult | null>(null);
 
-  if (loading || subsLoading) return <LoadingSpinner />;
+  if (loading || subsLoading) return <PageSkeleton />;
 
   const subtitle = selectedSub
     ? `Posture across linked frameworks · ${selectedSub.display_name || selectedSub.subscription_id}`
-    : "Posture across CIS, NIST, SOC 2, and other frameworks.";
+    : "Posture across CIS, NIST, ISO 27001, PCI-DSS, and SOC 2.";
 
   if (subscriptions.length === 0) {
     return (
@@ -54,7 +57,6 @@ export function Compliance() {
           primaryLabel="Go to Findings"
           primaryTo="/findings"
         />
-        <ReportHistory />
       </div>
     );
   }
@@ -63,10 +65,11 @@ export function Compliance() {
     <div className="space-y-6">
       <PageHeader title="Compliance" subtitle={subtitle} />
 
-      <ComplianceKpis findings={findings} />
+      <ComplianceKpis findings={findings} scorecard={scorecard} />
 
-      <FrameworkScorecard
-        findings={findings}
+      <FrameworkPosture
+        scorecard={scorecard}
+        loading={scorecardLoading}
         selected={framework}
         onSelect={setFramework}
       />
@@ -76,9 +79,8 @@ export function Compliance() {
         framework={framework}
         onFrameworkChange={setFramework}
         onSelect={setSelected}
+        scorecard={scorecard}
       />
-
-      <ReportHistory />
 
       {selected && (
         <FindingDetailPanel
@@ -89,3 +91,4 @@ export function Compliance() {
     </div>
   );
 }
+

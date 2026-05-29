@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
-import { Alert, AlertDescription } from "../ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { toFriendlyError, type FriendlyError } from "../../lib/errors";
 import { Check, Sparkles } from "lucide-react";
 import {
   type BillingStatus,
   type BillingTier,
   createCheckout,
+  downgradeTier,
   getBillingStatus,
 } from "../../api/billing";
 import { cn } from "../../lib/utils";
@@ -73,7 +75,7 @@ const PLANS: PlanDef[] = [
 export function TierSelector() {
   const [status, setStatus] = useState<BillingStatus | null>(null);
   const [busyTier, setBusyTier] = useState<BillingTier | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,7 +101,20 @@ export function TierSelector() {
       const url = await createCheckout(tier);
       window.location.href = url;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to start checkout");
+      setError(toFriendlyError(err, "Unable to start checkout. Please try again."));
+      setBusyTier(null);
+    }
+  };
+
+  const handleDowngrade = async (tier: BillingTier) => {
+    setError(null);
+    setBusyTier(tier);
+    try {
+      const updated = await downgradeTier(tier);
+      setStatus(updated);
+    } catch (err) {
+      setError(toFriendlyError(err, "Unable to change plan. Please try again."));
+    } finally {
       setBusyTier(null);
     }
   };
@@ -111,8 +126,12 @@ export function TierSelector() {
       </CardHeader>
       <CardContent>
         {error && (
-          <Alert variant="destructive" className="mb-3">
-            <AlertDescription>{error}</AlertDescription>
+          <Alert
+            variant={error.tone === "error" ? "destructive" : "warning"}
+            className="mb-3"
+          >
+            <AlertTitle>{error.title}</AlertTitle>
+            <AlertDescription>{error.message}</AlertDescription>
           </Alert>
         )}
         <div className="grid gap-3 md:grid-cols-3">
@@ -120,7 +139,6 @@ export function TierSelector() {
             const isCurrent = plan.tier === current;
             const cmp = TIER_RANK[plan.tier] - TIER_RANK[current];
             const isUpgrade = cmp > 0;
-            const downgradeReady = false;
             return (
               <div
                 key={plan.tier}
@@ -180,16 +198,11 @@ export function TierSelector() {
                     </Button>
                   ) : (
                     <Button
-                      variant="outline"
                       className="w-full"
-                      disabled={!downgradeReady}
-                      title={
-                        downgradeReady
-                          ? undefined
-                          : "Self-service downgrade is coming soon. Contact support to change your plan."
-                      }
+                      onClick={() => handleDowngrade(plan.tier)}
+                      disabled={busyTier !== null}
                     >
-                      Downgrade
+                      {busyTier === plan.tier ? "Updating…" : "Downgrade"}
                     </Button>
                   )}
                 </div>
@@ -198,8 +211,10 @@ export function TierSelector() {
           })}
         </div>
         <p className="mt-3 text-xs text-[hsl(var(--muted-foreground))]">
-          All plans auto-detect and use Microsoft Defender for Cloud signals
-          when available — no extra charge, no plan upgrade required.
+          All plans auto-detect and use cloud-native security signals when
+          available — Microsoft Defender for Cloud (Azure), AWS Security Hub /
+          GuardDuty (AWS), and Google Security Command Center (GCP) — at no
+          extra charge, no plan upgrade required.
         </p>
       </CardContent>
     </Card>

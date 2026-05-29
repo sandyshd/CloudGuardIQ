@@ -4,13 +4,31 @@ import { SeverityBadge } from "../common/SeverityBadge";
 import { DataTierBadge } from "../common/DataTierBadge";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Sparkles, X, Copy, Check, ExternalLink } from "lucide-react";
+import { useToast } from "../ui/toast";
+import {
+  Sparkles,
+  X,
+  Copy,
+  Check,
+  ExternalLink,
+  CheckCircle2,
+  Clock,
+  CircleSlash,
+} from "lucide-react";
 import { cn } from "../../lib/utils";
+import { markFindingResolved, snoozeFinding } from "../../api/findings";
 import type { FindingResult } from "../../types";
 
 interface FindingDetailPanelProps {
   finding: FindingResult;
   onClose: () => void;
+  /**
+   * Optional callback invoked when the user mutates the finding (resolve,
+   * snooze, acknowledge). Updates are applied optimistically — parents should
+   * merge the partial into their local list before any network round-trip
+   * completes.
+   */
+  onUpdate?: (next: FindingResult) => void;
 }
 
 type TabId = "overview" | "evidence" | "compliance";
@@ -57,9 +75,18 @@ function MetaRow({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-export function FindingDetailPanel({ finding, onClose }: FindingDetailPanelProps) {
+export function FindingDetailPanel({ finding, onClose, onUpdate }: FindingDetailPanelProps) {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [tab, setTab] = useState<TabId>("overview");
+  const [local, setLocal] = useState<FindingResult>(finding);
+  const [busy, setBusy] = useState<null | "resolve" | "snooze" | "ack">(null);
+
+  // Keep local copy in sync if the parent swaps the finding while the panel
+  // is open (e.g. after a list refresh).
+  useEffect(() => {
+    setLocal(finding);
+  }, [finding]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -73,8 +100,80 @@ export function FindingDetailPanel({ finding, onClose }: FindingDetailPanelProps
     };
   }, [onClose]);
 
-  const r = finding.resource_snapshot;
-  const evidenceText = JSON.stringify(finding.evidence ?? {}, null, 2);
+  const r = local.resource_snapshot;
+  const evidenceText = JSON.stringify(local.evidence ?? {}, null, 2);
+  const subscriptionId = r?.subscription_id ?? "";
+
+  async function applyOptimistic(
+    kind: "resolve" | "snooze" | "ack",
+    patch: Partial<FindingResult>,
+    network: () => Promise<FindingResult>,
+    successTitle: string,
+  ) {
+    if (!subscriptionId) {
+      toast({
+        tone: "error",
+        title: "Cannot update finding",
+        description: "Missing subscription scope for this finding.",
+      });
+      return;
+    }
+    const previous = local;
+    const optimistic = { ...local, ...patch };
+    setLocal(optimistic);
+    onUpdate?.(optimistic);
+    setBusy(kind);
+    try {
+      const server = await network();
+      setLocal(server);
+      onUpdate?.(server);
+      toast({ tone: "success", title: successTitle });
+    } catch (err) {
+      // Roll back on failure.
+      setLocal(previous);
+      onUpdate?.(previous);
+      const msg = toFriendlyMessage(err, "Request failed");
+      toast({ tone: "error", title: "Action failed", description: msg });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const onResolve = () =>
+    applyOptimistic(
+      "resolve",
+      { status: "RESOLVED" },
+      () => markFindingResolved(local.finding_id, subscriptionId),
+      "Finding resolved",
+    );
+
+  const onSnooze = () =>
+    applyOptimistic(
+      "snooze",
+      { status: "SNOOZED" },
+      () => snoozeFinding(local.finding_id, subscriptionId, 7),
+      "Snoozed for 7 days",
+    );
+
+  // Acknowledge has no backend endpoint yet — keep it optimistic-only and
+  // surface it via a transient toast. Persisting acknowledgement would route
+  // through a future /findings/{id}/acknowledge call.
+  const onAcknowledge = () => {
+    const previous = local;
+    const next = { ...local, status: local.status === "SNOOZED" ? "SNOOZED" : "OPEN" } as FindingResult;
+    setLocal(next);
+    onUpdate?.(next);
+    toast({
+      tone: "default",
+      title: "Acknowledged",
+      description: "Marked as seen on this device.",
+    });
+    // No network call; revert nothing.
+    void previous;
+  };
+
+  const isResolved = local.status === "RESOLVED";
+  const isSnoozed = local.status === "SNOOZED";
 
   return (
     <div className="fixed inset-0 z-50">
@@ -97,15 +196,15 @@ export function FindingDetailPanel({ finding, onClose }: FindingDetailPanelProps
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <SeverityBadge severity={finding.severity} />
-                <Badge variant="outline">{finding.finding_type}</Badge>
+                <SeverityBadge severity={local.severity} />
+                <Badge variant="outline">{local.finding_type}</Badge>
                 {r?.data_tier && <DataTierBadge tier={r.data_tier} />}
               </div>
               <h2 className="mt-2 text-lg font-semibold leading-tight tracking-tight text-[hsl(var(--foreground))]">
-                {finding.rule_name || finding.rule_id}
+                {local.rule_name || local.rule_id}
               </h2>
               <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
-                {finding.description}
+                {local.description}
               </p>
             </div>
             <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
@@ -120,6 +219,7 @@ export function FindingDetailPanel({ finding, onClose }: FindingDetailPanelProps
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
+                aria-current={tab === t.id ? "page" : undefined}
                 className={cn(
                   "relative -mb-px px-3 py-2 text-sm font-medium transition-colors",
                   tab === t.id
@@ -140,17 +240,17 @@ export function FindingDetailPanel({ finding, onClose }: FindingDetailPanelProps
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {tab === "overview" && (
             <div className="space-y-6">
-              {finding.waste_monthly_usd > 0 && (
+              {local.waste_monthly_usd > 0 && (
                 <div className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--severity-medium)/0.06)] p-4">
                   <div className="text-xs font-medium uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
                     Estimated waste
                   </div>
                   <div className="mt-1 text-2xl font-semibold tracking-tight text-[hsl(var(--foreground))]">
-                    ${finding.waste_monthly_usd.toFixed(2)}
+                    ${local.waste_monthly_usd.toFixed(2)}
                     <span className="ml-1 text-xs font-normal text-[hsl(var(--muted-foreground))]">/ month</span>
                   </div>
                   <div className="text-xs text-[hsl(var(--muted-foreground))]">
-                    ~${(finding.waste_monthly_usd * 12).toFixed(0)} annualised
+                    ~${(local.waste_monthly_usd * 12).toFixed(0)} annualised
                   </div>
                 </div>
               )}
@@ -197,17 +297,17 @@ export function FindingDetailPanel({ finding, onClose }: FindingDetailPanelProps
                 <div className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-4">
                   <dl>
                     <MetaRow label="Rule">
-                      <span className="font-mono text-xs">{finding.rule_id}</span>
+                      <span className="font-mono text-xs">{local.rule_id}</span>
                     </MetaRow>
                     <MetaRow label="Priority score">
-                      <span className="font-mono">{finding.priority_score}</span>
+                      <span className="font-mono">{local.priority_score}</span>
                     </MetaRow>
                     <MetaRow label="Detected at">
-                      {new Date(finding.detected_at).toLocaleString()}
+                      {new Date(local.detected_at).toLocaleString()}
                     </MetaRow>
                     <MetaRow label="Status">
-                      <Badge variant={finding.status === "RESOLVED" ? "success" : "warning"}>
-                        {finding.status ?? "OPEN"}
+                      <Badge variant={local.status === "RESOLVED" ? "success" : "warning"}>
+                        {local.status ?? "OPEN"}
                       </Badge>
                     </MetaRow>
                   </dl>
@@ -235,19 +335,19 @@ export function FindingDetailPanel({ finding, onClose }: FindingDetailPanelProps
               <h3 className="text-xs font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
                 Compliance frameworks
               </h3>
-              {finding.compliance_frameworks.length === 0 ? (
+              {local.compliance_frameworks.length === 0 ? (
                 <div className="rounded-md border border-dashed border-[hsl(var(--border))] p-6 text-center text-sm text-[hsl(var(--muted-foreground))]">
                   This finding is not mapped to any tracked framework.
                 </div>
               ) : (
                 <ul className="space-y-1">
-                  {finding.compliance_frameworks.map((fw) => (
+                  {local.compliance_frameworks.map((fw) => (
                     <li
                       key={fw}
                       className="flex items-center justify-between rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm"
                     >
                       <span className="font-medium">{fw}</span>
-                      <ExternalLink className="h-3.5 w-3.5 text-[hsl(var(--muted-foreground))]" />
+                      <ExternalLink className="h-3.5 w-3.5 text-[hsl(var(--muted-foreground))]" aria-hidden />
                     </li>
                   ))}
                 </ul>
@@ -257,12 +357,41 @@ export function FindingDetailPanel({ finding, onClose }: FindingDetailPanelProps
         </div>
 
         {/* Footer */}
-        <footer className="flex items-center justify-between gap-3 border-t border-[hsl(var(--border))] bg-[hsl(var(--card))] px-6 py-3">
-          <div className="text-xs text-[hsl(var(--muted-foreground))]">
-            ID: <span className="font-mono">{finding.finding_id.slice(0, 12)}…</span>
+        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--border))] bg-[hsl(var(--card))] px-6 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onAcknowledge}
+              disabled={busy !== null}
+              aria-label="Acknowledge finding"
+            >
+              <CheckCircle2 className="h-4 w-4" aria-hidden />
+              Acknowledge
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onSnooze}
+              disabled={busy !== null || isSnoozed || isResolved}
+              aria-label="Snooze finding for 7 days"
+            >
+              <Clock className="h-4 w-4" aria-hidden />
+              {busy === "snooze" ? "Snoozing…" : "Snooze 7d"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onResolve}
+              disabled={busy !== null || isResolved}
+              aria-label="Mark finding as resolved"
+            >
+              <CircleSlash className="h-4 w-4" aria-hidden />
+              {busy === "resolve" ? "Resolving…" : "Resolve"}
+            </Button>
           </div>
-          <Button onClick={() => navigate(`/ai-fix?finding=${finding.finding_id}`)}>
-            <Sparkles className="h-4 w-4" />
+          <Button onClick={() => navigate(`/ai-fix?finding=${local.finding_id}`)}>
+            <Sparkles className="h-4 w-4" aria-hidden />
             Get AI remediation
           </Button>
         </footer>
@@ -270,3 +399,4 @@ export function FindingDetailPanel({ finding, onClose }: FindingDetailPanelProps
     </div>
   );
 }
+import { toFriendlyMessage } from "../../lib/errors";

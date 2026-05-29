@@ -13,12 +13,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Search, ChevronRight } from "lucide-react";
 import type { FindingResult, Severity } from "../../types";
+import type { FrameworkScore } from "../../api/compliance";
 
 interface ControlListProps {
   findings: FindingResult[];
   framework: string | null;
   onFrameworkChange: (framework: string | null) => void;
   onSelect?: (finding: FindingResult) => void;
+  /** Scorecard rows from the compliance API. When provided, framework
+   * filtering matches by the backend-supplied tag prefixes so a family
+   * selection (``CIS_AZURE``) correctly maps to granular tags
+   * (``CIS_1.5``). When absent we fall back to equality / ``id_`` prefix. */
+  scorecard?: FrameworkScore[];
 }
 
 const SEVERITY_RANK: Record<Severity, number> = {
@@ -34,12 +40,19 @@ export function ControlList({
   framework,
   onFrameworkChange,
   onSelect,
+  scorecard,
 }: ControlListProps) {
   const [severity, setSeverity] = useState<Severity | "ALL">("ALL");
   const [search, setSearch] = useState("");
 
+  // The "Failed controls" card mirrors the backend definition of failing:
+  // status === OPEN. Including APPLIED / SNOOZED / RESOLVED here would
+  // make the table disagree with the scorecard's open-finding counts.
   const compliance = useMemo(
-    () => findings.filter((f) => f.compliance_frameworks.length > 0),
+    () =>
+      findings.filter(
+        (f) => f.compliance_frameworks.length > 0 && f.status === "OPEN",
+      ),
     [findings],
   );
 
@@ -53,10 +66,33 @@ export function ControlList({
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase();
+    // ``framework`` may be a granular tag (``SOC2_CC6.1``) from the
+    // dropdown, or a family id (``CIS_AZURE``, ``NIST_800_53`` …) from a
+    // row click. Resolve via the scorecard's authoritative prefix list
+    // when available. The static fallback below keeps filtering correct
+    // even before the API redeploys with the ``prefixes`` field.
+    const FALLBACK_PREFIXES: Record<string, string[]> = {
+      CIS_AZURE: ["CIS_"],
+      NIST_800_53: ["NIST_"],
+      ISO_27001: ["ISO_27001_", "ISO27001_", "ISO_"],
+      PCI_DSS: ["PCI_DSS_", "PCI_", "PCIDSS_"],
+      SOC2: ["SOC2_", "SOC_2_"],
+      HIPAA: ["HIPAA_"],
+    };
+    const matchesFramework = (tags: string[]): boolean => {
+      if (!framework) return true;
+      const row = scorecard?.find((r) => r.framework_id === framework);
+      const prefixes =
+        row?.prefixes && row.prefixes.length > 0
+          ? row.prefixes
+          : (FALLBACK_PREFIXES[framework] ?? [`${framework}_`]);
+      return tags.some(
+        (fw) =>
+          fw === framework || prefixes.some((p) => fw.startsWith(p)),
+      );
+    };
     return compliance
-      .filter((f) =>
-        framework ? f.compliance_frameworks.includes(framework) : true,
-      )
+      .filter((f) => matchesFramework(f.compliance_frameworks))
       .filter((f) => (severity === "ALL" ? true : f.severity === severity))
       .filter((f) => {
         if (!term) return true;

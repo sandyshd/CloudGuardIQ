@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "../ui/table";
+import { Info } from "lucide-react";
 import { useSubscriptionContext } from "../../auth/SubscriptionContext";
 import {
   connectOnboardingSessionV1,
@@ -389,6 +390,7 @@ export function MultiCloudOnboardingHub(): JSX.Element {
   const [displayName, setDisplayName] = useState("");
   const [tenantId, setTenantId] = useState("");
   const [accountId, setAccountId] = useState("");
+  const [awsRegion, setAwsRegion] = useState("us-east-1");
   const [projectId, setProjectId] = useState("");
 
   const [session, setSession] = useState<OnboardingSessionResponseV1 | null>(null);
@@ -438,6 +440,7 @@ export function MultiCloudOnboardingHub(): JSX.Element {
     setDisplayName("");
     setTenantId("");
     setAccountId("");
+    setAwsRegion("us-east-1");
     setProjectId("");
     setNotice(null);
   }
@@ -450,7 +453,7 @@ export function MultiCloudOnboardingHub(): JSX.Element {
       provider === "AZURE"
         ? { tenant_id: tenantId.trim() }
         : provider === "AWS"
-          ? { account_id: accountId.trim() }
+          ? { account_id: accountId.trim(), region: awsRegion.trim() }
           : { project_id: projectId.trim() };
 
     setBusyAction("create");
@@ -535,11 +538,18 @@ export function MultiCloudOnboardingHub(): JSX.Element {
           kind: "success",
           message: "Verification passed. Select the scopes you want CloudGuardIQ to monitor.",
         });
-      } else if (allPassed) {
+      } else if (updated.discovered_scopes.length === 0) {
+        // Covers both ``all pass but 0 scopes`` and ``scope_discovery=warn``
+        // emitted by the API when discovery returned an empty list. The
+        // warn chip carries the full diagnostic; this banner gives the
+        // top-line remediation including the "adding another subscription
+        // later" path, which is easy to miss because the ARM template
+        // only grants Reader at the subscription scope it was deployed
+        // to.
         setNotice({
           kind: "info",
           message:
-            "Verification passed but no scopes were discovered yet. Check your trust setup and re-run Verify.",
+            "No new subscriptions were returned. If you are linking an additional subscription, go back to Step 2 and re-deploy the ARM template targeting the new subscription (or assign the CloudGuardIQ enterprise application the Reader role on it). Wait ~2 minutes for Azure RBAC to propagate, then re-run Verify.",
         });
       } else {
         setNotice({
@@ -674,7 +684,11 @@ export function MultiCloudOnboardingHub(): JSX.Element {
 
           {step === 1 && (
             <section className="space-y-4">
-              <div className="rounded border bg-[hsl(var(--muted))]/30 p-3 text-sm">
+              <div
+                role="note"
+                className="flex items-start gap-2 rounded-md border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.06)] p-3 text-sm text-[hsl(var(--foreground))]"
+              >
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--primary))]" aria-hidden="true" />
                 <p>
                   Choose the cloud provider you want to onboard and identify the account.
                   CloudGuardIQ never receives long-lived credentials — trust is granted by you
@@ -747,6 +761,27 @@ export function MultiCloudOnboardingHub(): JSX.Element {
                     />
                     <p className="text-xs text-[hsl(var(--muted-foreground))]">
                       12-digit account number from AWS Console → My Account.
+                    </p>
+                  </div>
+                )}
+
+                {provider === "AWS" && (
+                  <div className="space-y-1 md:col-span-2">
+                    <label className="text-sm font-medium" htmlFor="aws-region">
+                      AWS region
+                    </label>
+                    <input
+                      id="aws-region"
+                      className="h-10 w-full rounded border px-2 font-mono text-sm"
+                      placeholder="us-east-1"
+                      value={awsRegion}
+                      onChange={(event) => setAwsRegion(event.target.value)}
+                      pattern="^[a-z]{2}-[a-z]+-\d$"
+                      required
+                    />
+                    <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                      Primary region for the connected account, e.g.
+                      <code> us-east-1</code> or <code> eu-west-2</code>.
                     </p>
                   </div>
                 )}
@@ -895,6 +930,11 @@ export function MultiCloudOnboardingHub(): JSX.Element {
                       >
                         {check.status}
                       </Badge>
+                      {check.message && (
+                        <p className="mt-2 text-xs leading-snug text-[hsl(var(--muted-foreground))]">
+                          {check.message}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>

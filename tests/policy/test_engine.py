@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from cloudguardiq.adapters.rules.storage import PublicBlobAccessRule
+from cloudguardiq.adapters.rules.azure.storage import PublicBlobAccessRule
 from cloudguardiq.core.enums import CloudProvider, DataTier, FindingType, Severity
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 from cloudguardiq.policy.engine import PolicyEngine, _compute_priority, _discover_rules
@@ -113,8 +113,8 @@ class TestPolicyEngineNew:
         assert findings == []
 
     def test_engine_runs_all_rules(self, engine: PolicyEngine) -> None:
-        """Verify all 44 native rules are registered via auto-discovery."""
-        assert engine.native_rule_count == 44
+        """Verify all 152 native rules (55 Azure + 50 AWS + 47 GCP) are auto-discovered."""
+        assert engine.native_rule_count == 152
 
     def test_priority_score_critical_high_cost_is_near_100(self) -> None:
         """CRITICAL severity + high waste + many frameworks -> score near 100."""

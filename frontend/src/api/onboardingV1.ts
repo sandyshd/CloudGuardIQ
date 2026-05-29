@@ -7,6 +7,8 @@ export interface OnboardingTargetScope {
   account_id?: string;
   project_id?: string;
   organization_id?: string;
+  /** AWS region for the connected account (e.g. "us-east-1"). */
+  region?: string;
 }
 
 export interface OnboardingSessionCreateRequestV1 {
@@ -18,6 +20,8 @@ export interface OnboardingSessionCreateRequestV1 {
 export interface VerificationCheck {
   check: string;
   status: string;
+  /** Optional human-readable explanation surfaced when status !== "pass". */
+  message?: string | null;
 }
 
 export interface DiscoveredScope {

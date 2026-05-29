@@ -16,3 +16,5 @@ aiohttp>=3.9.0
 uvicorn>=0.30.0
 python-dotenv>=1.0.0
 stripe>=9.0.0
+reportlab>=4.2.0
+azure-storage-blob>=12.20.0

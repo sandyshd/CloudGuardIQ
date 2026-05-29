@@ -321,3 +321,72 @@ def test_v1_connect_for_aws_marks_connected() -> None:
     assert body["linked_scope_ids"] == [AWS_ACCOUNT_ID]
     app.dependency_overrides.clear()
 
+
+# ---------------------------------------------------------------------------
+# AWS connect mirrors the account into the subscriptions repo so the
+# timer-driven ScanPipeline picks it up automatically.
+# ---------------------------------------------------------------------------
+
+
+def test_v1_aws_connect_mirrors_account_into_subscriptions_repo() -> None:
+    """Connecting an AWS account must write a SubscriptionRecord(provider=AWS)
+    keyed on the 12-digit account id, so the next scheduled scan tick
+    picks it up via the existing _list_enabled_subscriptions path."""
+    import asyncio
+    from cloudguardiq.core.enums import CloudProvider as CoreProvider
+
+    _wire()
+    app.dependency_overrides[verify_token] = lambda: TokenPayload(
+        sub="user-1", tid=HOME_TID, oid="oid-1",
+    )
+    client = _client()
+    res_create = client.post(
+        "/v1/onboarding/sessions",
+        json={
+            "provider": "AWS",
+            "display_name": "Prod AWS",
+            "target_scope": {
+                "account_id": AWS_ACCOUNT_ID,
+                "region": "us-west-2",
+            },
+        },
+    )
+    assert res_create.status_code == 201, res_create.text
+    session_id = res_create.json()["session_id"]
+    client.post(f"/v1/onboarding/sessions/{session_id}/verify")
+    res = client.post(
+        f"/v1/onboarding/sessions/{session_id}/connect",
+        json={"scope_ids": [AWS_ACCOUNT_ID]},
+    )
+    assert res.status_code == 200, res.text
+
+    repo = subs_module._get_repo()
+    stored = asyncio.run(repo.get(HOME_TID, AWS_ACCOUNT_ID))
+    assert stored is not None
+    assert stored.provider is CoreProvider.AWS
+    assert stored.aws_account_id == AWS_ACCOUNT_ID
+    assert stored.aws_region == "us-west-2"
+
+    app.dependency_overrides.clear()
+
+
+def test_v1_aws_create_rejects_bad_region() -> None:
+    _wire()
+    app.dependency_overrides[verify_token] = lambda: TokenPayload(
+        sub="user-1", tid=HOME_TID, oid="oid-1",
+    )
+    client = _client()
+    res = client.post(
+        "/v1/onboarding/sessions",
+        json={
+            "provider": "AWS",
+            "display_name": "Prod AWS",
+            "target_scope": {
+                "account_id": AWS_ACCOUNT_ID,
+                "region": "USWEST2",
+            },
+        },
+    )
+    assert res.status_code == 400
+    assert res.json()["detail"]["error_code"] == "invalid_target_scope"
+    app.dependency_overrides.clear()

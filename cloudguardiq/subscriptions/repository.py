@@ -18,6 +18,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from cloudguardiq.core.config import Settings
+from cloudguardiq.core.enums import CloudProvider
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,16 @@ class SubscriptionRecord(BaseModel):
 
     tenant_id: str
     subscription_id: str
+    # Multi-cloud provider this record represents. Defaults to AZURE so
+    # documents written before the AWS rollout keep working. For AWS
+    # connections ``subscription_id`` is reused as the canonical
+    # cross-cloud connection id (==``aws_account_id``).
+    provider: CloudProvider = CloudProvider.AZURE
+    # AWS-specific fields. Empty for non-AWS rows.
+    aws_account_id: str = ""
+    aws_region: str = ""
+    # GCP-specific field. Empty for non-GCP rows.
+    gcp_project_id: str = ""
     # The Azure tenant that owns this subscription. For self-service in
     # the operator's own tenant this matches ``tenant_id``; for true
     # cross-tenant SaaS onboarding (Phase 3) ``customer_tenant_id`` is
@@ -56,6 +67,10 @@ class SubscriptionRecord(BaseModel):
             "tenant_id": self.tenant_id,
             "subscription_id": self.subscription_id,
             "customer_tenant_id": self.customer_tenant_id or self.tenant_id,
+            "provider": self.provider.value,
+            "aws_account_id": self.aws_account_id,
+            "aws_region": self.aws_region,
+            "gcp_project_id": self.gcp_project_id,
             "display_name": self.display_name,
             "state": self.state,
             "added_at": self.added_at.isoformat(),
@@ -84,10 +99,19 @@ class SubscriptionRecord(BaseModel):
         added = _parse_dt(doc.get("added_at")) or datetime.now(timezone.utc)
         last_scan = _parse_dt(doc.get("last_scan_at"))
         removed = _parse_dt(doc.get("removed_at"))
+        provider_raw = str(doc.get("provider", "") or "AZURE").upper()
+        try:
+            provider_enum = CloudProvider(provider_raw)
+        except ValueError:
+            provider_enum = CloudProvider.AZURE
         return cls(
             tenant_id=str(doc.get("tenant_id", "")),
             subscription_id=str(doc.get("subscription_id", "")),
             customer_tenant_id=str(doc.get("customer_tenant_id", "") or ""),
+            provider=provider_enum,
+            aws_account_id=str(doc.get("aws_account_id", "") or ""),
+            aws_region=str(doc.get("aws_region", "") or ""),
+            gcp_project_id=str(doc.get("gcp_project_id", "") or ""),
             display_name=str(doc.get("display_name", "")),
             state=str(doc.get("state", "Enabled")),
             added_at=added,

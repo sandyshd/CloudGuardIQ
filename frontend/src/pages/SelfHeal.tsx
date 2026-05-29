@@ -2,7 +2,7 @@ import { HealingEventLog } from "../components/healing/HealingEventLog";
 import { MonitorStatus } from "../components/healing/MonitorStatus";
 import { AgentConfig } from "../components/healing/AgentConfig";
 import { EmptyState } from "../components/common/EmptyState";
-import { LoadingSpinner } from "../components/common/LoadingSpinner";
+import { PageSkeleton } from "../components/common/PageSkeleton";
 import { PageHeader } from "../components/common/PageHeader";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { Link2 } from "lucide-react";
@@ -10,7 +10,7 @@ import { Link2 } from "lucide-react";
 export function SelfHeal() {
   const { subscriptions, loading } = useSubscriptions();
 
-  if (loading) return <LoadingSpinner />;
+  if (loading) return <PageSkeleton withStats={false} />;
 
   if (subscriptions.length === 0) {
     return (
@@ -44,3 +44,4 @@ export function SelfHeal() {
     </div>
   );
 }
+

@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { LogOut, Settings as SettingsIcon, Sun, Moon, Monitor } from "lucide-react";
+import {
+  LogOut,
+  Settings as SettingsIcon,
+  Sun,
+  Moon,
+  Monitor,
+  Rows3,
+  Rows2,
+} from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
 import { useTheme } from "./ThemeProvider";
+import { useDensity } from "./DensityProvider";
 import { cn } from "../../lib/utils";
 
 function initial(name?: string | null): string {
@@ -12,6 +21,7 @@ function initial(name?: string | null): string {
 export function TopbarUser() {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { density, setDensity } = useDensity();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement | null>(null);
@@ -52,7 +62,10 @@ export function TopbarUser() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-[calc(100%+6px)] z-40 w-60 overflow-hidden rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--popover))] shadow-xl">
+        <div
+          role="menu"
+          className="absolute right-0 top-[calc(100%+6px)] z-40 w-64 overflow-hidden rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--popover))] shadow-xl"
+        >
           <div className="border-b border-[hsl(var(--border))] px-3 py-2.5">
             <div className="truncate text-sm font-medium text-[hsl(var(--foreground))]">
               {user.name}
@@ -64,6 +77,7 @@ export function TopbarUser() {
           <div className="border-b border-[hsl(var(--border))] py-1">
             <button
               type="button"
+              role="menuitem"
               onClick={() => {
                 setOpen(false);
                 navigate("/settings");
@@ -74,11 +88,13 @@ export function TopbarUser() {
               Settings
             </button>
           </div>
+
+          {/* Theme */}
           <div className="border-b border-[hsl(var(--border))] px-3 py-2">
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
               Theme
             </div>
-            <div className="grid grid-cols-3 gap-1">
+            <div className="grid grid-cols-3 gap-1" role="radiogroup" aria-label="Theme">
               {[
                 { id: "light" as const, label: "Light", icon: Sun },
                 { id: "dark" as const, label: "Dark", icon: Moon },
@@ -87,6 +103,8 @@ export function TopbarUser() {
                 <button
                   key={opt.id}
                   type="button"
+                  role="radio"
+                  aria-checked={theme === opt.id}
                   onClick={() => setTheme(opt.id)}
                   className={cn(
                     "flex flex-col items-center gap-1 rounded-md border px-2 py-1.5 text-[11px] transition-colors",
@@ -95,14 +113,46 @@ export function TopbarUser() {
                       : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--accent)/0.15)] hover:text-[hsl(var(--foreground))]",
                   )}
                 >
-                  <opt.icon className="h-3.5 w-3.5" />
+                  <opt.icon className="h-3.5 w-3.5" aria-hidden />
                   {opt.label}
                 </button>
               ))}
             </div>
           </div>
+
+          {/* Density */}
+          <div className="border-b border-[hsl(var(--border))] px-3 py-2">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
+              Table density
+            </div>
+            <div className="grid grid-cols-2 gap-1" role="radiogroup" aria-label="Table density">
+              {[
+                { id: "comfortable" as const, label: "Comfortable", icon: Rows3 },
+                { id: "compact" as const, label: "Compact", icon: Rows2 },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={density === opt.id}
+                  onClick={() => setDensity(opt.id)}
+                  className={cn(
+                    "flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] transition-colors",
+                    density === opt.id
+                      ? "border-[hsl(var(--primary)/0.5)] bg-[hsl(var(--primary)/0.08)] text-[hsl(var(--primary))]"
+                      : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--accent)/0.15)] hover:text-[hsl(var(--foreground))]",
+                  )}
+                >
+                  <opt.icon className="h-3.5 w-3.5" aria-hidden />
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <button
             type="button"
+            role="menuitem"
             onClick={() => {
               setOpen(false);
               logout();

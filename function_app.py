@@ -18,6 +18,10 @@ async def _build_scan_pipeline(
     async_credential,
     *,
     customer_tenant_id: str = "",
+    provider: str = "AZURE",
+    aws_account_id: str = "",
+    aws_region: str = "us-east-1",
+    gcp_project_id: str = "",
 ):
     """Build a ScanPipeline bound to a single Azure subscription.
 
@@ -32,37 +36,68 @@ async def _build_scan_pipeline(
     Failure to build a per-tenant credential falls back to
     DefaultAzureCredential (single-tenant path).
     """
-    from azure.identity import DefaultAzureCredential as SyncDefaultAzureCredential
     from azure.servicebus.aio import ServiceBusClient
 
-    from cloudguardiq.adapters.azure_adapter import AzureAdapter
-    from cloudguardiq.auth.customer_credential import build_default_factory
+    from cloudguardiq.adapters.factory import build_scan_adapter
     from cloudguardiq.billing.repository import BillingRepository
     from cloudguardiq.billing.usage import UsageRepository
     from cloudguardiq.core.config import get_settings
+    from cloudguardiq.core.enums import CloudProvider
     from cloudguardiq.pipeline.scan_pipeline import ScanPipeline
     from cloudguardiq.policy.engine import PolicyEngine
 
-    sync_credential = None
-    if customer_tenant_id:
-        factory = build_default_factory(get_settings())
-        if factory is not None:
-            try:
-                sync_credential = factory.for_tenant(customer_tenant_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Customer credential build failed tenant=%s: %s",
-                    customer_tenant_id, exc,
-                )
-    if sync_credential is None:
-        sync_credential = SyncDefaultAzureCredential()
+    provider_upper = (provider or "AZURE").upper()
+    if provider_upper == "AZURE":
+        from azure.identity import (
+            DefaultAzureCredential as SyncDefaultAzureCredential,
+        )
 
-    adapter = AzureAdapter(
-        credential=sync_credential,
-        subscription_id=subscription_id,
-        db=db,
-        async_credential=async_credential,
-    )
+        from cloudguardiq.auth.customer_credential import build_default_factory
+
+        sync_credential = None
+        if customer_tenant_id:
+            factory = build_default_factory(get_settings())
+            if factory is not None:
+                try:
+                    sync_credential = factory.for_tenant(customer_tenant_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Customer credential build failed tenant=%s: %s",
+                        customer_tenant_id, exc,
+                    )
+        if sync_credential is None:
+            sync_credential = SyncDefaultAzureCredential()
+
+        adapter = build_scan_adapter(
+            CloudProvider.AZURE,
+            credential=sync_credential,
+            subscription_id=subscription_id,
+            db=db,
+            async_credential=async_credential,
+        )
+    elif provider_upper == "AWS":
+        if not aws_account_id:
+            raise RuntimeError(
+                f"AWS pipeline build for sub={subscription_id} "
+                "missing aws_account_id"
+            )
+        adapter = build_scan_adapter(
+            CloudProvider.AWS,
+            account_id=aws_account_id,
+            region=aws_region or "us-east-1",
+        )
+    elif provider_upper == "GCP":
+        if not gcp_project_id:
+            raise RuntimeError(
+                f"GCP pipeline build for sub={subscription_id} "
+                "missing gcp_project_id"
+            )
+        adapter = build_scan_adapter(
+            CloudProvider.GCP,
+            project_id=gcp_project_id,
+        )
+    else:
+        raise RuntimeError(f"Unsupported provider for scan pipeline: {provider}")
 
     sender = None
     sb_fqns = os.environ.get("SERVICE_BUS_CONNECTION__fullyQualifiedNamespace")  # noqa: SIM112
@@ -132,12 +167,11 @@ async def _get_ai_worker():
     from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
 
     from cloudguardiq.ai.remediation_engine import RemediationEngine
+    from cloudguardiq.billing.repository import BillingRepository
+    from cloudguardiq.billing.usage import UsageRepository
     from cloudguardiq.core.config import get_settings
     from cloudguardiq.core.database import CosmosRepository
     from cloudguardiq.pipeline.ai_worker import AIWorker
-
-    from cloudguardiq.billing.repository import BillingRepository
-    from cloudguardiq.billing.usage import UsageRepository
 
     settings = get_settings()
     db = CosmosRepository(settings)
@@ -176,7 +210,10 @@ async def _get_ai_worker():
 
 
 @app.timer_trigger(
-    schedule="0 0 */6 * * *",
+    # Fire every 5 minutes. Per-tenant cooldown gating in
+    # scan_trigger() enforces the actual cadence per billing plan:
+    # Free = 1440 min, Starter = 60 min, Enterprise = 15 min.
+    schedule="0 */5 * * * *",
     arg_name="timer",
     run_on_startup=False,
 )
@@ -249,6 +286,10 @@ async def scan_trigger(timer: func.TimerRequest) -> None:
                     customer_tenant_id=(
                         rec.customer_tenant_id or rec.tenant_id
                     ),
+                    provider=rec.provider.value,
+                    aws_account_id=rec.aws_account_id,
+                    aws_region=rec.aws_region or "us-east-1",
+                    gcp_project_id=rec.gcp_project_id,
                 )
                 result = await pipeline.run(subscription_id, tenant_id=tenant_id)
                 logger.info(

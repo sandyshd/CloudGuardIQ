@@ -48,6 +48,8 @@ export interface FindingResult {
   waste_monthly_usd: number;
   priority_score: number;
   detected_at: string;
+  first_seen_at?: string;
+  last_seen_at?: string;
   status?: FindingStatus;
   resolved_at?: string | null;
   resolved_by?: string;
@@ -84,6 +86,9 @@ export interface Subscription {
   subscription_id: string;
   display_name: string;
   state: string;
+  provider?: CloudProvider;
+  aws_account_id?: string;
+  gcp_project_id?: string;
 }
 
 export interface DashboardMetrics {

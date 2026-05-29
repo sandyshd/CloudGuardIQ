@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from cloudguardiq.api import subscriptions as subscriptions_module
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
 from cloudguardiq.core.config import Settings, get_settings
+from cloudguardiq.core.enums import CloudProvider as CloudProvider_enum
 from cloudguardiq.onboarding.audit_event_repository import (
     AuditEventRecord,
     AuditEventRepository,
@@ -53,6 +54,10 @@ class OnboardingTargetScope(BaseModel):
     account_id: str = ""
     project_id: str = ""
     organization_id: str = ""
+    # AWS region for the connected account. Optional in the request;
+    # defaults to ``us-east-1`` when the AWS path persists the
+    # SubscriptionRecord. Ignored for non-AWS providers.
+    region: str = ""
 
 
 class OnboardingSessionCreateRequestV1(BaseModel):
@@ -74,6 +79,10 @@ class VerificationCheck(BaseModel):
 
     check: str
     status: str
+    # Optional human-readable explanation surfaced to the operator when a
+    # check produces a non-``pass`` outcome (e.g. ``warn`` because scope
+    # discovery succeeded but returned zero subscriptions).
+    message: str | None = None
 
 
 class DiscoveredScope(BaseModel):
@@ -121,6 +130,7 @@ class AwsOnboardingSession(BaseModel):
     session_id: str
     operator_tenant_id: str
     account_id: str
+    region: str = "us-east-1"
     status: str = "initiated"
     discovered_scope_ids: list[str] = Field(default_factory=list)
     linked_scope_ids: list[str] = Field(default_factory=list)
@@ -623,6 +633,107 @@ async def _mirror_connected_scopes_for_operator(
 
 
 
+
+async def _mirror_aws_account_for_operator(
+    *,
+    user: TokenPayload,
+    account_id: str,
+    region: str,
+) -> None:
+    """Mirror a connected AWS account into the operator-tenant subscriptions
+    container so the timer-driven ScanPipeline picks it up on the next tick.
+
+    Mirrors the Azure helper above. Best-effort: failures are logged and
+    swallowed so a transient Cosmos issue does not break the connect step.
+    """
+
+    try:
+        repo = subscriptions_module._get_repo()  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Subscriptions repository unavailable for AWS mirror: %s", exc,
+        )
+        return
+
+    caller_tenant_id = get_tenant_id(user)
+    try:
+        existing = await repo.get(caller_tenant_id, account_id)
+        if existing is None:
+            await repo.upsert(
+                SubscriptionRecord(
+                    tenant_id=caller_tenant_id,
+                    subscription_id=account_id,
+                    customer_tenant_id=caller_tenant_id,
+                    display_name=f"AWS {account_id}",
+                    provider=CloudProvider_enum.AWS,
+                    aws_account_id=account_id,
+                    aws_region=region,
+                ),
+            )
+            return
+        # Restore + update region on re-connect.
+        if existing.state == "Removed":
+            existing.state = "Enabled"
+            existing.removed_at = None
+        existing.provider = CloudProvider_enum.AWS
+        existing.aws_account_id = account_id
+        existing.aws_region = region
+        await repo.upsert(existing)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to mirror AWS account tenant=%s account=%s: %s",
+            caller_tenant_id, account_id, exc,
+        )
+
+
+async def _mirror_gcp_project_for_operator(
+    *,
+    user: TokenPayload,
+    project_id: str,
+) -> None:
+    """Mirror a connected GCP project into the operator-tenant subscriptions
+    container so the timer-driven ScanPipeline picks it up on the next tick.
+
+    Mirrors the AWS helper above. Best-effort: failures are logged and
+    swallowed so a transient Cosmos issue does not break the connect step.
+    """
+
+    try:
+        repo = subscriptions_module._get_repo()  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Subscriptions repository unavailable for GCP mirror: %s", exc,
+        )
+        return
+
+    caller_tenant_id = get_tenant_id(user)
+    try:
+        existing = await repo.get(caller_tenant_id, project_id)
+        if existing is None:
+            await repo.upsert(
+                SubscriptionRecord(
+                    tenant_id=caller_tenant_id,
+                    subscription_id=project_id,
+                    customer_tenant_id=caller_tenant_id,
+                    display_name=f"GCP {project_id}",
+                    provider=CloudProvider_enum.GCP,
+                    gcp_project_id=project_id,
+                ),
+            )
+            return
+        if existing.state == "Removed":
+            existing.state = "Enabled"
+            existing.removed_at = None
+        existing.provider = CloudProvider_enum.GCP
+        existing.gcp_project_id = project_id
+        await repo.upsert(existing)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to mirror GCP project tenant=%s project=%s: %s",
+            caller_tenant_id, project_id, exc,
+        )
+
+
 @router.post(
     "/sessions",
     response_model=OnboardingSessionResponseV1,
@@ -671,10 +782,23 @@ async def create_onboarding_session_v1(
             )
         operator_tenant_id = get_tenant_id(user).lower()
         session_id = uuid.uuid4().hex
+        region = (body.target_scope.region or "us-east-1").strip().lower()
+        if not re.match(r"^[a-z]{2}-[a-z]+-\d$", region):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error_code": "invalid_target_scope",
+                    "message": (
+                        "target_scope.region must look like 'us-east-1'"
+                        " (lowercase, hyphens)."
+                    ),
+                },
+            )
         aws_session = AwsOnboardingSession(
             session_id=session_id,
             operator_tenant_id=operator_tenant_id,
             account_id=account_id,
+            region=region,
             status="initiated",
             external_id=_build_aws_external_id(operator_tenant_id, session_id),
         )
@@ -921,8 +1045,39 @@ async def verify_onboarding_session_v1(
     checks = [
         VerificationCheck(check="token_exchange", status="pass"),
         VerificationCheck(check="permission_probe", status="pass"),
-        VerificationCheck(check="scope_discovery", status="pass"),
     ]
+    # ``discover_onboarding_session_subscriptions`` only returns subscriptions
+    # the app principal can actually read AND that are not already linked to
+    # this customer. An empty list therefore means one of:
+    #   - the Reader RBAC assignment hasn't propagated yet (typical: <2 min)
+    #   - admin consent was granted but no Reader role was assigned anywhere
+    #   - the customer's only subscription(s) are already linked
+    # In all three cases ``scope_discovery`` is technically a successful API
+    # call, but surfacing it as PASS is misleading because there's nothing
+    # for the operator to connect.
+    if not legacy.discovered_subscription_ids:
+        checks.append(
+            VerificationCheck(
+                check="scope_discovery",
+                status="warn",
+                message=(
+                    "Authentication succeeded but no new subscriptions were "
+                    "returned. Most common causes: (1) the CloudGuardIQ "
+                    "enterprise application has no Reader (or higher) role "
+                    "assigned on any subscription yet -- assign one and "
+                    "wait ~2 minutes for Azure RBAC to propagate; (2) you "
+                    "are linking an additional subscription and the "
+                    "onboarding ARM template was only deployed at the "
+                    "first subscription's scope -- re-run the Deploy step "
+                    "(Step 2) targeting the new subscription, or assign "
+                    "Reader to the app on it manually; (3) every "
+                    "subscription in this tenant is already linked, in "
+                    "which case there is nothing further to connect."
+                ),
+            )
+        )
+    else:
+        checks.append(VerificationCheck(check="scope_discovery", status="pass"))
     await _append_audit_event(
         user=user,
         action="session_verified",
@@ -989,8 +1144,19 @@ async def connect_onboarding_session_v1(
             user=user,
             provider=CloudProvider.AWS,
             linked_scopes=aws_session.linked_scope_ids,
-            target_scope={"account_id": aws_session.account_id},
-            display_name="AWS connection",
+            target_scope={
+                "account_id": aws_session.account_id,
+                "region": aws_session.region,
+            },
+            display_name=f"AWS {aws_session.account_id}",
+        )
+        # Mirror the AWS account into the subscriptions container so the
+        # timer-driven scan picks it up automatically -- same pattern
+        # the Azure branch uses above.
+        await _mirror_aws_account_for_operator(
+            user=user,
+            account_id=aws_session.account_id,
+            region=aws_session.region,
         )
         return _aws_session_to_response(aws_session, connection_id=rec.connection_id)
 
@@ -1014,6 +1180,10 @@ async def connect_onboarding_session_v1(
         linked_scopes=gcp_session.linked_scope_ids,
         target_scope={"project_id": gcp_session.project_id},
         display_name="GCP connection",
+    )
+    await _mirror_gcp_project_for_operator(
+        user=user,
+        project_id=gcp_session.project_id,
     )
     return _gcp_session_to_response(gcp_session, connection_id=rec.connection_id)
 

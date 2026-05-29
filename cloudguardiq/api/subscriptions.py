@@ -87,6 +87,9 @@ class SubscriptionResponse(BaseModel):
     subscription_id: str
     display_name: str = ""
     state: str = "Enabled"
+    provider: str = "AZURE"
+    aws_account_id: str = ""
+    gcp_project_id: str = ""
 
     @classmethod
     def from_record(cls, rec: SubscriptionRecord) -> SubscriptionResponse:
@@ -95,6 +98,9 @@ class SubscriptionResponse(BaseModel):
             subscription_id=rec.subscription_id,
             display_name=rec.display_name or rec.subscription_id,
             state=rec.state,
+            provider=rec.provider.value,
+            aws_account_id=rec.aws_account_id,
+            gcp_project_id=rec.gcp_project_id,
         )
 
 
@@ -984,11 +990,46 @@ def _normalize_template_uri(uri: str) -> str:
     """
     if not uri:
         return uri
-    m = _GITHUB_BLOB_RE.match(uri.strip())
+    # Strip surrounding whitespace and any wrapping quote/backtick characters.
+    # A common misconfiguration is setting the env var or CI secret to
+    # ``'https://.../template.json'`` (with literal quotes), which gets
+    # URL-encoded to a trailing ``%27`` in the Deploy-to-Azure link and makes
+    # the Portal fail with "error downloading the template".
+    cleaned = uri.strip().strip("'\"`").strip()
+    m = _GITHUB_BLOB_RE.match(cleaned)
     if not m:
-        return uri
+        return cleaned
     owner, repo, ref, path = m.groups()
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
+
+
+# Path (relative to the API router prefix ``/subscriptions``) at which the
+# bundled CloudGuardIQ Reader ARM template is served anonymously. The Azure
+# Portal Deploy-to-Azure blade fetches this URL when the customer clicks the
+# one-click button, so it must remain stable and unauthenticated.
+_BUNDLED_TEMPLATE_PATH = "/subscriptions/onboarding-template.json"
+
+
+def _resolve_template_uri(settings: Settings) -> str:
+    """Return the effective ARM template URL for the Deploy-to-Azure flow.
+
+    Resolution order:
+
+    1. ``CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI`` if explicitly set --
+       normalized (strips wrapping quotes, rewrites GitHub blob URLs).
+    2. The bundled template served by this API at
+       ``{public_api_base_url}{_BUNDLED_TEMPLATE_PATH}`` -- used when the
+       env var is unset so a private GitHub repo does not break onboarding.
+    3. Empty string -- callers translate this into HTTP 503 (one-click
+       disabled; the manual ``az role assignment`` flow still works).
+    """
+    explicit = _normalize_template_uri(settings.onboarding_template_uri)
+    if explicit:
+        return explicit
+    base = (settings.public_api_base_url or "").strip().strip("'\"`").strip()
+    if not base:
+        return ""
+    return f"{base.rstrip('/')}{_BUNDLED_TEMPLATE_PATH}"
 
 
 def _build_parameters_uri(base_url: str, principal_id: str) -> str:
@@ -1136,7 +1177,7 @@ async def discover_subscriptions(
                 "Discover blocked by RBAC tenant=%s: %s", customer_tid, msg,
             )
             info = OnboardingInfo.build()
-            template_uri = _normalize_template_uri(settings.onboarding_template_uri)
+            template_uri = _resolve_template_uri(settings)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -1281,13 +1322,14 @@ async def get_onboarding_template(
     caller_tid = get_tenant_id(user)
     customer_tid = (tenant_id or caller_tid).strip().lower()
     settings = _get_settings()
-    template_uri = _normalize_template_uri(settings.onboarding_template_uri)
+    template_uri = _resolve_template_uri(settings)
     if not template_uri:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                "onboarding_template_uri is not configured; "
-                "set CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI on the API."
+                "onboarding template URL is not configured; set "
+                "CLOUDGUARDIQ_ONBOARDING_TEMPLATE_URI or "
+                "CLOUDGUARDIQ_PUBLIC_API_BASE_URL on the API."
             ),
         )
     principal_id = await _resolve_principal_for_tenant(
@@ -1343,6 +1385,58 @@ async def get_onboarding_parameters(principal_id: str) -> Response:
         media_type="application/json",
         headers={
             "Cache-Control": "public, max-age=300",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+# Cached copy of the bundled ARM template body. Read once at first request
+# and reused thereafter -- the file ships inside the wheel, so the contents
+# cannot change between calls within a single process.
+_BUNDLED_TEMPLATE_BODY: bytes | None = None
+
+
+def _load_bundled_template() -> bytes:
+    """Load the CloudGuardIQ Reader ARM template bundled in the wheel.
+
+    The file lives at ``cloudguardiq/api/templates/cloudguardiq-reader.json``
+    and is shipped via ``[tool.setuptools.package-data]`` in
+    ``pyproject.toml``. Using ``importlib.resources`` is robust to whether
+    the package is installed from a wheel, an editable install, or a
+    zipped artifact.
+    """
+    global _BUNDLED_TEMPLATE_BODY
+    if _BUNDLED_TEMPLATE_BODY is not None:
+        return _BUNDLED_TEMPLATE_BODY
+    from importlib.resources import files
+    pkg = files("cloudguardiq.api.templates")
+    _BUNDLED_TEMPLATE_BODY = (pkg / "cloudguardiq-reader.json").read_bytes()
+    return _BUNDLED_TEMPLATE_BODY
+
+
+@router.get(
+    "/onboarding-template.json",
+    include_in_schema=False,
+    responses={200: {"content": {"application/json": {}}}},
+)
+async def get_onboarding_template_json() -> Response:
+    """Serve the CloudGuardIQ Reader ARM template anonymously.
+
+    The Azure Portal Deploy-to-Azure blade fetches this URL when the
+    customer clicks the one-click onboarding button. Hosting the template
+    from the API (instead of ``raw.githubusercontent.com``) lets the
+    GitHub repository stay private and removes the GitHub branch/path
+    coupling -- the template version always matches the running API.
+
+    The route is intentionally unauthenticated and CORS-open for the
+    Azure Portal origin. The body is a static, non-sensitive ARM template
+    (no secrets, no tenant data), so anonymous access is safe.
+    """
+    return Response(
+        content=_load_bundled_template(),
+        media_type="application/json",
+        headers={
+            "Cache-Control": "public, max-age=3600",
             "Access-Control-Allow-Origin": "*",
         },
     )

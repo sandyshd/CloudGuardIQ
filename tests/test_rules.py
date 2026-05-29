@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from cloudguardiq.adapters.rules.compute import VMNoEncryptionRule, VMUnmanagedDisksRule
-from cloudguardiq.adapters.rules.finops import UnattachedDiskRule, UnderutilizedVMRule
-from cloudguardiq.adapters.rules.iam import OverprivilegedIdentityRule
-from cloudguardiq.adapters.rules.keyvault import KeyVaultPurgeProtectionRule, KeyVaultSoftDeleteRule
-from cloudguardiq.adapters.rules.network import NSGOpenRDPRule, NSGOpenSSHRule
-from cloudguardiq.adapters.rules.storage import StorageHttpsOnlyRule, StoragePublicAccessRule
+from cloudguardiq.adapters.rules.azure.compute import VMNoEncryptionRule, VMUnmanagedDisksRule
+from cloudguardiq.adapters.rules.azure.finops import UnattachedDiskRule, UnderutilizedVMRule
+from cloudguardiq.adapters.rules.azure.iam import OverprivilegedIdentityRule
+from cloudguardiq.adapters.rules.azure.keyvault import KeyVaultPurgeProtectionRule, KeyVaultSoftDeleteRule
+from cloudguardiq.adapters.rules.azure.network import NSGOpenRDPRule, NSGOpenSSHRule
+from cloudguardiq.adapters.rules.azure.storage import StorageHttpsOnlyRule, StoragePublicAccessRule
 from cloudguardiq.core.enums import DataTier, FindingCategory, Severity
 from cloudguardiq.core.models import ResourceSnapshot
 

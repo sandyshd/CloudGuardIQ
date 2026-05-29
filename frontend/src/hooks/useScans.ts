@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { ScanResponse } from "../types";
 import { triggerScan } from "../api/scans";
-
+
+import { toFriendlyMessage } from "../lib/errors";
 export function useScans() {
   const [scanResult, setScanResult] = useState<ScanResponse | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -15,7 +16,7 @@ export function useScans() {
       setScanResult(result);
       return result;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Scan failed");
+      setError(toFriendlyMessage(err, "Scan failed"));
       return null;
     } finally {
       setScanning(false);
