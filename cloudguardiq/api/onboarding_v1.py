@@ -74,6 +74,20 @@ class OnboardingSessionConnectRequestV1(BaseModel):
     scope_ids: list[str] = Field(default_factory=list)
 
 
+class GenerateArtifactsRequestV1(BaseModel):
+    """Request payload for POST /v1/onboarding/sessions/{id}/generate-artifacts.
+
+    ``assign_frameworks`` is Azure-only and optional. It selects which
+    built-in regulatory initiatives the Deploy-to-Azure template assigns
+    alongside the Reader role: ``all`` (every supported framework), a CSV
+    of framework ids (e.g. ``CIS_AZURE,NIST_800_53``), or ``none``/empty
+    to grant the Reader role only. Defaults to ``all`` for backward
+    compatibility with the original one-click flow.
+    """
+
+    assign_frameworks: str = "all"
+
+
 class VerificationCheck(BaseModel):
     """One verify step result returned to the frontend."""
 
@@ -875,9 +889,20 @@ async def get_onboarding_session_v1(
 )
 async def generate_onboarding_artifacts_v1(
     session_id: str,
+    body: GenerateArtifactsRequestV1 | None = None,
     user: TokenPayload = _auth,
 ) -> OnboardingSessionResponseV1:
-    """Generate provider onboarding artifacts."""
+    """Generate provider onboarding artifacts.
+
+    For Azure the optional request body selects which compliance
+    initiatives the Deploy-to-Azure template assigns (see
+    ``GenerateArtifactsRequestV1``). AWS and GCP ignore the body.
+    """
+    assign_frameworks = (
+        body.assign_frameworks if body is not None else "all"
+    )
+    if assign_frameworks.strip().lower() == "none":
+        assign_frameworks = ""
 
     try:
         legacy = await subscriptions_module.get_onboarding_session(
@@ -952,7 +977,7 @@ async def generate_onboarding_artifacts_v1(
     template = await subscriptions_module.get_onboarding_template(
         tenant_id=legacy.customer_tenant_id,
         scope="subscription",
-        assign_frameworks="all",
+        assign_frameworks=assign_frameworks,
         user=user,
     )
     azure_artifacts["template_uri"] = template.template_uri
