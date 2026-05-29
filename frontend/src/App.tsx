@@ -9,6 +9,7 @@ import { FinOps } from "./pages/FinOps";
 import { Compliance } from "./pages/Compliance";
 import { SelfHeal } from "./pages/SelfHeal";
 import { Settings } from "./pages/Settings";
+import { Reports } from "./pages/Reports";
 import { ComingSoon } from "./pages/ComingSoon";
 
 export default function App() {
@@ -31,7 +32,7 @@ export default function App() {
               <Route path="/integrations" element={<ComingSoon />} />
               <Route path="/resources" element={<ComingSoon />} />
               <Route path="/policies" element={<ComingSoon />} />
-              <Route path="/reports" element={<ComingSoon />} />
+              <Route path="/reports" element={<Reports />} />
               <Route path="/audit" element={<ComingSoon />} />
               <Route path="*" element={<ComingSoon />} />
             </Route>

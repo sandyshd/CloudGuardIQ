@@ -5,7 +5,6 @@ import { useSubscriptions } from "../hooks/useSubscriptions";
 import { ComplianceKpis } from "../components/compliance/ComplianceKpis";
 import { FrameworkPosture } from "../components/compliance/FrameworkPosture";
 import { ControlList } from "../components/compliance/ControlList";
-import { ReportHistory } from "../components/compliance/ReportHistory";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { PageSkeleton } from "../components/common/PageSkeleton";
 import { EmptyState } from "../components/common/EmptyState";
@@ -58,7 +57,6 @@ export function Compliance() {
           primaryLabel="Go to Findings"
           primaryTo="/findings"
         />
-        <ReportHistory subscriptionId={selectedSub?.subscription_id} />
       </div>
     );
   }
@@ -82,11 +80,6 @@ export function Compliance() {
         onFrameworkChange={setFramework}
         onSelect={setSelected}
         scorecard={scorecard}
-      />
-
-      <ReportHistory
-        subscriptionId={selectedSub?.subscription_id}
-        framework={framework?.split(/[_-]/)[0] || "CIS"}
       />
 
       {selected && (
