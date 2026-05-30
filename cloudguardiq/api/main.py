@@ -979,6 +979,27 @@ async def scan_subscription(
         snapshots = []
     findings: list[FindingResult] = engine.evaluate(snapshots)
 
+    # Merge Azure Policy regulatory-compliance findings (Tier 1, free) the
+    # adapter emits directly, bypassing the rule registry. The interactive
+    # /scan endpoint builds snapshots via list_resources(), so -- unlike the
+    # timer-driven ScanPipeline -- it must trigger Policy ingestion explicitly.
+    # Without this, AZPOL- findings never reach the dashboard even when a
+    # regulatory initiative (e.g. CIS Azure) is assigned.
+    if adapter is not None:
+        try:
+            policy_findings = await adapter.fetch_policy_findings()
+            if policy_findings:
+                findings.extend(policy_findings)
+                logger.info(
+                    "Merged %s Azure Policy compliance finding(s) into scan %s",
+                    len(policy_findings), scan_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Azure Policy compliance ingestion failed for %s: %s",
+                request.subscription_id, exc,
+            )
+
     # Stamp tenant ownership on every snapshot and finding before
     # persistence. Without this, rows are written with tenant_id="" and
     # the tenant-isolated GET /findings query returns nothing -- the

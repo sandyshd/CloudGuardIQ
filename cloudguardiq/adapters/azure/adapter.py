@@ -139,6 +139,19 @@ class AzureAdapter(AdapterBase):
 
         return snapshots
 
+    async def fetch_policy_findings(self) -> list[FindingResult]:
+        """Ingest Azure Policy regulatory-compliance findings on demand.
+
+        The interactive ``POST /scan`` endpoint builds snapshots via
+        ``list_resources()`` rather than ``scan()``, so it does not populate
+        ``policy_findings`` automatically. This method runs the (free,
+        Reader-accessible) Policy ingestion directly and stashes the result so
+        ``policy_findings`` reflects it too. Never raises -- returns ``[]`` on
+        any failure or when no regulatory initiative is assigned.
+        """
+        self._policy_findings = await self._policy_adapter.fetch_findings()
+        return self._policy_findings
+
     @property
     def policy_findings(self) -> list[FindingResult]:
         """Azure Policy compliance findings from the most recent scan().
