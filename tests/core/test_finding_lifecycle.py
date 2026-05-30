@@ -186,3 +186,57 @@ async def test_mark_unseen_findings_resolved() -> None:
     assert saved_b["status"] == "RESOLVED"
     assert saved_b["resolved_by"] == "auto:scan"
     assert saved_b["auto_resolved_scan_id"] == "s2"
+
+
+class _FakeFindingsReadContainer:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = [dict(r) for r in rows]
+
+    async def query_items(
+        self,
+        query: str,
+        parameters: list[Any] | None = None,
+        partition_key: str | None = None,
+    ) -> Any:
+        for row in self.rows:
+            if partition_key and row.get("subscription_id") != partition_key:
+                continue
+            yield dict(row)
+
+
+class _FakeFindingsReadRepo:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.container = _FakeFindingsReadContainer(rows)
+
+    def _findings_container(self) -> _FakeFindingsReadContainer:
+        return self.container
+
+
+@pytest.mark.asyncio
+async def test_get_findings_normalises_legacy_null_string_fields() -> None:
+    from cloudguardiq.core.database import CosmosRepository
+
+    snap = _snap()
+    finding = FindingResult(
+        rule_id="VM-001",
+        severity=Severity.HIGH,
+        resource_snapshot=snap,
+        tenant_id="tenant-x",
+    )
+    doc = finding.model_dump(mode="json")
+    doc["id"] = finding.finding_id
+    doc["subscription_id"] = snap.subscription_id
+    doc["resolved_by"] = None
+    doc["last_seen_scan_id"] = None
+
+    repo = _FakeFindingsReadRepo([doc])
+    rows = await CosmosRepository.get_findings(
+        repo,  # type: ignore[arg-type]
+        subscription_id=snap.subscription_id,
+        tenant_id="tenant-x",
+        limit=50,
+    )
+
+    assert len(rows) == 1
+    assert rows[0].resolved_by == ""
+    assert rows[0].last_seen_scan_id == ""

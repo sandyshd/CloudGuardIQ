@@ -16,6 +16,7 @@ from typing import Any
 
 from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
 from azure.identity.aio import DefaultAzureCredential
+from pydantic import ValidationError
 
 from cloudguardiq.adapters.base import CapabilityFlags
 from cloudguardiq.core.config import Settings
@@ -86,6 +87,54 @@ def _build_finding_lookup_query(
     else:
         query = "SELECT * FROM c WHERE c.finding_id = @fid"
     return query, params
+
+
+# Backward-compatibility: historical rows may contain nulls for fields that are
+# now strongly typed as str/list/dict in Pydantic models. Normalise those values
+# at read-time so one legacy row cannot fail the entire /findings response.
+def _normalise_finding_doc(raw: dict[str, Any]) -> dict[str, Any]:
+    """Return a FindingResult-compatible copy of a Cosmos finding document."""
+    doc = dict(raw)
+
+    for key in (
+        "finding_id",
+        "tenant_id",
+        "rule_id",
+        "rule_name",
+        "description",
+        "resolved_by",
+        "last_seen_scan_id",
+    ):
+        if doc.get(key) is None:
+            doc[key] = ""
+
+    if doc.get("evidence") is None:
+        doc["evidence"] = {}
+    if doc.get("compliance_frameworks") is None:
+        doc["compliance_frameworks"] = []
+
+    snapshot = doc.get("resource_snapshot")
+    if isinstance(snapshot, dict):
+        snap = dict(snapshot)
+        for key in (
+            "id",
+            "tenant_id",
+            "subscription_id",
+            "resource_group",
+            "resource_type",
+            "resource_name",
+            "region",
+            "raw_hash",
+        ):
+            if snap.get(key) is None:
+                snap[key] = ""
+        if snap.get("config") is None:
+            snap["config"] = {}
+        if snap.get("tags") is None:
+            snap["tags"] = {}
+        doc["resource_snapshot"] = snap
+
+    return doc
 
 
 class CosmosRepository:
@@ -392,12 +441,21 @@ class CosmosRepository:
             from_date=from_date,
             to_date=to_date,
         )
-        items: list[dict[str, Any]] = []
+        results: list[FindingResult] = []
         async for item in self._findings_container().query_items(
             query=query, parameters=params, partition_key=subscription_id
         ):
-            items.append(item)
-        return [FindingResult.model_validate(i) for i in items]
+            try:
+                results.append(FindingResult.model_validate(_normalise_finding_doc(item)))
+            except ValidationError as exc:
+                finding_key = str(item.get("finding_id") or item.get("id") or "unknown")
+                logger.warning(
+                    "Skipping invalid finding row %s in %s: %s",
+                    finding_key,
+                    subscription_id,
+                    exc.errors()[0].get("msg", str(exc)),
+                )
+        return results
 
     async def get_finding(
         self,
