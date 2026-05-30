@@ -161,6 +161,28 @@ class TestFetchFindings:
         assert result[0].rule_id.startswith("AZPOL-")
 
 
+    @pytest.mark.asyncio
+    async def test_fetch_findings_ingests_assigned_policy_definitions(
+        self, adapter: AzurePolicyComplianceAdapter
+    ) -> None:
+        adapter._list_assigned_initiatives = AsyncMock(return_value=set())
+        adapter._list_assigned_policy_definitions = AsyncMock(
+            return_value={POLICY_DEF_ID}
+        )
+        adapter._resolve_control_ids = AsyncMock(return_value={})
+        query_spy = AsyncMock(return_value=[_state_row()])
+        adapter._query_policy_states = query_spy
+
+        result = await adapter.fetch_findings()
+
+        query_spy.assert_awaited_once_with(
+            POLICY_DEF_ID,
+            filter_field="policyDefinitionId",
+        )
+        assert len(result) == 1
+        assert result[0].rule_id.startswith("AZPOL-")
+
+
 class TestToFinding:
     def test_to_finding_maps_all_required_fields(
         self, adapter: AzurePolicyComplianceAdapter
@@ -229,6 +251,40 @@ class TestControlIdResolution:
         policy_client_cls.assert_not_called()
 
 
+class TestAssignedPolicyTargets:
+    @pytest.mark.asyncio
+    async def test_list_assigned_policy_targets_splits_sets(
+        self, adapter: AzurePolicyComplianceAdapter
+    ) -> None:
+        initiative_assignment = MagicMock(
+            policy_definition_id=(
+                "/providers/Microsoft.Authorization/"
+                "policySetDefinitions/initiative-one"
+            )
+        )
+        definition_assignment = MagicMock(
+            policy_definition_id=(
+                "/providers/Microsoft.Authorization/"
+                "policyDefinitions/definition-one"
+            )
+        )
+        mock_client = MagicMock()
+        mock_client.policy_assignments.list_for_subscription.return_value = [
+            initiative_assignment,
+            definition_assignment,
+        ]
+
+        with patch.object(mod, "PolicyClient", MagicMock(return_value=mock_client)):
+            initiatives, definitions = await adapter._list_assigned_policy_targets()
+
+        assert initiatives == {
+            "/providers/Microsoft.Authorization/policySetDefinitions/initiative-one"
+        }
+        assert definitions == {
+            "/providers/Microsoft.Authorization/policyDefinitions/definition-one"
+        }
+
+
 class TestQueryPolicyStates:
     @pytest.mark.asyncio
     async def test_query_policy_states_returns_empty_on_403(
@@ -253,8 +309,32 @@ class TestQueryPolicyStates:
         ]
         with patch.object(mod, "PolicyInsightsClient", MagicMock(return_value=mock_client)):
             rows = await adapter._query_policy_states(CIS_ID)
+
         assert len(rows) == 1
         assert rows[0]["resourceId"] == RESOURCE_ID
+        called = mock_client.policy_states.list_query_results_for_subscription.call_args
+        options = called.kwargs["query_options"]
+        assert "policySetDefinitionId" in options.filter
+
+
+    @pytest.mark.asyncio
+    async def test_query_policy_states_uses_policy_definition_filter_field(
+        self, adapter: AzurePolicyComplianceAdapter
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client.policy_states.list_query_results_for_subscription.return_value = [
+            _state_row()
+        ]
+
+        with patch.object(mod, "PolicyInsightsClient", MagicMock(return_value=mock_client)):
+            await adapter._query_policy_states(
+                POLICY_DEF_ID,
+                filter_field="policyDefinitionId",
+            )
+
+        called = mock_client.policy_states.list_query_results_for_subscription.call_args
+        options = called.kwargs["query_options"]
+        assert "policyDefinitionId" in options.filter
 
 
 class TestValidateConnection:

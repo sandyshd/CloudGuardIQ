@@ -304,10 +304,11 @@ class AzurePolicyComplianceAdapter(AdapterBase):
 
         Returns the merged list. Never raises.
         """
-        assigned = await self._list_assigned_initiatives()
-        if not assigned:
+        assigned_initiatives = await self._list_assigned_initiatives()
+        assigned_policy_definitions = await self._list_assigned_policy_definitions()
+        if not assigned_initiatives and not assigned_policy_definitions:
             logger.info(
-                "No regulatory initiatives assigned to %s -- "
+                "No Policy assignments discovered for %s -- "
                 "skipping Policy compliance ingestion",
                 self._subscription_id,
             )
@@ -315,24 +316,23 @@ class AzurePolicyComplianceAdapter(AdapterBase):
 
         # Decide which initiatives to ingest. When the caller pinned an
         # explicit list, honour it (case-insensitive intersection with what is
-        # actually assigned). Otherwise -- the default -- ingest EVERY assigned
-        # regulatory initiative, including custom initiatives the customer
-        # created via the onboarding "Deploy to Azure" flow. The previous
-        # behaviour silently dropped any assignment whose definition ID was not
-        # one of the hard-coded built-in GUIDs, so custom/renamed initiatives
-        # produced zero findings.
-        assigned_by_lower = {i.lower(): i for i in assigned}
+        # actually assigned). Otherwise -- the default -- ingest every assigned
+        # initiative, including custom initiatives. In both modes, also ingest
+        # assigned policy-definition targets so subscriptions that assign
+        # framework controls directly (without a policy set) are included.
+        assigned_by_lower = {i.lower(): i for i in assigned_initiatives}
         if self._initiatives_explicit:
-            targets = [
+            initiative_targets = [
                 assigned_by_lower[i.lower()]
                 for i in self._initiatives
                 if i.lower() in assigned_by_lower
             ]
         else:
-            targets = sorted(assigned)
+            initiative_targets = sorted(assigned_initiatives)
+        definition_targets = sorted(assigned_policy_definitions)
 
         deduped: dict[tuple[str, str], FindingResult] = {}
-        for initiative_id in targets:
+        for initiative_id in initiative_targets:
 
             self._control_cache[initiative_id] = await self._resolve_control_ids(
                 initiative_id
@@ -341,6 +341,27 @@ class AzurePolicyComplianceAdapter(AdapterBase):
             rows = await self._query_policy_states(initiative_id)
             for row in rows:
                 finding = self._to_finding(row, initiative_id)
+                if finding is None:
+                    continue
+                key = (
+                    self._row_value(row, "resourceId", "resource_id") or "",
+                    self._row_value(row, "policyDefinitionId", "policy_definition_id")
+                    or "",
+                )
+                existing = deduped.get(key)
+                if existing is None or finding.detected_at >= existing.detected_at:
+                    deduped[key] = finding
+
+        # Also ingest assignments that target a policy definition directly.
+        # These rows may not have a policy-set context, so we pass the target
+        # definition ID as the fallback context for _to_finding metadata.
+        for definition_id in definition_targets:
+            rows = await self._query_policy_states(
+                definition_id,
+                filter_field="policyDefinitionId",
+            )
+            for row in rows:
+                finding = self._to_finding(row, definition_id)
                 if finding is None:
                     continue
                 key = (
@@ -364,43 +385,65 @@ class AzurePolicyComplianceAdapter(AdapterBase):
     # Helpers
     # ------------------------------------------------------------------
 
-    async def _list_assigned_initiatives(self) -> set[str]:
-        """Return the set of initiative definition IDs assigned to the sub.
+    async def _list_assigned_policy_targets(self) -> tuple[set[str], set[str]]:
+        """Return assigned policy-set IDs and policy-definition IDs.
 
-        Calls ``PolicyAssignmentsOperations.list_for_subscription`` and keeps
-        every assignment whose ``policy_definition_id`` references a policy
-        *set* definition (an initiative). Used to skip initiatives the
-        customer has not assigned, avoiding misleading "0% compliance" scores.
-        On any error returns an empty set and logs a warning.
+        Reads subscription policy assignments once and splits targets into two
+        groups:
+        - policy set definitions (initiatives)
+        - policy definitions (direct assignment)
+
+        On any error returns ``(set(), set())`` and logs a warning.
         """
         if PolicyClient is None:
             logger.warning(
                 "azure-mgmt-resource PolicyClient unavailable -- "
-                "cannot list assigned initiatives"
+                "cannot list assigned policy targets"
             )
-            return set()
+            return set(), set()
+
         try:
             client = PolicyClient(self._credential, self._subscription_id)
-            assigned: set[str] = set()
+            initiatives: set[str] = set()
+            definitions: set[str] = set()
             for assignment in client.policy_assignments.list_for_subscription():
                 definition_id = getattr(assignment, "policy_definition_id", None)
-                if definition_id and "policysetdefinitions" in definition_id.lower():
-                    assigned.add(definition_id)
-            return assigned
+                if not definition_id:
+                    continue
+                lowered = definition_id.lower()
+                if "policysetdefinitions" in lowered:
+                    initiatives.add(definition_id)
+                elif "policydefinitions" in lowered:
+                    definitions.add(definition_id)
+            return initiatives, definitions
         except Exception:
             logger.warning(
-                "Failed to list assigned initiatives for %s",
+                "Failed to list assigned policy targets for %s",
                 self._subscription_id,
                 exc_info=True,
             )
-            return set()
+            return set(), set()
 
-    async def _query_policy_states(self, initiative_id: str) -> list[dict[str, Any]]:
-        """Return raw non-compliant PolicyState rows for an initiative.
+    async def _list_assigned_initiatives(self) -> set[str]:
+        """Return assigned initiative (policy set) IDs for the subscription."""
+        initiatives, _ = await self._list_assigned_policy_targets()
+        return initiatives
+
+    async def _list_assigned_policy_definitions(self) -> set[str]:
+        """Return directly assigned policy-definition IDs for the subscription."""
+        _, definitions = await self._list_assigned_policy_targets()
+        return definitions
+
+    async def _query_policy_states(
+        self, target_id: str, *, filter_field: str = "policySetDefinitionId"
+    ) -> list[dict[str, Any]]:
+        """Return raw non-compliant PolicyState rows for a policy target.
 
         Calls ``PolicyStatesOperations.list_query_results_for_subscription``
         with ``policy_states_resource = "latest"`` and a ``$filter`` of
-        ``policySetDefinitionId eq '<id>' and complianceState eq 'NonCompliant'``.
+        ``{filter_field} eq '<id>' and complianceState eq 'NonCompliant'``.
+        Supported values include ``policySetDefinitionId`` (initiative) and
+        ``policyDefinitionId`` (direct definition assignment).
         Pagination is handled by the SDK's auto-paging iterator. On any error
         logs a warning and returns ``[]``.
         """
@@ -414,7 +457,7 @@ class AzurePolicyComplianceAdapter(AdapterBase):
             client = PolicyInsightsClient(self._credential, self._subscription_id)
             options = QueryOptions(
                 filter=(
-                    f"policySetDefinitionId eq '{initiative_id}' "
+                    f"{filter_field} eq '{target_id}' "
                     "and complianceState eq 'NonCompliant'"
                 ),
             )
@@ -426,16 +469,18 @@ class AzurePolicyComplianceAdapter(AdapterBase):
             return [self._state_to_dict(state) for state in pager]
         except HttpResponseError as exc:
             logger.warning(
-                "Policy states query failed for %s (HTTP %s): %s",
-                initiative_id,
+                "Policy states query failed for %s=%s (HTTP %s): %s",
+                filter_field,
+                target_id,
                 getattr(exc, "status_code", None),
                 exc,
             )
             return []
         except Exception:
             logger.warning(
-                "Policy states query errored for %s",
-                initiative_id,
+                "Policy states query errored for %s=%s",
+                filter_field,
+                target_id,
                 exc_info=True,
             )
             return []
