@@ -175,6 +175,17 @@ class PolicyEngine:
                 if severity_order.index(f.severity) <= min_idx
             ]
 
+        # Deduplicate by stable finding_id. A rule registered twice (or a
+        # legacy/registry rule overlap) yields identical finding_ids; Cosmos
+        # upserts on finding_id, so the persisted count would otherwise be
+        # lower than the response count, shrinking the dashboard after a
+        # refresh. Collapse duplicates here so the canonical result matches
+        # what is stored.
+        deduped: dict[str, FindingResult] = {}
+        for f in all_findings:
+            deduped.setdefault(f.finding_id, f)
+        all_findings = list(deduped.values())
+
         # Compute priority scores and sort descending
         for f in all_findings:
             _compute_priority(f)
@@ -212,6 +223,17 @@ class PolicyEngine:
                 for f in all_findings
                 if severity_order.index(f.severity) <= min_idx
             ]
+
+        # Deduplicate by stable finding_id. A rule registered twice (or a
+        # legacy/registry rule overlap) yields identical finding_ids; Cosmos
+        # upserts on finding_id, so the persisted count would otherwise be
+        # lower than the response count, shrinking the dashboard after a
+        # refresh. Collapse duplicates here so the canonical result matches
+        # what is stored.
+        deduped: dict[str, FindingResult] = {}
+        for f in all_findings:
+            deduped.setdefault(f.finding_id, f)
+        all_findings = list(deduped.values())
 
         # Compute priority scores and sort descending
         for f in all_findings:
