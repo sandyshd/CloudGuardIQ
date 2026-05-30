@@ -137,6 +137,50 @@ class TestScanPersistence:
         assert data["subscription_id"] == "sub-456"
 
 
+class TestDegradedScanPreservesFindings:
+    @pytest.mark.asyncio
+    async def test_zero_resource_scan_does_not_autoresolve(
+        self, client: AsyncClient,
+    ) -> None:
+        """A degraded scan that enumerates 0 resources must NOT auto-resolve.
+
+        If the adapter cannot enumerate resources (e.g. missing Reader role
+        or a transient Azure error), the scan yields 0 findings. Running the
+        unseen-findings auto-resolve sweep in that case would wrongly flip
+        every previously-OPEN finding to RESOLVED and blank the dashboard.
+        """
+        mock_repo = AsyncMock()
+        mock_repo.save_snapshot = AsyncMock(return_value="snap-id")
+        mock_repo.save_finding = AsyncMock(return_value="finding-id")
+        mock_repo.save_scan_result = AsyncMock()
+        mock_repo.mark_unseen_findings_resolved = AsyncMock(return_value=0)
+
+        mock_adapter = AsyncMock()
+        mock_adapter.list_resources = AsyncMock(return_value=[])
+        mock_adapter.enrich_with_defender = AsyncMock(return_value=[])
+        mock_adapter.fetch_policy_findings = AsyncMock(return_value=[])
+
+        with (
+            patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch(
+                "azure.identity.DefaultAzureCredential",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "cloudguardiq.api.main.AzureAdapter",
+                return_value=mock_adapter,
+            ),
+        ):
+            response = await client.post(
+                "/scan",
+                json={"subscription_id": "sub-degraded"},
+            )
+
+        assert response.status_code == 200
+        # The auto-resolve sweep must be skipped for a 0-resource scan.
+        mock_repo.mark_unseen_findings_resolved.assert_not_called()
+
+
 class TestGetFinding:
     @pytest.mark.asyncio
     async def test_get_finding_from_db(

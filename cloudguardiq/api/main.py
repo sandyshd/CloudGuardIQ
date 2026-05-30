@@ -763,13 +763,29 @@ async def _persist_scan_results(
     # underlying issue was either fixed or the resource is gone. Best-effort:
     # a Cosmos hiccup here must not fail the scan. The previous OPEN rows
     # stay OPEN if this call fails; the next successful scan will retry.
-    try:
-        await repo.mark_unseen_findings_resolved(
-            subscription_id, seen_ids, scan_id,
-            tenant_id=tenant_for_scan or None,
+    #
+    # CRITICAL: only sweep when the scan actually enumerated resources. A
+    # scan that returns 0 snapshots is degraded (e.g. the adapter could not
+    # authenticate or lacked Reader on the subscription), not authoritative
+    # proof that every prior finding was remediated. Running the sweep on an
+    # empty scan would wrongly flip every OPEN finding to RESOLVED and blank
+    # the dashboard -- the bug reported after re-running "Run Scan".
+    if snapshots:
+        try:
+            await repo.mark_unseen_findings_resolved(
+                subscription_id, seen_ids, scan_id,
+                tenant_id=tenant_for_scan or None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Auto-resolve sweep failed for scan %s: %s", scan_id, exc,
+            )
+    else:
+        logger.warning(
+            "Scan %s enumerated 0 resources -- skipping auto-resolve sweep "
+            "to preserve existing findings (degraded scan).",
+            scan_id,
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Auto-resolve sweep failed for scan %s: %s", scan_id, exc)
 
     # Save scan summary
     critical = sum(

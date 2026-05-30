@@ -153,14 +153,26 @@ class ScanPipeline:
                     )
             # Auto-resolve OPEN findings that were not re-detected this scan.
             # Best-effort: a Cosmos hiccup must not fail the timer-driven scan.
-            try:
-                await self._db.mark_unseen_findings_resolved(
-                    subscription_id, seen_ids, scan_id,
-                    tenant_id=tenant_id or None,
-                )
-            except Exception as exc:  # noqa: BLE001
+            # Only sweep when the scan enumerated resources -- a 0-snapshot
+            # scan is degraded (auth/permission/transient failure), not proof
+            # that prior findings were remediated, so resolving them would
+            # wrongly blank the dashboard.
+            if snapshots:
+                try:
+                    await self._db.mark_unseen_findings_resolved(
+                        subscription_id, seen_ids, scan_id,
+                        tenant_id=tenant_id or None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Auto-resolve sweep failed for scan %s: %s",
+                        scan_id, exc,
+                    )
+            else:
                 logger.warning(
-                    "Auto-resolve sweep failed for scan %s: %s", scan_id, exc,
+                    "Scan %s enumerated 0 resources -- skipping auto-resolve "
+                    "sweep to preserve existing findings (degraded scan).",
+                    scan_id,
                 )
         else:
             logger.error("No database connection -- cannot save findings")
