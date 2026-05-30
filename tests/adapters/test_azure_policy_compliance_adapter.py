@@ -5,6 +5,7 @@ All Azure SDK calls are mocked -- no real Azure access in CI.
 
 from __future__ import annotations
 
+import importlib
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -270,6 +271,25 @@ class TestControlIdResolution:
 
 
 class TestAssignedPolicyTargets:
+    @pytest.mark.asyncio
+    async def test_resolves_policy_client_from_split_namespace(
+        self, adapter: AzurePolicyComplianceAdapter
+    ) -> None:
+        mod.PolicyClient = None
+
+        class _SplitPolicyClient:
+            def __init__(self, credential, subscription_id):
+                self.policy_assignments = MagicMock()
+                self.policy_assignments.list_for_subscription.return_value = []
+
+        split_module = MagicMock(PolicyClient=_SplitPolicyClient)
+
+        with patch.object(importlib, "import_module", return_value=split_module):
+            initiatives, definitions = await adapter._list_assigned_policy_targets()
+
+        assert initiatives == set()
+        assert definitions == set()
+
     @pytest.mark.asyncio
     async def test_list_assigned_policy_targets_splits_sets(
         self, adapter: AzurePolicyComplianceAdapter

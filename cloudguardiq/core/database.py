@@ -137,6 +137,17 @@ def _normalise_finding_doc(raw: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
+# Cosmos does not allow / \ ? # in `id`. ResourceSnapshot.id may include
+# those characters (resource path segments), so convert to a deterministic
+# hash when needed and keep the original value in `resource_id`.
+def _cosmos_safe_snapshot_id(snapshot_id: str) -> str:
+    """Return a Cosmos-safe document id for a snapshot."""
+    forbidden = {"/", "\\", "?", "#"}
+    if any(ch in snapshot_id for ch in forbidden):
+        return hashlib.sha256(snapshot_id.encode("utf-8")).hexdigest()
+    return snapshot_id
+
+
 class CosmosRepository:
     """Async Cosmos DB repository for CloudGuardIQ entities."""
 
@@ -197,6 +208,10 @@ class CosmosRepository:
         doc = snapshot.model_dump(mode="json")
         # Root-level tenant_id for tenant-scoped queries (Phase 1 isolation)
         doc["tenant_id"] = snapshot.tenant_id
+        # Keep the canonical resource id for application logic while using a
+        # Cosmos-safe document id for storage constraints.
+        doc["resource_id"] = snapshot.id
+        doc["id"] = _cosmos_safe_snapshot_id(snapshot.id)
         # /provider is already in the model; ensure it is at root level
         await self._snapshots_container().upsert_item(doc)
         logger.info("Saved snapshot %s (tenant=%s)", snapshot.id, snapshot.tenant_id or "-")

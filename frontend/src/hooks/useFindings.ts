@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FindingResult } from "../types";
 import { getFindings } from "../api/findings";
-import { useTimeRange } from "../contexts/TimeRangeContext";
 
 import { toFriendlyMessage } from "../lib/errors";
 
@@ -26,14 +25,6 @@ export function useFindings(subscriptionId?: string, limit = 5000) {
   );
   const [loading, setLoading] = useState(!findingsCache.has(cacheKey));
   const [error, setError] = useState<string | null>(null);
-  const { range } = useTimeRange();
-  const fromIso = range.from.toISOString();
-  // Preset ranges ("Last 24h/7d/30d/90d") mean "from N ago until now". Their
-  // upper bound is pinned at render time and only refreshes every 5 minutes,
-  // so findings detected by a scan that runs *after* the page loaded would
-  // have detected_at > range.to and get filtered out by the backend, blanking
-  // the list right after a Run Scan. Only custom ranges carry a real end bound.
-  const toIso = range.id === "custom" ? range.to.toISOString() : undefined;
 
   const refresh = useCallback(async () => {
     const key = subscriptionId ?? "";
@@ -41,7 +32,7 @@ export function useFindings(subscriptionId?: string, limit = 5000) {
     if (!findingsCache.has(key)) setLoading(true);
     setError(null);
     try {
-      const data = await getFindings(subscriptionId, limit, { from: fromIso, to: toIso });
+      const data = await getFindings(subscriptionId, limit);
       const cached = findingsCache.get(key);
       const withinSeedGrace =
         Date.now() - (seedTimes.get(key) ?? 0) < SEED_GRACE_MS;
@@ -62,7 +53,7 @@ export function useFindings(subscriptionId?: string, limit = 5000) {
     } finally {
       setLoading(false);
     }
-  }, [subscriptionId, limit, fromIso, toIso]);
+  }, [subscriptionId, limit]);
 
   // When the selected subscription changes, immediately show its cached
   // findings (if any) so the list does not flash empty before refresh fills it.

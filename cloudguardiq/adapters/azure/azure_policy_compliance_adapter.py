@@ -25,6 +25,7 @@ Architectural notes
 
 from __future__ import annotations
 
+import importlib
 import logging
 import re
 from dataclasses import asdict, dataclass
@@ -242,14 +243,15 @@ class AzurePolicyComplianceAdapter(AdapterBase):
         Calls ``PolicyAssignmentsOperations.list_for_subscription`` with
         ``top=1``. Returns ``False`` on a 403 or any other error.
         """
-        if PolicyClient is None:
+        policy_client_type = self._get_policy_client_type()
+        if policy_client_type is None:
             logger.warning(
                 "azure-mgmt-resource PolicyClient unavailable -- "
                 "cannot validate Policy connection"
             )
             return False
         try:
-            client = PolicyClient(self._credential, self._subscription_id)
+            client = policy_client_type(self._credential, self._subscription_id)
             pager = client.policy_assignments.list_for_subscription(top=1)
             for _ in pager:
                 break
@@ -287,6 +289,16 @@ class AzurePolicyComplianceAdapter(AdapterBase):
     async def get_raw_properties(self, resource_id: str) -> dict[str, Any]:
         """Not applicable -- this adapter does not fetch raw properties."""
         return {}
+
+    def _get_policy_client_type(self) -> Any | None:
+        """Return a PolicyClient class from available azure-mgmt-resource layouts."""
+        if PolicyClient is not None:
+            return PolicyClient
+        try:
+            split_mod = importlib.import_module("azure.mgmt.resource.policy")
+            return getattr(split_mod, "PolicyClient", None)
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # Primary entry point
@@ -412,7 +424,8 @@ class AzurePolicyComplianceAdapter(AdapterBase):
 
         On any error returns ``(set(), set())`` and logs a warning.
         """
-        if PolicyClient is None:
+        policy_client_type = self._get_policy_client_type()
+        if policy_client_type is None:
             logger.warning(
                 "azure-mgmt-resource PolicyClient unavailable -- "
                 "cannot list assigned policy targets"
@@ -420,7 +433,7 @@ class AzurePolicyComplianceAdapter(AdapterBase):
             return set(), set()
 
         try:
-            client = PolicyClient(self._credential, self._subscription_id)
+            client = policy_client_type(self._credential, self._subscription_id)
             initiatives: set[str] = set()
             definitions: set[str] = set()
             for assignment in client.policy_assignments.list_for_subscription():
@@ -516,12 +529,13 @@ class AzurePolicyComplianceAdapter(AdapterBase):
         if cached is not None:
             return cached
 
-        if PolicyClient is None:
+        policy_client_type = self._get_policy_client_type()
+        if policy_client_type is None:
             return {}
 
         mapping: dict[str, str] = {}
         try:
-            client = PolicyClient(self._credential, self._subscription_id)
+            client = policy_client_type(self._credential, self._subscription_id)
             name = initiative_id.rstrip("/").split("/")[-1]
             definition = client.policy_set_definitions.get_built_in(name)
             references = getattr(definition, "policy_definitions", None) or []
@@ -749,7 +763,8 @@ class AzurePolicyComplianceAdapter(AdapterBase):
             if cached is not None:
                 return cached
 
-        if PolicyClient is None:
+        policy_client_type = self._get_policy_client_type()
+        if policy_client_type is None:
             logger.warning(
                 "azure-mgmt-resource PolicyClient unavailable -- "
                 "cannot discover latest initiatives"
@@ -757,7 +772,7 @@ class AzurePolicyComplianceAdapter(AdapterBase):
             return {}
 
         try:
-            client = PolicyClient(self._credential, self._subscription_id)
+            client = policy_client_type(self._credential, self._subscription_id)
             definitions = list(client.policy_set_definitions.list_built_in())
         except Exception:
             logger.warning(

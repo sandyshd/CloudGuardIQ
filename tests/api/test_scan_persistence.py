@@ -336,3 +336,28 @@ class TestScanMergesPolicyFindings:
         assert "Persisted Azure Policy finding" in caplog.text
         assert "AZPOL-DenyHttpStorage" in caplog.text
 
+
+
+class TestFindingsListFilters:
+    @pytest.mark.asyncio
+    async def test_list_findings_ignores_date_query_params(
+        self, client: AsyncClient
+    ) -> None:
+        mock_repo = AsyncMock()
+        mock_repo.get_findings = AsyncMock(return_value=[])
+
+        with patch("cloudguardiq.api.main.get_repo", return_value=mock_repo):
+            response = await client.get(
+                "/findings",
+                params={
+                    "subscription_id": "sub-123",
+                    "from_date": "2026-01-01T00:00:00Z",
+                    "to_date": "2026-01-02T00:00:00Z",
+                },
+            )
+
+        assert response.status_code == 200
+        mock_repo.get_findings.assert_awaited_once()
+        _, kwargs = mock_repo.get_findings.call_args
+        assert "from_date" not in kwargs
+        assert "to_date" not in kwargs

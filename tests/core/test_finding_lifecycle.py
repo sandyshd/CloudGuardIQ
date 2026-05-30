@@ -240,3 +240,49 @@ async def test_get_findings_normalises_legacy_null_string_fields() -> None:
     assert len(rows) == 1
     assert rows[0].resolved_by == ""
     assert rows[0].last_seen_scan_id == ""
+
+
+class _FakeSnapshotContainer:
+    def __init__(self) -> None:
+        self.docs: list[dict[str, Any]] = []
+
+    async def upsert_item(self, doc: dict[str, Any]) -> None:
+        self.docs.append(dict(doc))
+
+
+class _FakeSnapshotRepo:
+    def __init__(self) -> None:
+        self.container = _FakeSnapshotContainer()
+
+    def _snapshots_container(self) -> _FakeSnapshotContainer:
+        return self.container
+
+
+@pytest.mark.asyncio
+async def test_save_snapshot_uses_cosmos_safe_id_for_slashy_resource_id() -> None:
+    from cloudguardiq.core.database import CosmosRepository
+
+    repo = _FakeSnapshotRepo()
+    snap = ResourceSnapshot(
+        id=(
+            "azure/storageaccounts/sub-1/rg-1/"
+            "name-with/slash"
+        ),
+        provider="AZURE",
+        subscription_id="sub-1",
+        tenant_id="tenant-x",
+        resource_group="rg-1",
+        resource_name="name-with/slash",
+        resource_type="Microsoft.Storage/storageAccounts",
+        region="eastus",
+        data_tier=DataTier.TIER1_NATIVE,
+    )
+
+    returned = await CosmosRepository.save_snapshot(repo, snap)  # type: ignore[arg-type]
+
+    assert returned == snap.id
+    assert len(repo.container.docs) == 1
+    saved = repo.container.docs[0]
+    assert saved["resource_id"] == snap.id
+    assert saved["id"] != snap.id
+    assert len(saved["id"]) == 64

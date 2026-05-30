@@ -1085,8 +1085,6 @@ async def list_findings(
                 sub_id,
                 tenant_id=tenant_id,
                 limit=limit,
-                from_date=from_date,
-                to_date=to_date,
             )
             return sorted(
                 findings,
