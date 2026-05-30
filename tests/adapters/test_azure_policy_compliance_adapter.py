@@ -132,6 +132,34 @@ class TestFetchFindings:
         assert len(result) == 1
         assert result[0].evidence["timestamp"] == "2026-02-01T00:00:00Z"
 
+    @pytest.mark.asyncio
+    async def test_fetch_findings_ingests_custom_assigned_initiative_by_default(
+        self, mock_credential: MagicMock, mock_db: AsyncMock
+    ) -> None:
+        # Regression: a customer assigns a CUSTOM initiative (e.g. created by
+        # the "Deploy to Azure" onboarding flow) whose definition ID is NOT one
+        # of the hard-coded built-in GUIDs. With the default (initiatives=None)
+        # the adapter must still ingest its non-compliant states.
+        custom_id = (
+            f"/subscriptions/{SUB_ID}/providers/Microsoft.Authorization/"
+            "policySetDefinitions/custom-cloudguardiq-compliance"
+        )
+        adapter = AzurePolicyComplianceAdapter(
+            credential=mock_credential,
+            subscription_id=SUB_ID,
+            db=mock_db,
+        )
+        adapter._list_assigned_initiatives = AsyncMock(return_value={custom_id})
+        adapter._resolve_control_ids = AsyncMock(return_value={})
+        query_spy = AsyncMock(return_value=[_state_row()])
+        adapter._query_policy_states = query_spy
+
+        result = await adapter.fetch_findings()
+
+        query_spy.assert_awaited_once_with(custom_id)
+        assert len(result) == 1
+        assert result[0].rule_id.startswith("AZPOL-")
+
 
 class TestToFinding:
     def test_to_finding_maps_all_required_fields(

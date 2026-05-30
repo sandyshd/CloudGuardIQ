@@ -182,6 +182,7 @@ class AzurePolicyComplianceAdapter(AdapterBase):
         self._credential = credential
         self._subscription_id = subscription_id
         self._db = db
+        self._initiatives_explicit: bool = initiatives is not None
         self._initiatives: list[str] = (
             list(initiatives)
             if initiatives is not None
@@ -312,13 +313,26 @@ class AzurePolicyComplianceAdapter(AdapterBase):
             )
             return []
 
+        # Decide which initiatives to ingest. When the caller pinned an
+        # explicit list, honour it (case-insensitive intersection with what is
+        # actually assigned). Otherwise -- the default -- ingest EVERY assigned
+        # regulatory initiative, including custom initiatives the customer
+        # created via the onboarding "Deploy to Azure" flow. The previous
+        # behaviour silently dropped any assignment whose definition ID was not
+        # one of the hard-coded built-in GUIDs, so custom/renamed initiatives
+        # produced zero findings.
+        assigned_by_lower = {i.lower(): i for i in assigned}
+        if self._initiatives_explicit:
+            targets = [
+                assigned_by_lower[i.lower()]
+                for i in self._initiatives
+                if i.lower() in assigned_by_lower
+            ]
+        else:
+            targets = sorted(assigned)
+
         deduped: dict[tuple[str, str], FindingResult] = {}
-        for initiative_id in self._initiatives:
-            if initiative_id not in assigned:
-                logger.debug(
-                    "Initiative %s not assigned -- skipping", initiative_id
-                )
-                continue
+        for initiative_id in targets:
 
             self._control_cache[initiative_id] = await self._resolve_control_ids(
                 initiative_id
