@@ -45,5 +45,20 @@ export function useFindings(subscriptionId?: string, limit = 5000) {
     );
   }, []);
 
-  return { findings, loading, error, refresh, applyUpdate };
+  /**
+   * Replace the list with findings returned directly by a /scan response.
+   * Cosmos indexes upserts asynchronously, so the indexed GET /findings query
+   * (ORDER BY detected_at) can return [] for several minutes right after a
+   * scan persists, blanking the page until the index catches up. The scan
+   * response already carries the full findings array, so we seed the list
+   * from it immediately -- query-independent -- and let the periodic refresh
+   * reconcile once the index is ready.
+   */
+  const seed = useCallback((next: FindingResult[]) => {
+    setFindings(next);
+    setLoading(false);
+    setError(null);
+  }, []);
+
+  return { findings, loading, error, refresh, applyUpdate, seed };
 }

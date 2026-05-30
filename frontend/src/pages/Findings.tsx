@@ -138,7 +138,7 @@ export function Findings() {
         ? subscriptionFilter
         : selectedSub?.subscription_id;
 
-  const { findings, loading, error, refresh, applyUpdate } = useFindings(effectiveSub);
+  const { findings, loading, error, refresh, applyUpdate, seed } = useFindings(effectiveSub);
   const navigate = useNavigate();
   const [selected, setSelected] = useState<FindingResult | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Severity | "ALL">("ALL");
@@ -187,8 +187,13 @@ export function Findings() {
     setScanning(true);
     setScanError(null);
     try {
-      await triggerScan({ subscription_id: subId, include_cost: true });
-      await refresh();
+      const result = await triggerScan({ subscription_id: subId, include_cost: true });
+      // Seed straight from the scan response. Cosmos indexes upserts
+      // asynchronously, so an immediate GET /findings (ORDER BY detected_at)
+      // can return [] for minutes after a scan, blanking the page until the
+      // index catches up. The scan response already holds the full findings
+      // array, so render it now; the periodic refresh reconciles later.
+      seed(result.findings ?? []);
       toast({ tone: "success", title: "Scan complete" });
     } catch (err) {
       const msg = formatScanError(err);

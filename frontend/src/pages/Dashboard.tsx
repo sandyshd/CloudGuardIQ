@@ -110,7 +110,7 @@ export function Dashboard() {
   const { toast } = useToast();
   const { subscriptions, loading: subsLoading, selected: selectedSub } =
     useSubscriptions();
-  const { findings, loading, refresh } = useFindings(selectedSub?.subscription_id);
+  const { findings, loading, refresh, seed } = useFindings(selectedSub?.subscription_id);
   const { scorecard, loading: scorecardLoading } = useComplianceScorecard(selectedSub?.subscription_id);
   const { posture } = usePostureScore(selectedSub?.subscription_id);
   const { range } = useTimeRange();
@@ -128,8 +128,11 @@ export function Dashboard() {
     setScanning(true);
     setScanError(null);
     try {
-      await triggerScan({ subscription_id: subId, include_cost: true });
-      await refresh();
+      const result = await triggerScan({ subscription_id: subId, include_cost: true });
+      // Seed from the scan response directly. Cosmos indexes upserts
+      // asynchronously, so an immediate GET /findings can return [] for
+      // minutes after a scan; the scan response already carries the findings.
+      seed(result.findings ?? []);
       toast({ title: "Scan complete", description: "Findings refreshed." });
     } catch (err) {
       const msg = toFriendlyMessage(err, "Scan failed");
