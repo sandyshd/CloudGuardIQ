@@ -26,11 +26,14 @@ Architectural notes
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+
+import httpx
 
 from cloudguardiq.adapters.base import AdapterBase
 from cloudguardiq.core.enums import (
@@ -291,14 +294,29 @@ class AzurePolicyComplianceAdapter(AdapterBase):
         return {}
 
     def _get_policy_client_type(self) -> Any | None:
-        """Return a PolicyClient class from available azure-mgmt-resource layouts."""
+        """Return a PolicyClient class from known azure-mgmt-resource layouts."""
         if PolicyClient is not None:
             return PolicyClient
-        try:
-            split_mod = importlib.import_module("azure.mgmt.resource.policy")
-            return getattr(split_mod, "PolicyClient", None)
-        except Exception:
-            return None
+
+        candidates = (
+            "azure.mgmt.resource.policy",
+            "azure.mgmt.resource.policy.v2023_04_01",
+            "azure.mgmt.resource.policy.v2022_06_01",
+        )
+        for module_name in candidates:
+            try:
+                split_mod = importlib.import_module(module_name)
+                policy_client = getattr(split_mod, "PolicyClient", None)
+                if policy_client is not None:
+                    logger.info(
+                        "Resolved PolicyClient from %s for %s",
+                        module_name,
+                        self._subscription_id,
+                    )
+                    return policy_client
+            except Exception:
+                continue
+        return None
 
     # ------------------------------------------------------------------
     # Primary entry point
@@ -425,34 +443,40 @@ class AzurePolicyComplianceAdapter(AdapterBase):
         On any error returns ``(set(), set())`` and logs a warning.
         """
         policy_client_type = self._get_policy_client_type()
-        if policy_client_type is None:
-            logger.warning(
-                "azure-mgmt-resource PolicyClient unavailable -- "
-                "cannot list assigned policy targets"
-            )
-            return set(), set()
+        if policy_client_type is not None:
+            try:
+                client = policy_client_type(self._credential, self._subscription_id)
+                initiatives: set[str] = set()
+                definitions: set[str] = set()
+                for assignment in client.policy_assignments.list_for_subscription():
+                    definition_id = getattr(assignment, "policy_definition_id", None)
+                    if not definition_id:
+                        continue
+                    lowered = definition_id.lower()
+                    if "policysetdefinitions" in lowered:
+                        initiatives.add(definition_id)
+                    elif "policydefinitions" in lowered:
+                        definitions.add(definition_id)
+                return initiatives, definitions
+            except Exception:
+                logger.warning(
+                    "Failed to list assigned policy targets via PolicyClient for %s",
+                    self._subscription_id,
+                    exc_info=True,
+                )
 
-        try:
-            client = policy_client_type(self._credential, self._subscription_id)
-            initiatives: set[str] = set()
-            definitions: set[str] = set()
-            for assignment in client.policy_assignments.list_for_subscription():
-                definition_id = getattr(assignment, "policy_definition_id", None)
-                if not definition_id:
-                    continue
-                lowered = definition_id.lower()
-                if "policysetdefinitions" in lowered:
-                    initiatives.add(definition_id)
-                elif "policydefinitions" in lowered:
-                    definitions.add(definition_id)
-            return initiatives, definitions
-        except Exception:
-            logger.warning(
-                "Failed to list assigned policy targets for %s",
-                self._subscription_id,
-                exc_info=True,
-            )
-            return set(), set()
+        logger.info(
+            "PolicyClient unavailable for %s -- falling back to ARM REST API",
+            self._subscription_id,
+        )
+        fallback_targets = await self._list_assigned_policy_targets_via_rest()
+        if fallback_targets is not None:
+            return fallback_targets
+        logger.warning(
+            "Failed to list assigned policy targets for %s",
+            self._subscription_id,
+        )
+        return set(), set()
 
     async def _list_assigned_initiatives(self) -> set[str]:
         """Return assigned initiative (policy set) IDs for the subscription."""
@@ -463,6 +487,75 @@ class AzurePolicyComplianceAdapter(AdapterBase):
         """Return directly assigned policy-definition IDs for the subscription."""
         _, definitions = await self._list_assigned_policy_targets()
         return definitions
+
+    async def _get_arm_access_token(self) -> str | None:
+        """Get a management-plane bearer token from sync or async credentials."""
+        try:
+            token_result = self._credential.get_token(
+                "https://management.azure.com/.default"
+            )
+            if inspect.isawaitable(token_result):
+                token_result = await token_result
+            raw_token = getattr(token_result, "token", None)
+            if not isinstance(raw_token, str) or not raw_token:
+                logger.warning(
+                    "Credential returned empty ARM token for %s",
+                    self._subscription_id,
+                )
+                return None
+            return raw_token
+        except Exception:
+            logger.warning(
+                "Failed to acquire ARM token for %s",
+                self._subscription_id,
+                exc_info=True,
+            )
+            return None
+
+    async def _list_assigned_policy_targets_via_rest(
+        self,
+    ) -> tuple[set[str], set[str]] | None:
+        """List policy assignments through ARM REST when PolicyClient is absent."""
+        token = await self._get_arm_access_token()
+        if token is None:
+            return None
+
+        initiatives: set[str] = set()
+        definitions: set[str] = set()
+        url = (
+            "https://management.azure.com/subscriptions/"
+            f"{self._subscription_id}/providers/Microsoft.Authorization/"
+            "policyAssignments?api-version=2023-04-01"
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                next_link: str | None = url
+                while next_link:
+                    response = await client.get(next_link, headers=headers)
+                    response.raise_for_status()
+                    payload = response.json()
+                    for assignment in payload.get("value", []):
+                        properties = assignment.get("properties") or {}
+                        definition_id = properties.get("policyDefinitionId")
+                        if not isinstance(definition_id, str) or not definition_id:
+                            continue
+                        lowered = definition_id.lower()
+                        if "policysetdefinitions" in lowered:
+                            initiatives.add(definition_id)
+                        elif "policydefinitions" in lowered:
+                            definitions.add(definition_id)
+                    raw_next = payload.get("nextLink")
+                    next_link = raw_next if isinstance(raw_next, str) else None
+            return initiatives, definitions
+        except Exception:
+            logger.warning(
+                "Failed to list assigned policy targets via ARM REST for %s",
+                self._subscription_id,
+                exc_info=True,
+            )
+            return None
 
     async def _query_policy_states(
         self, target_id: str, *, filter_field: str = "policySetDefinitionId"

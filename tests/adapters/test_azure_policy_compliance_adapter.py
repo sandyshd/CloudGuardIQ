@@ -322,6 +322,64 @@ class TestAssignedPolicyTargets:
             "/providers/Microsoft.Authorization/policyDefinitions/definition-one"
         }
 
+    @pytest.mark.asyncio
+    async def test_list_assigned_policy_targets_falls_back_to_arm_rest(
+        self, adapter: AzurePolicyComplianceAdapter
+    ) -> None:
+        adapter._credential.get_token.return_value = MagicMock(token="token-123")
+        rest_payload = {
+            "value": [
+                {
+                    "properties": {
+                        "policyDefinitionId": (
+                            "/providers/Microsoft.Authorization/"
+                            "policySetDefinitions/initiative-one"
+                        )
+                    }
+                },
+                {
+                    "properties": {
+                        "policyDefinitionId": (
+                            "/providers/Microsoft.Authorization/"
+                            "policyDefinitions/definition-one"
+                        )
+                    }
+                },
+            ]
+        }
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.return_value = rest_payload
+
+        http_client = AsyncMock()
+        http_client.get = AsyncMock(return_value=response)
+        async_client_ctx = AsyncMock()
+        async_client_ctx.__aenter__.return_value = http_client
+
+        with (
+            patch.object(mod, "PolicyClient", None),
+            patch.object(importlib, "import_module", side_effect=ModuleNotFoundError),
+            patch.object(mod.httpx, "AsyncClient", return_value=async_client_ctx),
+        ):
+            initiatives, definitions = await adapter._list_assigned_policy_targets()
+
+        assert initiatives == {
+            "/providers/Microsoft.Authorization/policySetDefinitions/initiative-one"
+        }
+        assert definitions == {
+            "/providers/Microsoft.Authorization/policyDefinitions/definition-one"
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_arm_access_token_supports_async_credential(
+        self, adapter: AzurePolicyComplianceAdapter
+    ) -> None:
+        adapter._credential.get_token = AsyncMock(return_value=MagicMock(token="abc"))
+
+        token = await adapter._get_arm_access_token()
+
+        assert token == "abc"
+
 
 class TestQueryPolicyStates:
     @pytest.mark.asyncio
