@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -280,4 +281,58 @@ class TestScanMergesPolicyFindings:
         assert data["findings_count"] == 1
         assert data["findings"][0]["rule_id"] == "AZPOL-DenyHttpStorage"
         mock_adapter.fetch_policy_findings.assert_awaited_once()
+
+
+    @pytest.mark.asyncio
+    async def test_scan_logs_azure_policy_database_insert(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """POST /scan logs per-AZPOL persistence writes to Cosmos."""
+        transport = ASGITransport(app=app)
+        mock_repo = AsyncMock()
+        mock_repo.save_snapshot = AsyncMock(return_value="snap-id")
+        mock_repo.save_finding = AsyncMock(return_value="finding-id")
+        mock_repo.save_scan_result = AsyncMock()
+
+        snap = ResourceSnapshot(
+            subscription_id="sub-123",
+            resource_group="rg1",
+            resource_type="storage_account",
+            resource_name="acct1",
+            region="eastus",
+            provider=CloudProvider.AZURE,
+            data_tier=DataTier.TIER1_NATIVE,
+        )
+        azpol = FindingResult(
+            finding_id="azpol-1",
+            resource_snapshot=snap,
+            rule_id="AZPOL-DenyHttpStorage",
+            rule_name="DenyHttpStorage",
+            severity=Severity.MEDIUM,
+            finding_type=FindingType.COMPLIANCE,
+            description="Non-compliant with assigned Azure Policy.",
+            compliance_frameworks=["CIS_AZURE"],
+        )
+
+        mock_adapter = MagicMock()
+        mock_adapter.list_resources = AsyncMock(return_value=[])
+        mock_adapter.enrich_with_defender = AsyncMock(return_value=[])
+        mock_adapter.fetch_policy_findings = AsyncMock(return_value=[azpol])
+
+        with (
+            patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch("cloudguardiq.api.main.AzureAdapter", return_value=mock_adapter),
+            patch("azure.identity.DefaultAzureCredential", return_value=MagicMock()),
+            caplog.at_level(logging.INFO),
+        ):
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as ac:
+                response = await ac.post(
+                    "/scan", json={"subscription_id": "sub-123"}
+                )
+
+        assert response.status_code == 200
+        assert "Persisted Azure Policy finding" in caplog.text
+        assert "AZPOL-DenyHttpStorage" in caplog.text
 

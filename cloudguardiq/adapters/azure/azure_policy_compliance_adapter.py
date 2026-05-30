@@ -379,6 +379,23 @@ class AzurePolicyComplianceAdapter(AdapterBase):
             len(findings),
             self._subscription_id,
         )
+        if findings:
+            preview_items = []
+            for finding in findings[:20]:
+                resource_name = (
+                    finding.resource_snapshot.resource_name
+                    if finding.resource_snapshot
+                    else "unknown"
+                )
+                preview_items.append(f"{finding.rule_id}:{resource_name}")
+            preview = ", ".join(preview_items)
+            if len(findings) > 20:
+                preview = f"{preview}, ..."
+            logger.info(
+                "Fetched Azure Policy findings for %s: %s",
+                self._subscription_id,
+                preview,
+            )
         return findings
 
     # ------------------------------------------------------------------

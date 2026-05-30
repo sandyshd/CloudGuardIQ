@@ -751,6 +751,13 @@ async def _persist_scan_results(
         try:
             await repo.save_finding(finding, scan_id=scan_id)
             seen_ids.add(finding.finding_id)
+            if finding.rule_id.startswith("AZPOL-"):
+                logger.info(
+                    "Persisted Azure Policy finding %s (%s) for subscription %s",
+                    finding.finding_id,
+                    finding.rule_id,
+                    subscription_id,
+                )
             if not tenant_for_scan and finding.tenant_id:
                 tenant_for_scan = finding.tenant_id
         except Exception as exc:

@@ -5,6 +5,7 @@ All Azure SDK calls are mocked -- no real Azure access in CI.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -181,6 +182,23 @@ class TestFetchFindings:
         )
         assert len(result) == 1
         assert result[0].rule_id.startswith("AZPOL-")
+
+
+    @pytest.mark.asyncio
+    async def test_fetch_findings_logs_fetched_azure_policy_findings(
+        self, adapter: AzurePolicyComplianceAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        adapter._list_assigned_initiatives = AsyncMock(return_value={CIS_ID})
+        adapter._list_assigned_policy_definitions = AsyncMock(return_value=set())
+        adapter._resolve_control_ids = AsyncMock(return_value={})
+        adapter._query_policy_states = AsyncMock(return_value=[_state_row()])
+
+        with caplog.at_level(logging.INFO):
+            result = await adapter.fetch_findings()
+
+        assert len(result) == 1
+        assert "Fetched Azure Policy findings for" in caplog.text
+        assert "AZPOL-DenyHttpStorage" in caplog.text
 
 
 class TestToFinding:
