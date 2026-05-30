@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { triggerScan } from "../api/scans";
+import { formatScanError } from "../lib/errors";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { PageHeader } from "../components/common/PageHeader";
@@ -29,45 +30,6 @@ import {
 } from "../components/common/SourceBadge";
 import type { FindingResult, Severity, FindingType, FindingStatus } from "../types";
 
-function formatTimestamp(value: string): string {
-  // Render an ISO timestamp as "YYYY-MM-DD HH:MM:SS" in local time.
-  // Falls back to the raw value when it cannot be parsed.
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-  );
-}
-
-function formatScanError(err: unknown): string {
-  const anyErr = err as {
-    response?: { status?: number; data?: { detail?: unknown } };
-    message?: string;
-  };
-  const status = anyErr?.response?.status;
-  const detail = anyErr?.response?.data?.detail;
-  if (status === 429 && detail && typeof detail === "object") {
-    const d = detail as Record<string, unknown>;
-    const tier = String(d.current_tier ?? "free");
-    const cap = Number(d.cap ?? 0);
-    const retry = Number(d.retry_after_seconds ?? 0);
-    const minutes = Math.ceil(retry / 60);
-    const wait =
-      retry < 60
-        ? `${retry}s`
-        : minutes < 60
-          ? `${minutes}m`
-          : `${Math.ceil(minutes / 60)}h`;
-    const last = typeof d.last_event_at === "string" ? d.last_event_at : "";
-    const lastSuffix = last ? ` (last scan: ${formatTimestamp(last)})` : "";
-    return `Your ${tier} plan allows one scan every ${cap} minute${cap === 1 ? "" : "s"}. Try again in ${wait}${lastSuffix}, or upgrade for more frequent scans.`;
-  }
-  if (typeof detail === "string") return detail;
-  if (err instanceof Error) return err.message;
-  return "Scan failed";
-}
 
 const SEVERITY_ORDER: Severity[] = [
   "CRITICAL",

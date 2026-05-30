@@ -42,7 +42,7 @@ import type { FindingResult, Severity, DataTier } from "../types";
 import { cn } from "../lib/utils";
 
 
-import { toFriendlyMessage } from "../lib/errors";
+import { formatScanError } from "../lib/errors";
 const SEV_WEIGHT: Record<Severity, number> = {
   CRITICAL: 10,
   HIGH: 5,
@@ -135,7 +135,7 @@ export function Dashboard() {
       seed(result.findings ?? []);
       toast({ title: "Scan complete", description: "Findings refreshed." });
     } catch (err) {
-      const msg = toFriendlyMessage(err, "Scan failed");
+      const msg = formatScanError(err);
       setScanError(msg);
       toast({ title: "Scan failed", description: msg, tone: "error" });
     } finally {
