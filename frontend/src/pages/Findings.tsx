@@ -29,6 +29,18 @@ import {
 } from "../components/common/SourceBadge";
 import type { FindingResult, Severity, FindingType, FindingStatus } from "../types";
 
+function formatTimestamp(value: string): string {
+  // Render an ISO timestamp as "YYYY-MM-DD HH:MM:SS" in local time.
+  // Falls back to the raw value when it cannot be parsed.
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+}
+
 function formatScanError(err: unknown): string {
   const anyErr = err as {
     response?: { status?: number; data?: { detail?: unknown } };
@@ -49,7 +61,7 @@ function formatScanError(err: unknown): string {
           ? `${minutes}m`
           : `${Math.ceil(minutes / 60)}h`;
     const last = typeof d.last_event_at === "string" ? d.last_event_at : "";
-    const lastSuffix = last ? ` (last scan: ${last})` : "";
+    const lastSuffix = last ? ` (last scan: ${formatTimestamp(last)})` : "";
     return `Your ${tier} plan allows one scan every ${cap} minute${cap === 1 ? "" : "s"}. Try again in ${wait}${lastSuffix}, or upgrade for more frequent scans.`;
   }
   if (typeof detail === "string") return detail;
