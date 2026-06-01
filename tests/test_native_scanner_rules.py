@@ -148,6 +148,11 @@ class TestSTOR004SharedKeyAuth:
 class TestSTOR005NetworkDefaultAction:
     """STOR-005: Network default action not Deny."""
 
+    def test_scopes_to_storage_accounts_only(self) -> None:
+        assert NetworkDefaultActionRule.resource_types == [
+            "Microsoft.Storage/storageAccounts"
+        ]
+
     def test_fail_when_default_allow(self) -> None:
         snap = _storage_snap({"network_default_action": "Allow"})
         result = NetworkDefaultActionRule().evaluate(snap)
