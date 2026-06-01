@@ -14,6 +14,7 @@ import pkgutil
 from collections.abc import Callable
 from typing import Any
 
+from cloudguardiq.adapters.pricing.live_prices import get_fallback_cost
 from cloudguardiq.core.enums import DataTier, FindingType, Severity
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
@@ -65,84 +66,21 @@ def _estimate_monthly_impact(finding: FindingResult) -> float:
     """Estimate monthly cost impact for findings without direct measured waste.
 
     When snapshot.cost_monthly is available it is used as the base cost.
-    When it is zero (resource cost not yet fetched) a conservative ROUGH
-    median is used per resource type.  These medians are broad category
-    midpoints sourced from public list prices as of 2025 and MUST NOT be
-    presented to users as exact figures -- they exist only to produce a
-    non-zero priority score and a low-confidence UI estimate.
-
-    Median references (all USD/month):
-      Azure VM (all SKUs):        ~150   (B2s~30 .. D8sv5~560)
-      Azure managed disk:         ~45    (P10~19 .. P30~135)
-      Azure Public IP:             3.65  (static Basic, $0.005/hr)
-      Azure Key Vault:            ~5     (50k ops/mo included tier)
-      Azure Storage Account:      ~20    (LRS Hot, 1 TB est.)
-      Azure NSG:                   0     (NSG itself is free)
-      AWS EC2 instance:           ~150   (t3.medium~30 .. m5.4xl~550)
-      AWS RDS instance:           ~200   (db.t3.medium~50 .. db.r6g.2xl~900)
-      AWS S3 bucket:              ~25    (1 TB standard storage)
-      AWS EBS volume:             ~40    (100 GB gp3)
-      AWS Lambda:                  2     (moderate invocation volume)
-      AWS Security Group:          0     (no direct cost)
-      GCP Compute instance:       ~140   (e2-medium~24 .. n2-standard-8~440)
-      GCP Cloud Storage bucket:   ~23    (1 TB standard)
-      GCP Firewall rule:           0     (no direct cost)
+    When it is zero (resource cost not yet fetched) the value is resolved
+    from the pricing cache in cloudguardiq.adapters.pricing.live_prices.
+    That cache is refreshed by the scan pipeline and falls back to static
+    conservative medians when live APIs are unavailable.
     """
     snapshot = finding.resource_snapshot
     if snapshot is None:
         return 0.0
 
-    # Conservative median fallback costs when no observed cost is available.
-    # Keys are lowercase resource-type prefixes; order matters (more specific first).
-    fallback_cost: dict[str, float] = {
-        # Azure
-        "microsoft.compute/virtualmachines": 150.0,
-        "microsoft.compute/disks": 45.0,
-        "microsoft.compute/snapshots": 10.0,
-        "microsoft.network/publicipaddresses": 3.65,
-        "microsoft.network/loadbalancers": 18.0,
-        "microsoft.network/applicationgateways": 60.0,
-        "microsoft.network/networksecuritygroups": 0.0,
-        "microsoft.keyvault/vaults": 5.0,
-        "microsoft.storage/storageaccounts": 20.0,
-        "microsoft.sql/servers": 150.0,
-        "microsoft.sql/managedinstances": 500.0,
-        "microsoft.documentdb/databaseaccounts": 25.0,
-        "microsoft.containerservice/managedclusters": 120.0,
-        "microsoft.web/sites": 10.0,
-        "microsoft.cache/redis": 55.0,
-        # AWS (resource types reported by CloudGuardIQ AWS adapter)
-        "aws::ec2::instance": 150.0,
-        "aws::ec2::volume": 40.0,
-        "aws::ec2::securitygroup": 0.0,
-        "aws::rds::dbinstance": 200.0,
-        "aws::rds::dbcluster": 300.0,
-        "aws::s3::bucket": 25.0,
-        "aws::lambda::function": 2.0,
-        "aws::elasticloadbalancingv2::loadbalancer": 20.0,
-        "aws::cloudtrail::trail": 5.0,
-        "aws::iam::role": 0.0,
-        "aws::iam::user": 0.0,
-        # GCP (resource types reported by CloudGuardIQ GCP adapter)
-        "compute.googleapis.com/instance": 140.0,
-        "compute.googleapis.com/disk": 40.0,
-        "compute.googleapis.com/firewall": 0.0,
-        "storage.googleapis.com/bucket": 23.0,
-        "sqladmin.googleapis.com/instance": 180.0,
-        "container.googleapis.com/cluster": 120.0,
-        "cloudkms.googleapis.com/cryptokey": 6.0,
-    }
-
     observed_cost = max(float(snapshot.cost_monthly), 0.0)
-    if observed_cost > 0.0:
-        base_cost = observed_cost
-    else:
-        resource_type = snapshot.resource_type.lower()
-        base_cost = 0.0
-        for prefix, fallback in fallback_cost.items():
-            if resource_type.startswith(prefix):
-                base_cost = fallback
-                break
+    base_cost = (
+        observed_cost
+        if observed_cost > 0.0
+        else get_fallback_cost(snapshot.resource_type)
+    )
     if base_cost <= 0.0:
         return 0.0
 
@@ -452,6 +390,8 @@ class PolicyEngine:
     def native_rule_count(self) -> int:
         """Return the number of auto-discovered native rules."""
         return len(self._native_rules)
+
+
 
 
 
