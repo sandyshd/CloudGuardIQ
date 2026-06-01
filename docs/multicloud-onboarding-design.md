@@ -532,3 +532,38 @@ Canonical error codes:
 - All cloud access uses delegated trust and short-lived credentials.
 - Every onboarding state transition is tenant-scoped and auditable.
 - Policy engine consumes only normalized `ResourceSnapshot` with valid `data_tier`.
+
+---
+
+## 9) Policy compliance ingestion by provider
+
+CloudGuardIQ now uses each cloud provider's native compliance evaluation service
+in addition to native CloudGuardIQ rules.
+
+- Azure: Azure Policy Regulatory Compliance initiatives (existing behavior).
+- AWS: Security Hub standards findings via `AWSPolicyComplianceAdapter`.
+- GCP: Security Command Center posture findings via `GCPPolicyComplianceAdapter`.
+
+Why this design:
+
+- We avoid re-implementing thousands of provider controls.
+- Provider-managed compliance evaluations are continuously updated upstream.
+- Findings are normalised into `FindingResult` and flow through scorecards,
+  readiness reports, and remediation exactly like local rules.
+
+Onboarding impact:
+
+- AWS `generate-artifacts` now includes `enable_policy_compliance_command`
+  to enable Security Hub standards in one step.
+- GCP `generate-artifacts` now includes `enable_policy_compliance_command`
+  and `policy_posture_families` to enable SCC posture ingestion.
+- AWS/GCP `verify` now includes a `policy_compliance` check showing:
+  - `pass` when provider policy/compliance data is available.
+  - `warn` when not configured yet, while keeping native checks active.
+
+Operational review:
+
+- Review framework-to-standard/posture mappings quarterly.
+- Keep mapping IDs/version tags pinned for reproducibility and auditability.
+- If provider APIs fail or are not enabled, adapters return empty findings and
+  scans continue (graceful degradation).
