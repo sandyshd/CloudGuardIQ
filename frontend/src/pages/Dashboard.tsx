@@ -59,6 +59,13 @@ const SEV_COLOR: Record<Severity, string> = {
   INFORMATIONAL: "hsl(var(--severity-info))",
 };
 
+function impactOf(f: FindingResult): number {
+  const direct = Math.max(f.direct_waste_monthly_usd ?? f.waste_monthly_usd ?? 0, 0);
+  const estimated = Math.max(f.estimated_impact_monthly_usd ?? 0, 0);
+  return Math.max(direct, estimated, 0);
+}
+
+
 
 function postureScore(findings: FindingResult[]): number {
   // Dampened severity-weighted score so a handful of findings does not crush
@@ -177,7 +184,7 @@ export function Dashboard() {
 
     // Savings from FINOPS findings.
     const finops = findings.filter((f) => f.finding_type === "FINOPS");
-    const savings = finops.reduce((s, f) => s + (f.waste_monthly_usd ?? 0), 0);
+    const savings = finops.reduce((s, f) => s + impactOf(f), 0);
 
     // Cost by service (top 8).
     const byService = new Map<string, number>();
@@ -772,6 +779,8 @@ function DataSourceRow({
     </div>
   );
 }
+
+
 
 
 

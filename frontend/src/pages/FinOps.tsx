@@ -26,6 +26,12 @@ import {
   Cell,
 } from "recharts";
 
+function impactOf(f: { waste_monthly_usd: number; direct_waste_monthly_usd?: number; estimated_impact_monthly_usd?: number }): number {
+  const direct = Math.max(f.direct_waste_monthly_usd ?? f.waste_monthly_usd ?? 0, 0);
+  const estimated = Math.max(f.estimated_impact_monthly_usd ?? 0, 0);
+  return Math.max(direct, estimated, 0);
+}
+
 export function FinOps() {
   const { subscriptions, selected: selectedSub, loading: subsLoading } =
     useSubscriptions();
@@ -37,12 +43,12 @@ export function FinOps() {
   );
 
   const totals = useMemo(() => {
-    const monthly = finopsFindings.reduce((s, f) => s + f.waste_monthly_usd, 0);
+    const monthly = finopsFindings.reduce((s, f) => s + impactOf(f), 0);
     const resources = new Set(
       finopsFindings.map((f) => f.resource_snapshot?.id).filter(Boolean),
     ).size;
     const top = [...finopsFindings].sort(
-      (a, b) => b.waste_monthly_usd - a.waste_monthly_usd,
+      (a, b) => impactOf(b) - impactOf(a),
     )[0];
     return { monthly, annual: monthly * 12, resources, top };
   }, [finopsFindings]);
@@ -51,7 +57,7 @@ export function FinOps() {
     const m = new Map<string, number>();
     for (const f of finopsFindings) {
       const k = f.rule_name || f.rule_id || "Other";
-      m.set(k, (m.get(k) ?? 0) + f.waste_monthly_usd);
+      m.set(k, (m.get(k) ?? 0) + impactOf(f));
     }
     return [...m.entries()]
       .map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }))
@@ -139,7 +145,7 @@ export function FinOps() {
         <StatCard
           label="Top opportunity"
           value={
-            totals.top ? `$${totals.top.waste_monthly_usd.toFixed(2)}` : "—"
+            totals.top ? `$${impactOf(totals.top).toFixed(2)}` : "—"
           }
           icon={<TrendingDown className="h-4 w-4" />}
           tone="warning"
@@ -248,3 +254,7 @@ export function FinOps() {
     </div>
   );
 }
+
+
+
+

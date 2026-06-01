@@ -316,3 +316,77 @@ class TestPolicyEngineNew:
         assert findings[0].estimated_impact_monthly_usd == 0.0
         assert findings[0].finops_method == "DIRECT"
         assert findings[0].finops_confidence == "HIGH"
+
+    def test_evaluate_estimates_finops_finding_without_direct_waste(self) -> None:
+        """FinOps findings with zero direct waste still get estimated impact."""
+        test_engine = PolicyEngine(rules=[])
+
+        def _rule(snapshot: ResourceSnapshot) -> list[FindingResult]:
+            return [
+                FindingResult(
+                    rule_id="FIN-EST-001",
+                    rule_name="Tagging policy impact",
+                    severity=Severity.LOW,
+                    finding_type=FindingType.FINOPS,
+                    resource_snapshot=snapshot,
+                    waste_monthly_usd=0.0,
+                )
+            ]
+
+        test_engine.register_rule(_rule)
+
+        snapshot = ResourceSnapshot(
+            subscription_id="sub-test",
+            resource_group="rg-test",
+            resource_type="Microsoft.Storage/storageAccounts",
+            resource_name="tagging-sa",
+            region="eastus",
+            provider=CloudProvider.AZURE,
+            data_tier=DataTier.TIER1_NATIVE,
+            config={},
+            cost_monthly=50.0,
+        )
+
+        findings = test_engine.evaluate([snapshot])
+
+        assert len(findings) == 1
+        assert findings[0].estimated_impact_monthly_usd == 1.0
+        assert findings[0].finops_method == "ESTIMATED"
+        assert findings[0].finops_confidence == "MEDIUM"
+
+    def test_evaluate_uses_fallback_cost_when_snapshot_cost_is_zero(self) -> None:
+        """Estimator uses resource-type fallback when monthly cost is unavailable."""
+        test_engine = PolicyEngine(rules=[])
+
+        def _rule(snapshot: ResourceSnapshot) -> list[FindingResult]:
+            return [
+                FindingResult(
+                    rule_id="SEC-EST-002",
+                    rule_name="Estimated with fallback cost",
+                    severity=Severity.HIGH,
+                    finding_type=FindingType.SECURITY,
+                    resource_snapshot=snapshot,
+                    waste_monthly_usd=0.0,
+                )
+            ]
+
+        test_engine.register_rule(_rule)
+
+        snapshot = ResourceSnapshot(
+            subscription_id="sub-test",
+            resource_group="rg-test",
+            resource_type="Microsoft.Storage/storageAccounts",
+            resource_name="fallback-sa",
+            region="eastus",
+            provider=CloudProvider.AZURE,
+            data_tier=DataTier.TIER1_NATIVE,
+            config={},
+            cost_monthly=0.0,
+        )
+
+        findings = test_engine.evaluate([snapshot])
+
+        assert len(findings) == 1
+        assert findings[0].estimated_impact_monthly_usd == 2.81
+        assert findings[0].finops_method == "ESTIMATED"
+        assert findings[0].finops_confidence == "LOW"

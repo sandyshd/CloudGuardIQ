@@ -62,22 +62,38 @@ def _effective_monthly_impact(finding: FindingResult) -> float:
 
 
 def _estimate_monthly_impact(finding: FindingResult) -> float:
-    """Estimate monthly cost impact for non-FinOps findings."""
-    if finding.finding_type == FindingType.FINOPS:
-        return 0.0
-
+    """Estimate monthly cost impact for findings without direct waste."""
     snapshot = finding.resource_snapshot
     if snapshot is None:
         return 0.0
 
-    base_cost = max(float(snapshot.cost_monthly), 0.0)
+    default_cost_by_type: dict[str, float] = {
+        "microsoft.compute/virtualmachines": 120.0,
+        "microsoft.compute/disks": 30.0,
+        "microsoft.network/publicipaddresses": 12.0,
+        "microsoft.keyvault/vaults": 20.0,
+        "microsoft.storage/storageaccounts": 25.0,
+        "microsoft.network/networksecuritygroups": 8.0,
+    }
+
+    observed_cost = max(float(snapshot.cost_monthly), 0.0)
+    if observed_cost > 0.0:
+        base_cost = observed_cost
+    else:
+        resource_type = snapshot.resource_type.lower()
+        base_cost = 0.0
+        for prefix, fallback in default_cost_by_type.items():
+            if resource_type.startswith(prefix):
+                base_cost = fallback
+                break
+
     if base_cost <= 0.0:
         return 0.0
 
     base_factor_by_type: dict[FindingType, float] = {
         FindingType.SECURITY: 0.15,
         FindingType.COMPLIANCE: 0.10,
-        FindingType.FINOPS: 0.0,
+        FindingType.FINOPS: 0.08,
     }
     severity_factor: dict[Severity, float] = {
         Severity.CRITICAL: 1.0,
@@ -101,7 +117,6 @@ def _estimate_monthly_impact(finding: FindingResult) -> float:
     estimated = round(base_cost * base_factor * sev_factor * data_tier_factor, 2)
     return min(estimated, round(base_cost, 2))
 
-
 def _enrich_finops_impact(findings: list[FindingResult]) -> None:
     """Populate direct and estimated monthly impact fields on findings."""
     for finding in findings:
@@ -123,10 +138,14 @@ def _enrich_finops_impact(findings: list[FindingResult]) -> None:
         finding.estimated_impact_monthly_usd = estimated
         if estimated > 0.0:
             finding.finops_method = "ESTIMATED"
-            finding.finops_confidence = "MEDIUM"
+            if finding.resource_snapshot and finding.resource_snapshot.cost_monthly <= 0.0:
+                finding.finops_confidence = "LOW"
+            else:
+                finding.finops_confidence = "MEDIUM"
         else:
             finding.finops_method = "NONE"
             finding.finops_confidence = "LOW"
+
 def _compute_priority(finding: FindingResult) -> float:
     """Compute priority_score for a FindingResult.
 
@@ -377,6 +396,8 @@ class PolicyEngine:
     def native_rule_count(self) -> int:
         """Return the number of auto-discovered native rules."""
         return len(self._native_rules)
+
+
 
 
 
