@@ -14,7 +14,7 @@ import pkgutil
 from collections.abc import Callable
 from typing import Any
 
-from cloudguardiq.core.enums import Severity
+from cloudguardiq.core.enums import DataTier, FindingType, Severity
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,83 @@ def _compliance_weight(framework_count: int) -> float:
     return min(100.0, framework_count * 25.0)
 
 
+
+def _effective_monthly_impact(finding: FindingResult) -> float:
+    """Return the strongest monthly cost impact signal on a finding."""
+    return max(
+        finding.waste_monthly_usd,
+        finding.direct_waste_monthly_usd,
+        finding.estimated_impact_monthly_usd,
+        0.0,
+    )
+
+
+def _estimate_monthly_impact(finding: FindingResult) -> float:
+    """Estimate monthly cost impact for non-FinOps findings."""
+    if finding.finding_type == FindingType.FINOPS:
+        return 0.0
+
+    snapshot = finding.resource_snapshot
+    if snapshot is None:
+        return 0.0
+
+    base_cost = max(float(snapshot.cost_monthly), 0.0)
+    if base_cost <= 0.0:
+        return 0.0
+
+    base_factor_by_type: dict[FindingType, float] = {
+        FindingType.SECURITY: 0.15,
+        FindingType.COMPLIANCE: 0.10,
+        FindingType.FINOPS: 0.0,
+    }
+    severity_factor: dict[Severity, float] = {
+        Severity.CRITICAL: 1.0,
+        Severity.HIGH: 0.75,
+        Severity.MEDIUM: 0.5,
+        Severity.LOW: 0.25,
+        Severity.INFORMATIONAL: 0.1,
+    }
+    tier_factor: dict[DataTier, float] = {
+        DataTier.TIER1_NATIVE: 1.0,
+        DataTier.TIER2_FREE_CSPM: 1.05,
+        DataTier.TIER2_ENRICHED: 1.05,
+        DataTier.TIER3_PAID: 1.1,
+        DataTier.TIER3_DEEP: 1.1,
+    }
+
+    base_factor = base_factor_by_type.get(finding.finding_type, 0.0)
+    sev_factor = severity_factor.get(finding.severity, 0.0)
+    data_tier_factor = tier_factor.get(snapshot.data_tier, 1.0)
+
+    estimated = round(base_cost * base_factor * sev_factor * data_tier_factor, 2)
+    return min(estimated, round(base_cost, 2))
+
+
+def _enrich_finops_impact(findings: list[FindingResult]) -> None:
+    """Populate direct and estimated monthly impact fields on findings."""
+    for finding in findings:
+        direct = max(
+            finding.direct_waste_monthly_usd,
+            finding.waste_monthly_usd,
+            0.0,
+        )
+        finding.direct_waste_monthly_usd = round(direct, 2)
+
+        if finding.direct_waste_monthly_usd > 0.0:
+            finding.waste_monthly_usd = finding.direct_waste_monthly_usd
+            finding.estimated_impact_monthly_usd = 0.0
+            finding.finops_method = "DIRECT"
+            finding.finops_confidence = "HIGH"
+            continue
+
+        estimated = _estimate_monthly_impact(finding)
+        finding.estimated_impact_monthly_usd = estimated
+        if estimated > 0.0:
+            finding.finops_method = "ESTIMATED"
+            finding.finops_confidence = "MEDIUM"
+        else:
+            finding.finops_method = "NONE"
+            finding.finops_confidence = "LOW"
 def _compute_priority(finding: FindingResult) -> float:
     """Compute priority_score for a FindingResult.
 
@@ -58,7 +135,7 @@ def _compute_priority(finding: FindingResult) -> float:
     alpha, beta, gamma = 0.5, 0.3, 0.2
     score = round(
         alpha * _severity_weight(finding.severity)
-        + beta * _cost_weight(finding.waste_monthly_usd)
+        + beta * _cost_weight(_effective_monthly_impact(finding))
         + gamma * _compliance_weight(len(finding.compliance_frameworks)),
         2,
     )
@@ -187,6 +264,7 @@ class PolicyEngine:
         all_findings = list(deduped.values())
 
         # Compute priority scores and sort descending
+        _enrich_finops_impact(all_findings)
         for f in all_findings:
             _compute_priority(f)
         all_findings.sort(key=lambda f: f.priority_score, reverse=True)
@@ -236,6 +314,7 @@ class PolicyEngine:
         all_findings = list(deduped.values())
 
         # Compute priority scores and sort descending
+        _enrich_finops_impact(all_findings)
         for f in all_findings:
             _compute_priority(f)
         all_findings.sort(key=lambda f: f.priority_score, reverse=True)
@@ -298,3 +377,10 @@ class PolicyEngine:
     def native_rule_count(self) -> int:
         """Return the number of auto-discovered native rules."""
         return len(self._native_rules)
+
+
+
+
+
+
+

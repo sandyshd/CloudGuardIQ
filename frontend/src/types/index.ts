@@ -46,6 +46,10 @@ export interface FindingResult {
   evidence: Record<string, unknown>;
   compliance_frameworks: string[];
   waste_monthly_usd: number;
+  direct_waste_monthly_usd?: number;
+  estimated_impact_monthly_usd?: number;
+  finops_method?: "NONE" | "DIRECT" | "ESTIMATED";
+  finops_confidence?: "LOW" | "MEDIUM" | "HIGH";
   priority_score: number;
   detected_at: string;
   first_seen_at?: string;
@@ -110,3 +114,5 @@ export interface HealingEvent {
   timestamp: string;
   details: string;
 }
+
+

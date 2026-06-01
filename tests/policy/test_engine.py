@@ -223,3 +223,96 @@ class TestPolicyEngineNew:
         score = _compute_priority(finding)
         # 0.5*50 + 0.3*50 + 0.2*50 = 50.0
         assert score == 50.0
+
+
+    def test_priority_score_uses_estimated_impact_when_direct_waste_is_zero(self) -> None:
+        """Estimated impact contributes to priority when direct waste is zero."""
+        finding = FindingResult(
+            rule_id="TEST-004",
+            rule_name="Estimated impact",
+            severity=Severity.HIGH,
+            waste_monthly_usd=0.0,
+            estimated_impact_monthly_usd=50.0,
+            compliance_frameworks=[],
+        )
+
+        score = _compute_priority(finding)
+
+        # 0.5*75 + 0.3*(50/10) + 0.2*0 = 39.0
+        assert score == 39.0
+
+    def test_evaluate_adds_estimated_impact_for_security_findings(self) -> None:
+        """Security findings without direct waste get an estimated impact."""
+        test_engine = PolicyEngine(rules=[])
+
+        def _rule(snapshot: ResourceSnapshot) -> list[FindingResult]:
+            return [
+                FindingResult(
+                    rule_id="SEC-EST-001",
+                    rule_name="Estimated security impact",
+                    severity=Severity.HIGH,
+                    finding_type=FindingType.SECURITY,
+                    resource_snapshot=snapshot,
+                    waste_monthly_usd=0.0,
+                )
+            ]
+
+        test_engine.register_rule(_rule)
+
+        snapshot = ResourceSnapshot(
+            subscription_id="sub-test",
+            resource_group="rg-test",
+            resource_type="Microsoft.Storage/storageAccounts",
+            resource_name="impact-sa",
+            region="eastus",
+            provider=CloudProvider.AZURE,
+            data_tier=DataTier.TIER1_NATIVE,
+            config={},
+            cost_monthly=120.0,
+        )
+
+        findings = test_engine.evaluate([snapshot])
+
+        assert len(findings) == 1
+        assert findings[0].direct_waste_monthly_usd == 0.0
+        assert findings[0].estimated_impact_monthly_usd == 13.5
+        assert findings[0].finops_method == "ESTIMATED"
+        assert findings[0].finops_confidence == "MEDIUM"
+
+    def test_evaluate_preserves_direct_waste_for_finops_findings(self) -> None:
+        """FinOps findings preserve measured waste and do not overwrite with estimate."""
+        test_engine = PolicyEngine(rules=[])
+
+        def _rule(snapshot: ResourceSnapshot) -> list[FindingResult]:
+            return [
+                FindingResult(
+                    rule_id="FIN-001",
+                    rule_name="Measured waste",
+                    severity=Severity.MEDIUM,
+                    finding_type=FindingType.FINOPS,
+                    resource_snapshot=snapshot,
+                    waste_monthly_usd=42.0,
+                )
+            ]
+
+        test_engine.register_rule(_rule)
+
+        snapshot = ResourceSnapshot(
+            subscription_id="sub-test",
+            resource_group="rg-test",
+            resource_type="Microsoft.Compute/virtualMachines",
+            resource_name="idle-vm",
+            region="eastus",
+            provider=CloudProvider.AZURE,
+            data_tier=DataTier.TIER1_NATIVE,
+            config={},
+            cost_monthly=200.0,
+        )
+
+        findings = test_engine.evaluate([snapshot])
+
+        assert len(findings) == 1
+        assert findings[0].direct_waste_monthly_usd == 42.0
+        assert findings[0].estimated_impact_monthly_usd == 0.0
+        assert findings[0].finops_method == "DIRECT"
+        assert findings[0].finops_confidence == "HIGH"
