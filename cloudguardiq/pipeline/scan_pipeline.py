@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from cloudguardiq.adapters.pricing.live_prices import refresh_prices
 from cloudguardiq.billing.plans import UNLIMITED, get_plan
 from cloudguardiq.billing.quota import check_ai_quota
 from cloudguardiq.billing.repository import BillingRepository
@@ -89,6 +90,12 @@ class ScanPipeline:
         scan_id = str(uuid.uuid4())
 
         logger.info("Scan %s started for subscription %s", scan_id, subscription_id)
+
+        # Refresh pricing cache (no-op if refreshed within the last 24 h)
+        try:
+            await refresh_prices()
+        except Exception as _pricing_exc:  # noqa: BLE001
+            logger.warning("Pricing cache refresh failed: %s", _pricing_exc)
 
         # Step 1: Scan resources
         try:
