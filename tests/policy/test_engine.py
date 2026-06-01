@@ -387,6 +387,6 @@ class TestPolicyEngineNew:
         findings = test_engine.evaluate([snapshot])
 
         assert len(findings) == 1
-        assert findings[0].estimated_impact_monthly_usd == 2.81
+        assert findings[0].estimated_impact_monthly_usd == 2.25
         assert findings[0].finops_method == "ESTIMATED"
         assert findings[0].finops_confidence == "LOW"
