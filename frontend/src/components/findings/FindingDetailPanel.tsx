@@ -7,7 +7,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { useToast } from "../ui/toast";
 import {
-  Sparkles,
+  HelpCircle, Sparkles,
   X,
   Copy,
   Check,
@@ -276,7 +276,7 @@ export function FindingDetailPanel({ finding, onClose, onUpdate }: FindingDetail
                       <MetaRow label="Data tier">
                         <DataTierBadge tier={r.data_tier} />
                       </MetaRow>
-                      <MetaRow label="Monthly cost">
+                      <MetaRow label={<span className="inline-flex items-center gap-1">Observed cost<div className="group relative inline-flex"><HelpCircle className="h-3.5 w-3.5 cursor-help text-[hsl(var(--muted-foreground))] opacity-60 hover:opacity-100" /><div className="invisible absolute right-0 top-full mt-1 w-48 rounded bg-[hsl(var(--card))] p-2 text-xs text-[hsl(var(--muted-foreground))] shadow-lg group-hover:visible border border-[hsl(var(--border))] z-50 whitespace-normal">Actual monthly cost tracked from your cloud provider. Updates as the resource is used.</div></div></span>}>
                         ${(r.cost_monthly ?? 0).toFixed(2)}
                       </MetaRow>
                     </dl>
@@ -402,3 +402,5 @@ export function FindingDetailPanel({ finding, onClose, onUpdate }: FindingDetail
   );
 }
 import { toFriendlyMessage } from "../../lib/errors";
+
+
