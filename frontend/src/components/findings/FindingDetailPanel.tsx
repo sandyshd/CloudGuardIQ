@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { SeverityBadge } from "../common/SeverityBadge";
 import { DataTierBadge } from "../common/DataTierBadge";
@@ -63,7 +63,7 @@ function CopyButton({ value, label = "Copy" }: { value: string; label?: string }
   );
 }
 
-function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
+function MetaRow({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-3 border-b border-[hsl(var(--border))] py-2.5 last:border-b-0">
       <dt className="text-xs font-medium uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
@@ -402,5 +402,6 @@ export function FindingDetailPanel({ finding, onClose, onUpdate }: FindingDetail
   );
 }
 import { toFriendlyMessage } from "../../lib/errors";
+
 
 
