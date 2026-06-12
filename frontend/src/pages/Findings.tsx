@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { triggerScan } from "../api/scans";
-import { formatScanError, formatScanTimestamp } from "../lib/errors";
+import { extractScanLastEventAt, formatScanError, formatScanTimestamp } from "../lib/errors";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { PageHeader } from "../components/common/PageHeader";
@@ -90,7 +90,7 @@ const SOURCE_OPTIONS: { id: FindingSource | "ALL"; label: string }[] = [
 
 export function Findings() {
   const [subscriptionFilter, setSubscriptionFilter] = useState<string | "ALL" | "">("");
-  const { subscriptions, selected: selectedSub } = useSubscriptions();
+  const { subscriptions, selected: selectedSub, refresh: refreshSubscriptions } = useSubscriptions();
   const { toast } = useToast();
 
   const effectiveSub =
@@ -101,11 +101,14 @@ export function Findings() {
         : selectedSub?.subscription_id;
 
   const { findings, loading, error, refresh, applyUpdate, seed } = useFindings(effectiveSub);
+  const [lastScanAtOverride, setLastScanAtOverride] = useState<string | null>(null);
   const currentSubscription = effectiveSub
     ? subscriptions.find((s) => s.subscription_id === effectiveSub) ?? null
     : selectedSub;
-  const lastScanLabel = currentSubscription?.last_scan_at
-    ? `Last scan: ${formatScanTimestamp(currentSubscription.last_scan_at)}`
+  const lastScanAt =
+    lastScanAtOverride ?? currentSubscription?.last_scan_at ?? null;
+  const lastScanLabel = lastScanAt
+    ? `Last scan: ${formatScanTimestamp(lastScanAt)}`
     : "Last scan: never";
   const navigate = useNavigate();
   const [selected, setSelected] = useState<FindingResult | null>(null);
@@ -162,12 +165,16 @@ export function Findings() {
       // index catches up. The scan response already holds the full findings
       // array, so render it now; the periodic refresh reconciles later.
       seed(result.findings ?? []);
+      setLastScanAtOverride(new Date().toISOString());
       toast({ tone: "success", title: "Scan complete" });
     } catch (err) {
       const msg = formatScanError(err);
       setScanError(msg);
+      const fallbackLastScanAt = extractScanLastEventAt(err);
+      if (fallbackLastScanAt) setLastScanAtOverride(fallbackLastScanAt);
       toast({ tone: "error", title: "Scan failed", description: msg });
     } finally {
+      void refreshSubscriptions();
       setScanning(false);
       scanInFlight.current = false;
     }
@@ -478,6 +485,10 @@ export function Findings() {
     </div>
   );
 }
+
+
+
+
 
 
 

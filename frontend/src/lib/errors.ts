@@ -233,3 +233,18 @@ export function formatScanError(err: unknown): string {
   return "Scan failed";
 }
 
+
+/**
+ * Extract last scan timestamp from a 429 /scan payload when present.
+ * Returns null when the shape does not include last_event_at.
+ */
+export function extractScanLastEventAt(err: unknown): string | null {
+  const anyErr = err as {
+    response?: { status?: number; data?: { detail?: unknown } };
+  };
+  if (anyErr?.response?.status !== 429) return null;
+  const detail = anyErr?.response?.data?.detail;
+  if (!detail || typeof detail !== "object") return null;
+  const value = (detail as Record<string, unknown>).last_event_at;
+  return typeof value === "string" && value.trim() ? value : null;
+}
