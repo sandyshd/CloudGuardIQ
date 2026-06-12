@@ -90,6 +90,7 @@ export interface Subscription {
   subscription_id: string;
   display_name: string;
   state: string;
+  last_scan_at?: string | null;
   provider?: CloudProvider;
   aws_account_id?: string;
   gcp_project_id?: string;
@@ -114,5 +115,6 @@ export interface HealingEvent {
   timestamp: string;
   details: string;
 }
+
 
 

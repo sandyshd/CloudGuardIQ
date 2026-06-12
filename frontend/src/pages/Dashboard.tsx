@@ -42,7 +42,7 @@ import type { FindingResult, Severity, DataTier } from "../types";
 import { cn } from "../lib/utils";
 
 
-import { formatScanError } from "../lib/errors";
+import { formatScanError, formatScanTimestamp } from "../lib/errors";
 const SEV_WEIGHT: Record<Severity, number> = {
   CRITICAL: 10,
   HIGH: 5,
@@ -127,6 +127,9 @@ export function Dashboard() {
   const scanInFlight = useRef(false);
 
   const isLoading = loading || subsLoading;
+  const lastScanLabel = selectedSub?.last_scan_at
+    ? `Last scan: ${formatScanTimestamp(selectedSub.last_scan_at)}`
+    : "Last scan: never";
 
   const handleRunScan = async () => {
     const subId = selectedSub?.subscription_id;
@@ -151,7 +154,7 @@ export function Dashboard() {
     }
   };
 
-  // ── Derived metrics ────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Derived metrics ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const metrics = useMemo(() => {
     const open = findings.filter((f) => (f.status ?? "OPEN") === "OPEN");
     const score = postureScore(findings);
@@ -228,7 +231,7 @@ export function Dashboard() {
     const tier2Active = TIER2_VALUES.some((t) => tiers.has(t));
     const tier3Active = TIER3_VALUES.some((t) => tiers.has(t));
 
-    // Cloud provider presence (excluding Terraform — that's an IaC source, not a cloud).
+    // Cloud provider presence (excluding Terraform ΓÇö that's an IaC source, not a cloud).
     const providersSeen = new Set<string>();
     resources.forEach((r) => providersSeen.add(r.provider));
     const azureActive = providersSeen.has("AZURE");
@@ -264,7 +267,7 @@ export function Dashboard() {
     };
   }, [findings]);
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Render ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -314,16 +317,19 @@ export function Dashboard() {
     <div className="space-y-6">
       <PageHeader
         title="Overview"
-        subtitle={`${selectedSub?.subscription_id ?? "—"} · ${findings.length} findings across ${metrics.resourcesCount} resources`}
+        subtitle={`${selectedSub?.subscription_id ?? "ΓÇö"} ┬╖ ${findings.length} findings across ${metrics.resourcesCount} resources`}
         actions={
-          <Button onClick={handleRunScan} disabled={scanning} variant="outline" size="sm">
-            {scanning ? (
-              <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Scan className="mr-2 h-4 w-4" />
-            )}
-            {scanning ? "Scanning…" : "Run scan"}
-          </Button>
+          <div className="flex flex-col items-end gap-1">
+            <Button onClick={handleRunScan} disabled={scanning} size="sm">
+              {scanning ? (
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Scan className="mr-2 h-4 w-4" />
+              )}
+              {scanning ? "Scanning..." : "Run scan"}
+            </Button>
+            <span className="text-xs text-[hsl(var(--muted-foreground))]">{lastScanLabel}</span>
+          </div>
         }
       />
 
@@ -333,7 +339,7 @@ export function Dashboard() {
         </Alert>
       )}
 
-      {/* ── Hero KPI row ─────────────────────────────────────────────── */}
+      {/* ΓöÇΓöÇ Hero KPI row ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {/* 1. Security Posture Score */}
         <Card>
@@ -472,7 +478,7 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* ── Below KPIs: Findings over time (2/3) + Top risks (1/3) ───── */}
+      {/* ΓöÇΓöÇ Below KPIs: Findings over time (2/3) + Top risks (1/3) ΓöÇΓöÇΓöÇΓöÇΓöÇ */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between">
@@ -541,7 +547,7 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* ── Second row: Cost by service + Compliance scorecard ───────── */}
+      {/* ΓöÇΓöÇ Second row: Cost by service + Compliance scorecard ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between">
@@ -551,7 +557,7 @@ export function Dashboard() {
               onClick={() => navigate("/finops")}
               className="text-xs font-medium text-[hsl(var(--primary))] hover:underline"
             >
-              Cost Explorer →
+              Cost Explorer ΓåÆ
             </button>
           </CardHeader>
           <CardContent>
@@ -596,7 +602,7 @@ export function Dashboard() {
                         className="flex flex-col items-center gap-1 rounded-md p-2 text-center transition-colors hover:bg-[hsl(var(--accent)/0.08)]"
                         title={
                           evaluated
-                            ? `${fw.controls_passed}/${fw.controls_total} controls passing · ${fw.open_findings} open finding${fw.open_findings === 1 ? "" : "s"}`
+                            ? `${fw.controls_passed}/${fw.controls_total} controls passing ┬╖ ${fw.open_findings} open finding${fw.open_findings === 1 ? "" : "s"}`
                             : "Not yet evaluated"
                         }
                       >
@@ -618,7 +624,7 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* ── Third row: Recent activity + Data source health ──────────── */}
+      {/* ΓöÇΓöÇ Third row: Recent activity + Data source health ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -669,7 +675,7 @@ export function Dashboard() {
                           onClick={() => setSelectedFinding(f)}
                           className="mt-0.5 truncate text-left text-xs text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--primary))] hover:underline"
                         >
-                          {f.rule_name || f.rule_id} ·{" "}
+                          {f.rule_name || f.rule_id} ┬╖{" "}
                           {f.resource_snapshot?.resource_name ?? "resource"}
                         </button>
                       </div>
@@ -687,21 +693,21 @@ export function Dashboard() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-[11px] text-[hsl(var(--muted-foreground))]">
-              Cloud-agnostic tiers — same signal model across Azure, AWS, and GCP.
+              Cloud-agnostic tiers ΓÇö same signal model across Azure, AWS, and GCP.
             </p>
             <DataSourceRow
-              label="Tier 1 — Native"
-              hint="Resource Graph · AWS Config · GCP Asset Inventory"
+              label="Tier 1 ΓÇö Native"
+              hint="Resource Graph ┬╖ AWS Config ┬╖ GCP Asset Inventory"
               status="connected"
             />
             <DataSourceRow
-              label="Tier 2 — Enriched (free CSPM)"
-              hint="Defender for Cloud · Security Hub · Security Command Center"
+              label="Tier 2 ΓÇö Enriched (free CSPM)"
+              hint="Defender for Cloud ┬╖ Security Hub ┬╖ Security Command Center"
               status={metrics.tier2Active ? "connected" : "not_connected"}
             />
             <DataSourceRow
-              label="Tier 3 — Deep (paid)"
-              hint="Defender paid · GuardDuty / Inspector · SCC Premium"
+              label="Tier 3 ΓÇö Deep (paid)"
+              hint="Defender paid ┬╖ GuardDuty / Inspector ┬╖ SCC Premium"
               status={metrics.tier3Active ? "connected" : "not_connected"}
             />
             <div className="border-t border-[hsl(var(--border))] pt-3">
@@ -711,17 +717,17 @@ export function Dashboard() {
               <div className="space-y-2">
                 <DataSourceRow
                   label="Azure"
-                  hint="Resource Manager · Cost Management"
+                  hint="Resource Manager ┬╖ Cost Management"
                   status={metrics.azureActive ? "connected" : "not_connected"}
                 />
                 <DataSourceRow
                   label="AWS"
-                  hint="Config · Cost Explorer"
+                  hint="Config ┬╖ Cost Explorer"
                   status={metrics.awsActive ? "connected" : "not_connected"}
                 />
                 <DataSourceRow
                   label="GCP"
-                  hint="Asset Inventory · Billing"
+                  hint="Asset Inventory ┬╖ Billing"
                   status={metrics.gcpActive ? "connected" : "not_connected"}
                 />
               </div>
@@ -779,6 +785,7 @@ function DataSourceRow({
     </div>
   );
 }
+
 
 
 

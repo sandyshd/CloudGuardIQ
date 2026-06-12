@@ -26,7 +26,7 @@ export function useFindings(subscriptionId?: string, limit = 5000) {
   const [loading, setLoading] = useState(!findingsCache.has(cacheKey));
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options: { preserveCacheOnEmpty?: boolean } = {}) => {
     const key = subscriptionId ?? "";
     // Only show a blocking spinner when we have nothing cached to render.
     if (!findingsCache.has(key)) setLoading(true);
@@ -40,7 +40,7 @@ export function useFindings(subscriptionId?: string, limit = 5000) {
         data.length === 0 &&
         cached !== undefined &&
         cached.length > 0 &&
-        withinSeedGrace
+        (options.preserveCacheOnEmpty || withinSeedGrace)
       ) {
         // Cosmos index still catching up after a recent scan -- keep the
         // seeded findings rather than blanking the page with an empty query.
@@ -54,7 +54,6 @@ export function useFindings(subscriptionId?: string, limit = 5000) {
       setLoading(false);
     }
   }, [subscriptionId, limit]);
-
   // When the selected subscription changes, immediately show its cached
   // findings (if any) so the list does not flash empty before refresh fills it.
   useEffect(() => {
@@ -84,13 +83,8 @@ export function useFindings(subscriptionId?: string, limit = 5000) {
   );
 
   /**
-   * Replace the list with findings returned directly by a /scan response, and
-   * cache them so the data survives navigation to other pages. Cosmos indexes
-   * upserts asynchronously, so the indexed GET /findings query can return [] for
-   * several minutes right after a scan persists, blanking the page until the
-   * index catches up. The scan response already carries the full findings array,
-   * so we seed every page from it immediately and let the periodic refresh
-   * reconcile once the index is ready.
+   * Replace the cached list with caller-supplied results.
+   * Used by optimistic mutations that already have the authoritative data.
    */
   const seed = useCallback(
     (next: FindingResult[]) => {
@@ -106,3 +100,8 @@ export function useFindings(subscriptionId?: string, limit = 5000) {
 
   return { findings, loading, error, refresh, applyUpdate, seed };
 }
+
+
+
+
+

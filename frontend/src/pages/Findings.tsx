@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { triggerScan } from "../api/scans";
-import { formatScanError } from "../lib/errors";
+import { formatScanError, formatScanTimestamp } from "../lib/errors";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { PageHeader } from "../components/common/PageHeader";
@@ -101,6 +101,12 @@ export function Findings() {
         : selectedSub?.subscription_id;
 
   const { findings, loading, error, refresh, applyUpdate, seed } = useFindings(effectiveSub);
+  const currentSubscription = effectiveSub
+    ? subscriptions.find((s) => s.subscription_id === effectiveSub) ?? null
+    : selectedSub;
+  const lastScanLabel = currentSubscription?.last_scan_at
+    ? `Last scan: ${formatScanTimestamp(currentSubscription.last_scan_at)}`
+    : "Last scan: never";
   const navigate = useNavigate();
   const [selected, setSelected] = useState<FindingResult | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Severity | "ALL">("ALL");
@@ -229,20 +235,23 @@ export function Findings() {
         title="Findings"
         subtitle="Security, FinOps, and compliance issues detected across your scoped subscriptions."
         actions={
-          <>
-            <Button variant="outline" size="sm" onClick={refresh} aria-label="Refresh">
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleRunScan}
-              disabled={scanning || subscriptions.length === 0}
-            >
-              <Scan className={cn("h-4 w-4", scanning && "animate-pulse")} />
-              {scanning ? "Scanning..." : "Run scan"}
-            </Button>
-          </>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => refresh()} aria-label="Refresh">
+                <RefreshCw className="h-4 w-4" />
+                Refresh
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleRunScan}
+                disabled={scanning || subscriptions.length === 0}
+              >
+                <Scan className={cn("h-4 w-4", scanning && "animate-pulse")} />
+                {scanning ? "Scanning..." : "Run scan"}
+              </Button>
+            </div>
+            <span className="text-xs text-[hsl(var(--muted-foreground))]">{lastScanLabel}</span>
+          </div>
         }
       />
 
@@ -311,7 +320,7 @@ export function Findings() {
               <span className="text-[11px] text-[hsl(var(--muted-foreground))]">
                 {totalCount > 0
                   ? `${Math.round((count / totalCount) * 100)}% of total`
-                  : "—"}
+                  : "ΓÇö"}
               </span>
             </button>
           );
@@ -469,6 +478,8 @@ export function Findings() {
     </div>
   );
 }
+
+
 
 
 

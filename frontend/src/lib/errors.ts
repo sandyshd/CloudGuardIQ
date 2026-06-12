@@ -187,7 +187,7 @@ export function toFriendlyError(
 export function toFriendlyMessage(err: unknown, fallback?: string): string {
   return toFriendlyError(err, fallback).message;
 }
-function formatScanTimestamp(value: string): string {
+export function formatScanTimestamp(value: string): string {
   // Render an ISO timestamp as "YYYY-MM-DD HH:MM:SS" in local time.
   // Falls back to the raw value when it cannot be parsed.
   const d = new Date(value);
@@ -232,3 +232,4 @@ export function formatScanError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return "Scan failed";
 }
+

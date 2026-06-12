@@ -23,6 +23,8 @@ from cloudguardiq.reports import (
     ReportsRepository,
     ReportsService,
 )
+from cloudguardiq.compliance.scorecard import compute_scorecard
+from cloudguardiq.reports.pdf_generator import _framework_def
 
 
 def _make_finding(
@@ -34,6 +36,7 @@ def _make_finding(
     waste: float = 0.0,
     description: str = "Public blob access is enabled on this storage account.",
     resource_name: str = "sa1",
+    evidence: dict[str, str] | None = None,
 ) -> FindingResult:
     snap = ResourceSnapshot(
         subscription_id="sub-123",
@@ -57,6 +60,7 @@ def _make_finding(
         priority_score=92.5,
         status=FindingStatus.OPEN,
         detected_at=datetime.now(timezone.utc),
+        evidence=evidence or {},
     )
 
 
@@ -115,6 +119,75 @@ class TestComplianceReportGenerator:
                 findings=[_make_finding()],
             )
             assert pdf[:4] == b"%PDF"
+
+    def test_policy_detail_rows_and_lines_for_azpol_findings(self) -> None:
+        gen = ComplianceReportGenerator()
+        finding = _make_finding(
+            rule_id="AZPOL-DenyPublicAccess",
+            frameworks=["CIS_AZURE:3.1"],
+            evidence={
+                "policy_definition_id": "/providers/Microsoft.Authorization/policyDefinitions/abc",
+                "policy_assignment_id": "/subscriptions/sub-123/providers/Microsoft.Authorization/policyAssignments/assign1",
+                "compliance_reason_code": "NonCompliant",
+                "timestamp": "2026-01-02T03:04:05Z",
+            },
+        )
+
+        rows = gen._policy_detail_rows(finding)
+        assert ["Finding source", "Azure Policy Regulatory Compliance"] in rows
+        assert any(row[0] == "Policy definition" for row in rows)
+        assert any(row[0] == "Policy assignment" for row in rows)
+        assert any(row[0] == "Compliance reason" for row in rows)
+        assert any(row[0] == "Policy evaluated at" for row in rows)
+
+        lines = gen._policy_detail_lines(finding)
+        assert any("Azure Policy Regulatory Compliance" in line for line in lines)
+        assert any("Policy definition:" in line for line in lines)
+        assert any("Policy assignment:" in line for line in lines)
+        assert any("Compliance reason:" in line for line in lines)
+        assert any("Evaluated at:" in line for line in lines)
+
+    def test_policy_details_skipped_for_non_azpol_findings(self) -> None:
+        gen = ComplianceReportGenerator()
+        finding = _make_finding(rule_id="STOR-001", frameworks=["CIS_AZURE:3.1"])
+
+        assert gen._policy_detail_rows(finding) == []
+        assert gen._policy_detail_lines(finding) == []
+
+    def test_scope_methodology_conditional_policy_language(self) -> None:
+        gen = ComplianceReportGenerator()
+        fw = _framework_def("CIS_AZURE")
+        score_row = next(
+            row
+            for row in compute_scorecard([], providers={CloudProvider.AZURE})
+            if row.framework_id == "CIS_AZURE"
+        )
+
+        with_policy = gen._scope_and_methodology(
+            fw=fw,
+            score_row=score_row,
+            subscription_id="sub-123",
+            customer_name="Acme",
+            providers={CloudProvider.AZURE},
+            generated_by="tester",
+            report_id="report-1",
+            include_policy_findings=True,
+        )
+        without_policy = gen._scope_and_methodology(
+            fw=fw,
+            score_row=score_row,
+            subscription_id="sub-123",
+            customer_name="Acme",
+            providers={CloudProvider.AZURE},
+            generated_by="tester",
+            report_id="report-1",
+            include_policy_findings=False,
+        )
+
+        assert "AZPOL-" in with_policy[8].text
+        assert "AZPOL-" not in without_policy[8].text
+        assert "Azure Policy Regulatory Compliance" in with_policy[10]._cellvalues[6][1]
+        assert "CloudGuardIQ native compliance rules" in without_policy[10]._cellvalues[6][1]
 
 
 class TestReportsService:
@@ -226,3 +299,4 @@ class TestReportsRoutes:
     ) -> None:
         resp = await client.get("/reports/generate")
         assert resp.status_code == 422
+
