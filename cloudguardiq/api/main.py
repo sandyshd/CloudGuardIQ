@@ -218,6 +218,7 @@ async def lifespan(
         consent_repository=_consent_repo,
         onboarding_session_repository=_onboarding_session_repo,
         credential_factory=build_default_factory(settings),
+        cosmos_repository=_repo,
     )
     from cloudguardiq.api import onboarding_v1 as onboarding_v1_module
 
@@ -751,6 +752,13 @@ async def _persist_scan_results(
         try:
             await repo.save_finding(finding, scan_id=scan_id)
             seen_ids.add(finding.finding_id)
+            if finding.rule_id.startswith("AZPOL-"):
+                logger.info(
+                    "Persisted Azure Policy finding %s (%s) for subscription %s",
+                    finding.finding_id,
+                    finding.rule_id,
+                    subscription_id,
+                )
             if not tenant_for_scan and finding.tenant_id:
                 tenant_for_scan = finding.tenant_id
         except Exception as exc:
@@ -763,13 +771,35 @@ async def _persist_scan_results(
     # underlying issue was either fixed or the resource is gone. Best-effort:
     # a Cosmos hiccup here must not fail the scan. The previous OPEN rows
     # stay OPEN if this call fails; the next successful scan will retry.
-    try:
-        await repo.mark_unseen_findings_resolved(
-            subscription_id, seen_ids, scan_id,
-            tenant_id=tenant_for_scan or None,
+    #
+    # CRITICAL: only sweep when the scan actually enumerated resources. A
+    # scan that returns 0 snapshots is degraded (e.g. the adapter could not
+    # authenticate or lacked Reader on the subscription), not authoritative
+    # proof that every prior finding was remediated. Running the sweep on an
+    # empty scan would wrongly flip every OPEN finding to RESOLVED and blank
+    # the dashboard -- the bug reported after re-running "Run Scan".
+    if snapshots:
+        existing_resource_ids: set[str] = set()
+        for snap in snapshots:
+            for value in (snap.id, snap.resource_id, snap.resource_name):
+                if value:
+                    existing_resource_ids.add(value)
+        try:
+            await repo.mark_unseen_findings_resolved(
+                subscription_id, seen_ids, scan_id,
+                tenant_id=tenant_for_scan or None,
+                existing_resource_ids=existing_resource_ids,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Auto-resolve sweep failed for scan %s: %s", scan_id, exc,
+            )
+    else:
+        logger.warning(
+            "Scan %s enumerated 0 resources -- skipping auto-resolve sweep "
+            "to preserve existing findings (degraded scan).",
+            scan_id,
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Auto-resolve sweep failed for scan %s: %s", scan_id, exc)
 
     # Save scan summary
     critical = sum(
@@ -979,6 +1009,27 @@ async def scan_subscription(
         snapshots = []
     findings: list[FindingResult] = engine.evaluate(snapshots)
 
+    # Merge Azure Policy regulatory-compliance findings (Tier 1, free) the
+    # adapter emits directly, bypassing the rule registry. The interactive
+    # /scan endpoint builds snapshots via list_resources(), so -- unlike the
+    # timer-driven ScanPipeline -- it must trigger Policy ingestion explicitly.
+    # Without this, AZPOL- findings never reach the dashboard even when a
+    # regulatory initiative (e.g. CIS Azure) is assigned.
+    if adapter is not None:
+        try:
+            policy_findings = await adapter.fetch_policy_findings()
+            if policy_findings:
+                findings.extend(policy_findings)
+                logger.info(
+                    "Merged %s Azure Policy compliance finding(s) into scan %s",
+                    len(policy_findings), scan_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Azure Policy compliance ingestion failed for %s: %s",
+                request.subscription_id, exc,
+            )
+
     # Stamp tenant ownership on every snapshot and finding before
     # persistence. Without this, rows are written with tenant_id="" and
     # the tenant-isolated GET /findings query returns nothing -- the
@@ -1011,6 +1062,21 @@ async def scan_subscription(
             snapshots, findings, time.perf_counter() - start,
         )
 
+    # Stamp last_scan_at on the subscription record so the UI shows the real
+    # last-scan time from the database on every page load -- not just right
+    # after clicking "Run Scan". Best-effort: a missing record or a Cosmos
+    # hiccup must never fail the scan.
+    if _subs_repo is not None:
+        try:
+            await _subs_repo.mark_scanned(
+                tenant_id_for_scan, request.subscription_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to stamp last_scan_at for %s: %s",
+                request.subscription_id, exc,
+            )
+
     return ScanResponse(
         subscription_id=request.subscription_id,
         snapshots_count=len(snapshots),
@@ -1041,8 +1107,6 @@ async def list_findings(
                 sub_id,
                 tenant_id=tenant_id,
                 limit=limit,
-                from_date=from_date,
-                to_date=to_date,
             )
             return sorted(
                 findings,

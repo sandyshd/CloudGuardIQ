@@ -10,12 +10,19 @@ import { SeverityBadge } from "../common/SeverityBadge";
 import { cn } from "../../lib/utils";
 import type { FindingResult } from "../../types";
 
+function resolveImpact(f: FindingResult): { amount: number; estimated: boolean } {
+  const direct = Math.max(f.direct_waste_monthly_usd ?? f.waste_monthly_usd ?? 0, 0);
+  const estimated = Math.max(f.estimated_impact_monthly_usd ?? 0, 0);
+  const amount = Math.max(direct, estimated, 0);
+  return { amount, estimated: amount > 0 && direct <= 0 && estimated > 0 };
+}
+
 export function WasteTable({ findings }: { findings: FindingResult[] }) {
   const finops = findings
     .filter((f) => f.finding_type === "FINOPS")
-    .sort((a, b) => b.waste_monthly_usd - a.waste_monthly_usd);
+    .sort((a, b) => resolveImpact(b).amount - resolveImpact(a).amount);
 
-  const max = finops[0]?.waste_monthly_usd ?? 1;
+  const max = Math.max(resolveImpact(finops[0] ?? ({ waste_monthly_usd: 0 } as FindingResult)).amount, 1);
 
   if (finops.length === 0) {
     return (
@@ -39,7 +46,8 @@ export function WasteTable({ findings }: { findings: FindingResult[] }) {
       </TableHeader>
       <TableBody>
         {finops.map((f) => {
-          const pct = max > 0 ? Math.max(0.04, f.waste_monthly_usd / max) : 0;
+          const impact = resolveImpact(f);
+          const pct = max > 0 ? Math.max(0.04, impact.amount / max) : 0;
           return (
             <TableRow key={f.finding_id}>
               <TableCell className="max-w-[280px]">
@@ -72,10 +80,10 @@ export function WasteTable({ findings }: { findings: FindingResult[] }) {
                 </div>
               </TableCell>
               <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--severity-critical))]">
-                ${f.waste_monthly_usd.toFixed(2)}
+                ${impact.amount.toFixed(2)}{impact.estimated ? " *" : ""}
               </TableCell>
               <TableCell className="text-right tabular-nums text-[hsl(var(--muted-foreground))]">
-                ${(f.waste_monthly_usd * 12).toFixed(0)}
+                ${(impact.amount * 12).toFixed(0)}
               </TableCell>
             </TableRow>
           );

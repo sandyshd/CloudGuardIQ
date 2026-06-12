@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -90,6 +90,17 @@ const PROVIDER_LABELS: Record<CloudProvider, string> = {
   AWS: "Amazon Web Services",
   GCP: "Google Cloud Platform",
 };
+
+// Optional Azure compliance initiatives the Deploy-to-Azure template can
+// assign alongside the Reader role. Order matches the backend catalogue.
+const AZURE_FRAMEWORKS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "CIS_AZURE", label: "CIS Azure Foundations" },
+  { id: "NIST_800_53", label: "NIST SP 800-53 Rev. 5" },
+  { id: "ISO_27001", label: "ISO/IEC 27001" },
+  { id: "PCI_DSS", label: "PCI DSS" },
+  { id: "SOC2", label: "SOC 2" },
+  { id: "HIPAA", label: "HIPAA / HITRUST" },
+];
 
 const URL_ARTIFACT_KEYS = new Set([
   "deploy_url",
@@ -282,28 +293,69 @@ function ArtifactRow({ name, value }: { name: string; value: string }): JSX.Elem
   );
 }
 
+function ActionLink({
+  href,
+  children,
+  variant = "primary",
+}: {
+  href: string;
+  children: React.ReactNode;
+  variant?: "primary" | "outline";
+}): JSX.Element {
+  const cls =
+    variant === "primary"
+      ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:bg-[hsl(var(--primary)/0.9)]"
+      : "border border-[hsl(var(--primary))] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.06)]";
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className={`inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-medium ${cls}`}
+    >
+      {children}
+    </a>
+  );
+}
+
 function AzureInstructions({ artifacts }: { artifacts: Record<string, string> }): JSX.Element {
+  const consentUrl = artifacts.consent_url;
   const deployUrl = artifacts.deploy_url;
   return (
-    <ol className="list-decimal space-y-2 pl-5 text-sm">
+    <ol className="list-decimal space-y-4 pl-5 text-sm">
       <li>
-        Click <strong>Open</strong> next to <em>Deploy to Azure</em> below. The Azure Portal
-        opens a deployment blade pre-filled with the CloudGuardIQ principal ID.
+        <div className="font-medium">Grant admin consent</div>
+        <p className="text-[hsl(var(--muted-foreground))]">
+          Sign in as a Global Administrator of the tenant you are enrolling and approve the
+          read-only permissions CloudGuardIQ requests. You only do this once per tenant.
+        </p>
+        {consentUrl && (
+          <div className="mt-2">
+            <ActionLink href={consentUrl}>Grant admin consent &rarr;</ActionLink>
+          </div>
+        )}
       </li>
       <li>
-        Select the subscription you want to enroll, accept the terms, and click{" "}
-        <strong>Create</strong>. This assigns the <code>Reader</code> role to CloudGuardIQ at
-        the subscription scope.
+        <div className="font-medium">Assign the Reader role</div>
+        <p className="text-[hsl(var(--muted-foreground))]">
+          Opens a pre-filled Azure deployment. Pick the subscription to enroll, then click{" "}
+          <strong>Review + create</strong>. This grants CloudGuardIQ the <code>Reader</code>{" "}
+          role and assigns the selected compliance initiatives &mdash; no fields to fill in.
+        </p>
+        {deployUrl ? (
+          <div className="mt-2">
+            <ActionLink href={deployUrl}>Deploy to Azure &rarr;</ActionLink>
+          </div>
+        ) : (
+          <p className="mt-1 text-[hsl(var(--warning))]">
+            Deploy link is not ready yet &mdash; click <strong>Generate Deploy link</strong> above.
+          </p>
+        )}
       </li>
       <li>
         Wait for the Azure deployment to report <strong>Succeeded</strong>, then return here
         and continue to <strong>Verify</strong>.
       </li>
-      {!deployUrl && (
-        <li className="text-[hsl(var(--warning))]">
-          Deploy URL is not available yet. Click <strong>Generate Artifacts</strong> above.
-        </li>
-      )}
     </ol>
   );
 }
@@ -395,6 +447,11 @@ export function MultiCloudOnboardingHub(): JSX.Element {
 
   const [session, setSession] = useState<OnboardingSessionResponseV1 | null>(null);
   const [selectedScopeIds, setSelectedScopeIds] = useState<string[]>([]);
+  // Compliance initiatives the operator chose to assign (Azure only).
+  // Defaults to all frameworks; clearing it grants the Reader role only.
+  const [selectedFrameworks, setSelectedFrameworks] = useState<string[]>(
+    () => AZURE_FRAMEWORKS.map((f) => f.id),
+  );
 
   const [connections, setConnections] = useState<CloudConnectionResponse[]>([]);
   const [connectionsLoading, setConnectionsLoading] = useState(false);
@@ -417,6 +474,28 @@ export function MultiCloudOnboardingHub(): JSX.Element {
     }
     setSelectedScopeIds(session.discovered_scopes.map((scope) => scope.id));
   }, [session?.session_id, session?.discovered_scopes.length]);
+
+  // Auto-generate artifacts the moment the user reaches Step 2 so the
+  // Deploy/consent links are ready without an extra click. Tracked per
+  // session id so a failure does not retry in a loop.
+  const autoArtifactsFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (step !== 2 || !session) {
+      return;
+    }
+    const needsAzureLinks =
+      session.provider === "AZURE" && !session.artifacts.deploy_url;
+    const hasAny = Object.keys(session.artifacts).length > 0;
+    if ((hasAny && !needsAzureLinks) || busyAction.length > 0) {
+      return;
+    }
+    if (autoArtifactsFor.current === session.session_id) {
+      return;
+    }
+    autoArtifactsFor.current = session.session_id;
+    void generateArtifacts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, session?.session_id]);
 
   async function loadConnections(): Promise<void> {
     setConnectionsLoading(true);
@@ -505,7 +584,21 @@ export function MultiCloudOnboardingHub(): JSX.Element {
     setBusyAction("artifacts");
     setNotice(null);
     try {
-      const updated = await generateOnboardingArtifactsV1(session.session_id);
+      // Azure: translate the optional framework selection into the
+      // backend contract ("all" / CSV / "none" for Reader-only). Other
+      // providers ignore the argument.
+      const assignFrameworks =
+        session.provider === "AZURE"
+          ? selectedFrameworks.length === AZURE_FRAMEWORKS.length
+            ? "all"
+            : selectedFrameworks.length === 0
+              ? "none"
+              : selectedFrameworks.join(",")
+          : undefined;
+      const updated = await generateOnboardingArtifactsV1(
+        session.session_id,
+        assignFrameworks,
+      );
       setSession(updated);
       setNotice({
         kind: "success",
@@ -842,35 +935,93 @@ export function MultiCloudOnboardingHub(): JSX.Element {
               <h3 className="text-base font-semibold">
                 Step 2 — Grant trust in {PROVIDER_LABELS[session.provider]}
               </h3>
+              {session.provider === "AZURE" && (
+                <div className="space-y-3 rounded border bg-white p-4">
+                  <div>
+                    <div className="text-sm font-semibold">
+                      Compliance initiatives (optional)
+                    </div>
+                    <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                      Choose which built-in regulatory frameworks CloudGuardIQ
+                      assigns as Azure Policy initiatives alongside the read-only
+                      Reader role. Clear every box to grant the Reader role only.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {AZURE_FRAMEWORKS.map((fw) => (
+                      <label
+                        key={fw.id}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedFrameworks.includes(fw.id)}
+                          onChange={() =>
+                            setSelectedFrameworks((prev) =>
+                              prev.includes(fw.id)
+                                ? prev.filter((id) => id !== fw.id)
+                                : [...prev, fw.id],
+                            )
+                          }
+                        />
+                        <span>{fw.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      onClick={() => void generateArtifacts()}
+                      disabled={busyAction.length > 0}
+                    >
+                      {busyAction === "artifacts"
+                        ? "Generating…"
+                        : session.artifacts.deploy_url
+                          ? "Update Deploy link"
+                          : "Generate Deploy link"}
+                    </Button>
+                    <button
+                      type="button"
+                      className="text-xs text-[hsl(var(--primary))] underline"
+                      onClick={() =>
+                        setSelectedFrameworks(AZURE_FRAMEWORKS.map((f) => f.id))
+                      }
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      className="text-xs text-[hsl(var(--primary))] underline"
+                      onClick={() => setSelectedFrameworks([])}
+                    >
+                      Clear all
+                    </button>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      {selectedFrameworks.length === 0
+                        ? "Reader role only"
+                        : `${selectedFrameworks.length} initiative${
+                            selectedFrameworks.length === 1 ? "" : "s"
+                          } selected`}
+                    </span>
+                  </div>
+                </div>
+              )}
               {!hasArtifacts && (
                 <Alert>
                   <AlertDescription>
-                    Click <strong>Generate Artifacts</strong> to produce the provider-specific
-                    instructions and links for this session.
+                    {busyAction === "artifacts"
+                      ? "Preparing your secure onboarding links…"
+                      : "Your onboarding links will appear here automatically."}
                   </AlertDescription>
                 </Alert>
               )}
 
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  onClick={() => void generateArtifacts()}
-                  disabled={busyAction.length > 0}
-                >
-                  {busyAction === "artifacts"
-                    ? "Generating..."
-                    : hasArtifacts
-                      ? "Regenerate Artifacts"
-                      : "Generate Artifacts"}
-                </Button>
-              </div>
-
               {hasArtifacts && (
                 <>
-                  <div className="rounded border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.06)] p-3">
+                  <div className="rounded border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.06)] p-4">
                     <div className="text-sm font-semibold text-[hsl(var(--foreground))]">
-                      Apply these steps in {PROVIDER_LABELS[session.provider]}
+                      Follow these steps in {PROVIDER_LABELS[session.provider]}
                     </div>
-                    <div className="mt-2 text-[hsl(var(--foreground))]">
+                    <div className="mt-3 text-[hsl(var(--foreground))]">
                       <ProviderInstructions
                         provider={session.provider}
                         artifacts={session.artifacts}
@@ -878,14 +1029,16 @@ export function MultiCloudOnboardingHub(): JSX.Element {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">Artifacts</div>
-                    <div className="grid gap-2">
+                  <details className="rounded border bg-white">
+                    <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-[hsl(var(--muted-foreground))]">
+                      Advanced: raw URLs &amp; IDs (for manual / CLI setup)
+                    </summary>
+                    <div className="grid gap-2 p-3 pt-0">
                       {Object.entries(session.artifacts).map(([key, value]) => (
                         <ArtifactRow key={key} name={key} value={value} />
                       ))}
                     </div>
-                  </div>
+                  </details>
 
                   <div className="flex justify-between">
                     <Button variant="ghost" onClick={() => setStep(1)}>

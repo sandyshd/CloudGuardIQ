@@ -81,6 +81,7 @@ class PublicBlobAccessRule(PolicyRule):
 
     rule_id: str = "STOR-001"
     rule_name: str = "Public blob access enabled"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
     compliance_frameworks: list[str] = [
@@ -116,6 +117,7 @@ class HttpTrafficAllowedRule(PolicyRule):
 
     rule_id: str = "STOR-002"
     rule_name: str = "HTTP traffic allowed (not HTTPS-only)"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
     compliance_frameworks: list[str] = [
@@ -149,6 +151,7 @@ class MinTlsVersionRule(PolicyRule):
 
     rule_id: str = "STOR-003"
     rule_name: str = "Minimum TLS version below 1.2"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
     compliance_frameworks: list[str] = [
@@ -183,6 +186,7 @@ class SharedKeyAuthRule(PolicyRule):
 
     rule_id: str = "STOR-004"
     rule_name: str = "Shared key authentication enabled"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
     compliance_frameworks: list[str] = [
@@ -220,6 +224,7 @@ class NetworkDefaultActionRule(PolicyRule):
 
     rule_id: str = "STOR-005"
     rule_name: str = "Network default action not Deny"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
     compliance_frameworks: list[str] = [
@@ -255,6 +260,7 @@ class BlobSoftDeleteRule(PolicyRule):
 
     rule_id: str = "STOR-006"
     rule_name: str = "Soft delete not enabled for blobs"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
     compliance_frameworks: list[str] = [
@@ -292,6 +298,7 @@ class BlobVersioningRule(PolicyRule):
 
     rule_id: str = "STOR-007"
     rule_name: str = "Blob versioning not enabled"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     severity: Severity = Severity.LOW
     finding_type: FindingType = FindingType.SECURITY
     compliance_frameworks: list[str] = [
@@ -329,6 +336,7 @@ class InfrastructureEncryptionRule(PolicyRule):
 
     rule_id: str = "STOR-008"
     rule_name: str = "Infrastructure encryption not enabled"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
     compliance_frameworks: list[str] = [
@@ -365,6 +373,7 @@ class DiagnosticLoggingRule(PolicyRule):
 
     rule_id: str = "STOR-009"
     rule_name: str = "No diagnostic logging configured"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
     compliance_frameworks: list[str] = [
@@ -403,6 +412,7 @@ class LifecycleManagementRule(PolicyRule):
 
     rule_id: str = "STOR-010"
     rule_name: str = "No lifecycle management policy"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     severity: Severity = Severity.LOW
     finding_type: FindingType = FindingType.FINOPS
     compliance_frameworks: list[str] = []

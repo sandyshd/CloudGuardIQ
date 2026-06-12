@@ -11,8 +11,8 @@ import asyncio
 from datetime import datetime, timezone
 
 from cloudguardiq.adapters.gcp.adapter import GCPAdapter
-from cloudguardiq.core.enums import CloudProvider, DataTier
-from cloudguardiq.core.models import ResourceSnapshot
+from cloudguardiq.core.enums import CloudProvider, DataTier, FindingType, Severity
+from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
 
 def _stub_snapshot(rt: str, name: str) -> ResourceSnapshot:
@@ -94,3 +94,36 @@ def test_legacy_methods_are_safe_noops() -> None:
     assert asyncio.run(adapter.get_raw_properties("nope")) == {}
     snap = _stub_snapshot("google.compute.Instance", "vm-a")
     assert asyncio.run(adapter.enrich_with_defender([snap])) == [snap]
+
+
+def test_scan_populates_policy_findings(monkeypatch) -> None:
+    adapter = GCPAdapter(project_id="proj-123")
+
+    monkeypatch.setattr(
+        "cloudguardiq.adapters.gcp.adapter._require_google",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        adapter, "_scan_compute_instances",
+        lambda: [_stub_snapshot("google.compute.Instance", "vm-a")],
+    )
+    monkeypatch.setattr(adapter, "_scan_compute_disks", lambda: [])
+    monkeypatch.setattr(adapter, "_scan_firewalls", lambda: [])
+    monkeypatch.setattr(adapter, "_scan_storage_buckets", lambda: [])
+    monkeypatch.setattr(adapter, "_scan_service_accounts", lambda: [])
+
+    policy = FindingResult(
+        rule_id="GCPPOL-CIS_3_1",
+        severity=Severity.HIGH,
+        finding_type=FindingType.COMPLIANCE,
+    )
+
+    async def _fetch() -> list[FindingResult]:
+        return [policy]
+
+    monkeypatch.setattr(adapter._policy_adapter, "fetch_findings", _fetch)
+
+    asyncio.run(adapter.scan())
+
+    assert len(adapter.policy_findings) == 1
+    assert adapter.policy_findings[0].rule_id == "GCPPOL-CIS_3_1"

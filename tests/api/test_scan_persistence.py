@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from cloudguardiq.api.main import app
-from cloudguardiq.core.enums import DataTier, Severity
+from cloudguardiq.core.enums import (
+    CloudProvider,
+    DataTier,
+    FindingType,
+    Severity,
+)
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
 
@@ -132,6 +138,50 @@ class TestScanPersistence:
         assert data["subscription_id"] == "sub-456"
 
 
+class TestDegradedScanPreservesFindings:
+    @pytest.mark.asyncio
+    async def test_zero_resource_scan_does_not_autoresolve(
+        self, client: AsyncClient,
+    ) -> None:
+        """A degraded scan that enumerates 0 resources must NOT auto-resolve.
+
+        If the adapter cannot enumerate resources (e.g. missing Reader role
+        or a transient Azure error), the scan yields 0 findings. Running the
+        unseen-findings auto-resolve sweep in that case would wrongly flip
+        every previously-OPEN finding to RESOLVED and blank the dashboard.
+        """
+        mock_repo = AsyncMock()
+        mock_repo.save_snapshot = AsyncMock(return_value="snap-id")
+        mock_repo.save_finding = AsyncMock(return_value="finding-id")
+        mock_repo.save_scan_result = AsyncMock()
+        mock_repo.mark_unseen_findings_resolved = AsyncMock(return_value=0)
+
+        mock_adapter = AsyncMock()
+        mock_adapter.list_resources = AsyncMock(return_value=[])
+        mock_adapter.enrich_with_defender = AsyncMock(return_value=[])
+        mock_adapter.fetch_policy_findings = AsyncMock(return_value=[])
+
+        with (
+            patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch(
+                "azure.identity.DefaultAzureCredential",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "cloudguardiq.api.main.AzureAdapter",
+                return_value=mock_adapter,
+            ),
+        ):
+            response = await client.post(
+                "/scan",
+                json={"subscription_id": "sub-degraded"},
+            )
+
+        assert response.status_code == 200
+        # The auto-resolve sweep must be skipped for a 0-resource scan.
+        mock_repo.mark_unseen_findings_resolved.assert_not_called()
+
+
 class TestGetFinding:
     @pytest.mark.asyncio
     async def test_get_finding_from_db(
@@ -177,3 +227,137 @@ class TestGetFinding:
         response = await client.get(f"/findings/{finding_id}")
         assert response.status_code == 200
         assert response.json()["finding_id"] == finding_id
+
+
+class TestScanMergesPolicyFindings:
+    @pytest.mark.asyncio
+    async def test_scan_merges_azure_policy_findings(self) -> None:
+        """POST /scan must ingest AZPOL- findings via fetch_policy_findings()."""
+        transport = ASGITransport(app=app)
+        mock_repo = AsyncMock()
+        mock_repo.save_snapshot = AsyncMock(return_value="snap-id")
+        mock_repo.save_finding = AsyncMock(return_value="finding-id")
+        mock_repo.save_scan_result = AsyncMock()
+
+        snap = ResourceSnapshot(
+            subscription_id="sub-123",
+            resource_group="rg1",
+            resource_type="storage_account",
+            resource_name="acct1",
+            region="eastus",
+            provider=CloudProvider.AZURE,
+            data_tier=DataTier.TIER1_NATIVE,
+        )
+        azpol = FindingResult(
+            finding_id="azpol-1",
+            resource_snapshot=snap,
+            rule_id="AZPOL-DenyHttpStorage",
+            rule_name="DenyHttpStorage",
+            severity=Severity.MEDIUM,
+            finding_type=FindingType.COMPLIANCE,
+            description="Non-compliant with assigned Azure Policy.",
+            compliance_frameworks=["CIS_AZURE"],
+        )
+
+        mock_adapter = MagicMock()
+        mock_adapter.list_resources = AsyncMock(return_value=[])
+        mock_adapter.enrich_with_defender = AsyncMock(return_value=[])
+        mock_adapter.fetch_policy_findings = AsyncMock(return_value=[azpol])
+
+        with (
+            patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch("cloudguardiq.api.main.AzureAdapter", return_value=mock_adapter),
+            patch("azure.identity.DefaultAzureCredential", return_value=MagicMock()),
+        ):
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as ac:
+                response = await ac.post(
+                    "/scan", json={"subscription_id": "sub-123"}
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["findings_count"] == 1
+        assert data["findings"][0]["rule_id"] == "AZPOL-DenyHttpStorage"
+        mock_adapter.fetch_policy_findings.assert_awaited_once()
+
+
+    @pytest.mark.asyncio
+    async def test_scan_logs_azure_policy_database_insert(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """POST /scan logs per-AZPOL persistence writes to Cosmos."""
+        transport = ASGITransport(app=app)
+        mock_repo = AsyncMock()
+        mock_repo.save_snapshot = AsyncMock(return_value="snap-id")
+        mock_repo.save_finding = AsyncMock(return_value="finding-id")
+        mock_repo.save_scan_result = AsyncMock()
+
+        snap = ResourceSnapshot(
+            subscription_id="sub-123",
+            resource_group="rg1",
+            resource_type="storage_account",
+            resource_name="acct1",
+            region="eastus",
+            provider=CloudProvider.AZURE,
+            data_tier=DataTier.TIER1_NATIVE,
+        )
+        azpol = FindingResult(
+            finding_id="azpol-1",
+            resource_snapshot=snap,
+            rule_id="AZPOL-DenyHttpStorage",
+            rule_name="DenyHttpStorage",
+            severity=Severity.MEDIUM,
+            finding_type=FindingType.COMPLIANCE,
+            description="Non-compliant with assigned Azure Policy.",
+            compliance_frameworks=["CIS_AZURE"],
+        )
+
+        mock_adapter = MagicMock()
+        mock_adapter.list_resources = AsyncMock(return_value=[])
+        mock_adapter.enrich_with_defender = AsyncMock(return_value=[])
+        mock_adapter.fetch_policy_findings = AsyncMock(return_value=[azpol])
+
+        with (
+            patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch("cloudguardiq.api.main.AzureAdapter", return_value=mock_adapter),
+            patch("azure.identity.DefaultAzureCredential", return_value=MagicMock()),
+            caplog.at_level(logging.INFO),
+        ):
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as ac:
+                response = await ac.post(
+                    "/scan", json={"subscription_id": "sub-123"}
+                )
+
+        assert response.status_code == 200
+        assert "Persisted Azure Policy finding" in caplog.text
+        assert "AZPOL-DenyHttpStorage" in caplog.text
+
+
+
+class TestFindingsListFilters:
+    @pytest.mark.asyncio
+    async def test_list_findings_ignores_date_query_params(
+        self, client: AsyncClient
+    ) -> None:
+        mock_repo = AsyncMock()
+        mock_repo.get_findings = AsyncMock(return_value=[])
+
+        with patch("cloudguardiq.api.main.get_repo", return_value=mock_repo):
+            response = await client.get(
+                "/findings",
+                params={
+                    "subscription_id": "sub-123",
+                    "from_date": "2026-01-01T00:00:00Z",
+                    "to_date": "2026-01-02T00:00:00Z",
+                },
+            )
+
+        assert response.status_code == 200
+        mock_repo.get_findings.assert_awaited_once()
+        _, kwargs = mock_repo.get_findings.call_args
+        assert "from_date" not in kwargs
+        assert "to_date" not in kwargs

@@ -187,3 +187,64 @@ export function toFriendlyError(
 export function toFriendlyMessage(err: unknown, fallback?: string): string {
   return toFriendlyError(err, fallback).message;
 }
+export function formatScanTimestamp(value: string): string {
+  // Render an ISO timestamp as "YYYY-MM-DD HH:MM:SS" in local time.
+  // Falls back to the raw value when it cannot be parsed.
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+}
+
+/**
+ * Friendly message for a /scan failure. For a 429 scan-frequency rejection it
+ * spells out the plan cap, how long to wait, and the last scan time instead of
+ * the generic "please slow down" text. Shared by the Findings and Overview
+ * pages so both surface the same scan-cooldown guidance.
+ */
+export function formatScanError(err: unknown): string {
+  const anyErr = err as {
+    response?: { status?: number; data?: { detail?: unknown } };
+    message?: string;
+  };
+  const status = anyErr?.response?.status;
+  const detail = anyErr?.response?.data?.detail;
+  if (status === 429 && detail && typeof detail === "object") {
+    const d = detail as Record<string, unknown>;
+    const tier = String(d.current_tier ?? "free");
+    const cap = Number(d.cap ?? 0);
+    const retry = Number(d.retry_after_seconds ?? 0);
+    const minutes = Math.ceil(retry / 60);
+    const wait =
+      retry < 60
+        ? `${retry}s`
+        : minutes < 60
+          ? `${minutes}m`
+          : `${Math.ceil(minutes / 60)}h`;
+    const last = typeof d.last_event_at === "string" ? d.last_event_at : "";
+    const lastSuffix = last ? ` (last scan: ${formatScanTimestamp(last)})` : "";
+    return `Your ${tier} plan allows one scan every ${cap} minute${cap === 1 ? "" : "s"}. Try again in ${wait}${lastSuffix}, or upgrade for more frequent scans.`;
+  }
+  if (typeof detail === "string") return detail;
+  if (err instanceof Error) return err.message;
+  return "Scan failed";
+}
+
+
+/**
+ * Extract last scan timestamp from a 429 /scan payload when present.
+ * Returns null when the shape does not include last_event_at.
+ */
+export function extractScanLastEventAt(err: unknown): string | null {
+  const anyErr = err as {
+    response?: { status?: number; data?: { detail?: unknown } };
+  };
+  if (anyErr?.response?.status !== 429) return null;
+  const detail = anyErr?.response?.data?.detail;
+  if (!detail || typeof detail !== "object") return null;
+  const value = (detail as Record<string, unknown>).last_event_at;
+  return typeof value === "string" && value.trim() ? value : null;
+}

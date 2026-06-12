@@ -194,6 +194,72 @@ def test_v1_generate_artifacts_returns_consent_and_deploy_info(
     app.dependency_overrides.clear()
 
 
+def test_v1_generate_artifacts_passes_selected_frameworks(
+    monkeypatch: Any,
+) -> None:
+    _wire()
+    app.dependency_overrides[verify_token] = lambda: TokenPayload(
+        sub="user-1", tid=HOME_TID, oid="oid-1",
+    )
+    client = _client()
+    session_id = _create_azure_session(client)
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_template(*_: Any, **kwargs: Any) -> Any:
+        captured["assign_frameworks"] = kwargs.get("assign_frameworks")
+        return subs_module.OnboardingTemplateResponse(
+            customer_tenant_id=CUSTOMER_TID,
+            azure_principal_id="aaaa",
+            template_uri="https://raw.example.com/template.json",
+            deploy_url="https://portal.azure.com/#create/Microsoft.Template/uri/xxx",
+            scope="subscription",
+        )
+
+    monkeypatch.setattr(subs_module, "get_onboarding_template", _fake_template)
+
+    res = client.post(
+        f"/v1/onboarding/sessions/{session_id}/generate-artifacts",
+        json={"assign_frameworks": "CIS_AZURE,NIST_800_53"},
+    )
+    assert res.status_code == 200, res.text
+    assert captured["assign_frameworks"] == "CIS_AZURE,NIST_800_53"
+    app.dependency_overrides.clear()
+
+
+def test_v1_generate_artifacts_none_means_reader_only(
+    monkeypatch: Any,
+) -> None:
+    _wire()
+    app.dependency_overrides[verify_token] = lambda: TokenPayload(
+        sub="user-1", tid=HOME_TID, oid="oid-1",
+    )
+    client = _client()
+    session_id = _create_azure_session(client)
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_template(*_: Any, **kwargs: Any) -> Any:
+        captured["assign_frameworks"] = kwargs.get("assign_frameworks")
+        return subs_module.OnboardingTemplateResponse(
+            customer_tenant_id=CUSTOMER_TID,
+            azure_principal_id="aaaa",
+            template_uri="https://raw.example.com/template.json",
+            deploy_url="https://portal.azure.com/#create/Microsoft.Template/uri/xxx",
+            scope="subscription",
+        )
+
+    monkeypatch.setattr(subs_module, "get_onboarding_template", _fake_template)
+
+    res = client.post(
+        f"/v1/onboarding/sessions/{session_id}/generate-artifacts",
+        json={"assign_frameworks": "none"},
+    )
+    assert res.status_code == 200, res.text
+    assert captured["assign_frameworks"] == ""
+    app.dependency_overrides.clear()
+
+
 def test_v1_generate_artifacts_for_aws_returns_trust_template() -> None:
     _wire()
     app.dependency_overrides[verify_token] = lambda: TokenPayload(

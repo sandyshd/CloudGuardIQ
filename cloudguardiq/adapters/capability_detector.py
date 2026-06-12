@@ -10,12 +10,13 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from cloudguardiq.adapters.base import CapabilityFlags
 from cloudguardiq.core.enums import DataTier
 
 if TYPE_CHECKING:
+    from azure.core.credentials import TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
 
     from cloudguardiq.core.database import CosmosRepository
@@ -79,16 +80,18 @@ class CapabilityDetector:
                 )
                 return cached
 
-        t1, t2, t3 = await asyncio.gather(
+        t1, t2, t3, t4 = await asyncio.gather(
             self._probe_tier1(),
             self._probe_tier2(),
             self._probe_tier3(),
+            self._probe_policy_compliance(),
         )
 
         flags = CapabilityFlags(
             tier1_available=t1,
             tier2_available=t2,
             tier3_available=t3,
+            policy_compliance_available=t4,
             detected_at=datetime.now(timezone.utc),
         )
         await self._db.save_capability_flags(self._subscription_id, flags)
@@ -169,4 +172,36 @@ class CapabilityDetector:
                     self._subscription_id,
                     exc,
                 )
+            return False
+
+    async def _probe_policy_compliance(self) -> bool:
+        """Probe whether Microsoft Azure Policy regulatory data is available.
+
+        Returns ``True`` when at least one of the built-in regulatory
+        initiatives in ``FRAMEWORK_INITIATIVES`` is assigned to the
+        subscription -- in which case Microsoft's authoritative per-control
+        compliance evaluation can be ingested by
+        ``AzurePolicyComplianceAdapter``. Returns ``False`` on no assignment,
+        a 403, or any error.
+        """
+        try:
+            from cloudguardiq.adapters.azure.azure_policy_compliance_adapter import (
+                FRAMEWORK_INITIATIVES,
+                AzurePolicyComplianceAdapter,
+            )
+
+            adapter = AzurePolicyComplianceAdapter(
+                credential=cast("TokenCredential", self._credential),
+                subscription_id=self._subscription_id,
+                db=self._db,
+            )
+            assigned = await adapter._list_assigned_initiatives()
+            known = {v.lower() for v in FRAMEWORK_INITIATIVES.values()}
+            return any(a.lower() in known for a in assigned)
+        except Exception as exc:
+            logger.warning(
+                "Policy compliance probe failed for %s: %s",
+                self._subscription_id,
+                exc,
+            )
             return False

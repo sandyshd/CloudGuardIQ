@@ -14,6 +14,14 @@ from typing import NoReturn
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
+from cloudguardiq.adapters.aws.aws_policy_compliance_adapter import (
+    FRAMEWORK_STANDARDS,
+    AWSPolicyComplianceAdapter,
+)
+from cloudguardiq.adapters.gcp.gcp_policy_compliance_adapter import (
+    FRAMEWORK_POSTURES,
+    GCPPolicyComplianceAdapter,
+)
 from cloudguardiq.api import subscriptions as subscriptions_module
 from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
 from cloudguardiq.core.config import Settings, get_settings
@@ -72,6 +80,20 @@ class OnboardingSessionConnectRequestV1(BaseModel):
     """Request payload for POST /v1/onboarding/sessions/{id}/connect."""
 
     scope_ids: list[str] = Field(default_factory=list)
+
+
+class GenerateArtifactsRequestV1(BaseModel):
+    """Request payload for POST /v1/onboarding/sessions/{id}/generate-artifacts.
+
+    ``assign_frameworks`` is Azure-only and optional. It selects which
+    built-in regulatory initiatives the Deploy-to-Azure template assigns
+    alongside the Reader role: ``all`` (every supported framework), a CSV
+    of framework ids (e.g. ``CIS_AZURE,NIST_800_53``), or ``none``/empty
+    to grant the Reader role only. Defaults to ``all`` for backward
+    compatibility with the original one-click flow.
+    """
+
+    assign_frameworks: str = "all"
 
 
 class VerificationCheck(BaseModel):
@@ -474,6 +496,68 @@ def _build_gcp_bind_command(project_id: str, provider_resource_name: str) -> str
     )
 
 
+async def _aws_policy_compliance_check(
+    account_id: str,
+    region: str,
+) -> VerificationCheck:
+    """Return whether AWS compliance standards are enabled for the account."""
+    try:
+        adapter = AWSPolicyComplianceAdapter(account_id=account_id, region=region)
+        enabled = await adapter._list_enabled_standards()  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("AWS policy compliance probe failed account=%s: %s", account_id, exc)
+        return VerificationCheck(
+            check="policy_compliance",
+            status="warn",
+            message="Could not verify Security Hub standards. Continue with native checks.",
+        )
+
+    if enabled:
+        return VerificationCheck(
+            check="policy_compliance",
+            status="pass",
+            message="Security Hub standards enabled; policy compliance findings included.",
+        )
+
+    return VerificationCheck(
+        check="policy_compliance",
+        status="warn",
+        message=(
+            "Security Hub standards not enabled yet; using CloudGuardIQ native rules only. "
+            "Run the provided enable-standards command to ingest authoritative compliance controls."
+        ),
+    )
+
+
+async def _gcp_policy_compliance_check(project_id: str) -> VerificationCheck:
+    """Return whether GCP posture families are available in SCC findings."""
+    try:
+        adapter = GCPPolicyComplianceAdapter(project_id=project_id)
+        enabled = await adapter._list_enabled_postures()  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("GCP policy compliance probe failed project=%s: %s", project_id, exc)
+        return VerificationCheck(
+            check="policy_compliance",
+            status="warn",
+            message="Could not verify Security Command Center posture data.",
+        )
+
+    if enabled:
+        return VerificationCheck(
+            check="policy_compliance",
+            status="pass",
+            message="Security Command Center posture findings available.",
+        )
+
+    return VerificationCheck(
+        check="policy_compliance",
+        status="warn",
+        message=(
+            "No compliance posture findings detected yet; using CloudGuardIQ native rules only. "
+            "Enable SCC posture services and rerun verify."
+        ),
+    )
+
 def _auth_mode(provider: CloudProvider) -> str:
     """Return auth mode string for provider."""
 
@@ -875,9 +959,20 @@ async def get_onboarding_session_v1(
 )
 async def generate_onboarding_artifacts_v1(
     session_id: str,
+    body: GenerateArtifactsRequestV1 | None = None,
     user: TokenPayload = _auth,
 ) -> OnboardingSessionResponseV1:
-    """Generate provider onboarding artifacts."""
+    """Generate provider onboarding artifacts.
+
+    For Azure the optional request body selects which compliance
+    initiatives the Deploy-to-Azure template assigns (see
+    ``GenerateArtifactsRequestV1``). AWS and GCP ignore the body.
+    """
+    assign_frameworks = (
+        body.assign_frameworks if body is not None else "all"
+    )
+    if assign_frameworks.strip().lower() == "none":
+        assign_frameworks = ""
 
     try:
         legacy = await subscriptions_module.get_onboarding_session(
@@ -906,6 +1001,13 @@ async def generate_onboarding_artifacts_v1(
                 "cloudformation_template_url": os.getenv(
                     "CLOUDGUARDIQ_AWS_IAM_TEMPLATE_URL",
                     "https://example.com/cloudguardiq/aws-onboarding-role.yaml",
+                ),
+                "enable_policy_compliance_command": (
+                    "aws securityhub batch-enable-standards "
+                    "--standards-subscription-requests "
+                    + " ".join(
+                        f"StandardsArn={arn}" for arn in FRAMEWORK_STANDARDS.values()
+                    )
                 ),
             }
             await _append_audit_event(
@@ -938,6 +1040,12 @@ async def generate_onboarding_artifacts_v1(
                 gcp_session.project_id,
                 provider_resource_name,
             ),
+            "enable_policy_compliance_command": (
+                "gcloud services enable securitycenter.googleapis.com "
+                "securitycentermanagement.googleapis.com "
+                f"--project {gcp_session.project_id}"
+            ),
+            "policy_posture_families": ",".join(FRAMEWORK_POSTURES.values()),
         }
         await _append_audit_event(
             user=user,
@@ -952,6 +1060,7 @@ async def generate_onboarding_artifacts_v1(
     template = await subscriptions_module.get_onboarding_template(
         tenant_id=legacy.customer_tenant_id,
         scope="subscription",
+        assign_frameworks=assign_frameworks,
         user=user,
     )
     azure_artifacts["template_uri"] = template.template_uri
@@ -959,6 +1068,10 @@ async def generate_onboarding_artifacts_v1(
     azure_artifacts["azure_principal_id"] = template.azure_principal_id
     if template.parameters_uri:
         azure_artifacts["parameters_uri"] = template.parameters_uri
+    if template.assigned_initiatives:
+        azure_artifacts["assigned_initiatives"] = ",".join(
+            a.framework_id for a in template.assigned_initiatives
+        )
     await _append_audit_event(
         user=user,
         action="artifacts_generated",
@@ -995,6 +1108,10 @@ async def verify_onboarding_session_v1(
                     VerificationCheck(check="token_exchange", status="pass"),
                     VerificationCheck(check="permission_probe", status="pass"),
                     VerificationCheck(check="scope_discovery", status="pass"),
+                    await _aws_policy_compliance_check(
+                        aws_session.account_id,
+                        aws_session.region,
+                    ),
                 ]
                 await _append_audit_event(
                     user=user,
@@ -1016,6 +1133,7 @@ async def verify_onboarding_session_v1(
                 VerificationCheck(check="token_exchange", status="pass"),
                 VerificationCheck(check="permission_probe", status="pass"),
                 VerificationCheck(check="scope_discovery", status="pass"),
+                await _gcp_policy_compliance_check(gcp_session.project_id),
             ]
             await _append_audit_event(
                 user=user,
@@ -1312,4 +1430,10 @@ async def disconnect_cloud_connection(
         result="success",
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+
+
+
+
 
