@@ -2,10 +2,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { ArrowDownRight } from "lucide-react";
 import type { FindingResult } from "../../types";
 
+function impactOf(f: FindingResult): number {
+  const direct = Math.max(f.direct_waste_monthly_usd ?? f.waste_monthly_usd ?? 0, 0);
+  const estimated = Math.max(f.estimated_impact_monthly_usd ?? 0, 0);
+  return Math.max(direct, estimated, 0);
+}
+
 export function SavingsProjection({ findings }: { findings: FindingResult[] }) {
   const totalMonthly = findings
     .filter((f) => f.finding_type === "FINOPS")
-    .reduce((sum, f) => sum + f.waste_monthly_usd, 0);
+    .reduce((sum, f) => sum + impactOf(f), 0);
   const annual = totalMonthly * 12;
 
   return (

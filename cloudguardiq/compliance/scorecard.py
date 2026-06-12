@@ -92,14 +92,21 @@ _FRAMEWORK_BY_ID: dict[str, FrameworkDef] = {fw.id: fw for fw in FRAMEWORKS}
 def _classify(tag: str) -> tuple[str, str] | None:
     """Return (framework_id, control_id) for a rule's compliance tag.
 
-    Tags follow the convention ``{FRAMEWORK_PREFIX}{CONTROL_ID}`` e.g.
-    ``CIS_3.1``, ``NIST_SC-28``, ``PCI_DSS_6.5.4``, ``SOC2_CC6.1``.
+    Tags follow either the prefix convention ``{FRAMEWORK_PREFIX}{CONTROL_ID}``
+    (e.g. ``CIS_3.1``, ``NIST_SC-28``, ``SOC2_CC6.1``) or the explicit
+    ``{FRAMEWORK_ID}:{CONTROL_ID}`` form emitted by the Azure Policy adapter
+    (e.g. ``CIS_AZURE:3.1``, ``SOC2:CC6.1``).
     Returns ``None`` for tags we cannot route to a known framework so
     they're surfaced in logs rather than silently miscounted.
     """
     if not tag:
         return None
     upper = tag.strip()
+    # Explicit ``{FRAMEWORK_ID}:{CONTROL_ID}`` form (Azure Policy adapter).
+    if ":" in upper:
+        fw_id, _, control = upper.partition(":")
+        if fw_id in _FRAMEWORK_BY_ID and control:
+            return fw_id, control
     for fw in FRAMEWORKS:
         for prefix in fw.prefixes:
             if upper.startswith(prefix):

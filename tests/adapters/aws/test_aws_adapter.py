@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from cloudguardiq.adapters.aws.adapter import AWSAdapter
-from cloudguardiq.core.enums import CloudProvider, DataTier
+from cloudguardiq.core.enums import CloudProvider, DataTier, FindingType, Severity
+from cloudguardiq.core.models import FindingResult
 
 
 def _fake_session() -> MagicMock:
@@ -195,3 +196,22 @@ async def test_legacy_methods_return_safe_defaults() -> None:
     assert await adapter.get_raw_properties("any") == {}
     snaps = await adapter.scan()
     assert await adapter.enrich_with_defender(snaps) == snaps
+
+
+@pytest.mark.asyncio
+async def test_scan_populates_policy_findings() -> None:
+    adapter = AWSAdapter(
+        account_id="111122223333", region="us-east-1", session=_fake_session()
+    )
+    policy = FindingResult(
+        rule_id="AWSPOL-CIS_1_2",
+        severity=Severity.HIGH,
+        finding_type=FindingType.COMPLIANCE,
+    )
+    adapter._policy_adapter.fetch_findings = AsyncMock(return_value=[policy])  # type: ignore[method-assign]
+
+    await adapter.scan()
+
+    assert len(adapter.policy_findings) == 1
+    assert adapter.policy_findings[0].rule_id == "AWSPOL-CIS_1_2"
+

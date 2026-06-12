@@ -9,6 +9,7 @@ import {
 } from "../ui/table";
 import { SeverityBadge } from "../common/SeverityBadge";
 import { DataTierBadge } from "../common/DataTierBadge";
+import { SourceBadge } from "../common/SourceBadge";
 import { Badge } from "../ui/badge";
 import { ChevronRight, Copy, Check } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -71,6 +72,16 @@ function isTypingTarget(target: EventTarget | null): boolean {
   const tag = target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
   return target.isContentEditable;
+}
+
+function resolveMonthlyImpact(finding: FindingResult): { amount: number; estimated: boolean } {
+  const direct = Math.max(finding.direct_waste_monthly_usd ?? finding.waste_monthly_usd ?? 0, 0);
+  const estimated = Math.max(finding.estimated_impact_monthly_usd ?? 0, 0);
+  const amount = Math.max(direct, estimated, 0);
+  return {
+    amount,
+    estimated: amount > 0 && direct <= 0 && estimated > 0,
+  };
 }
 
 export function FindingTable({ findings, onSelect }: FindingTableProps) {
@@ -174,8 +185,11 @@ export function FindingTable({ findings, onSelect }: FindingTableProps) {
                   />
                 </TableCell>
                 <TableCell className="max-w-[360px]">
-                  <div className="truncate text-[13px] font-medium text-[hsl(var(--foreground))]">
-                    {f.rule_name || f.rule_id}
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate text-[13px] font-medium text-[hsl(var(--foreground))]">
+                      {f.rule_name || f.rule_id}
+                    </span>
+                    <SourceBadge ruleId={f.rule_id} />
                   </div>
                   <div className="truncate text-xs text-[hsl(var(--muted-foreground))]">
                     {f.description}
@@ -195,13 +209,24 @@ export function FindingTable({ findings, onSelect }: FindingTableProps) {
                   )}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {f.waste_monthly_usd > 0 ? (
-                    <span className="font-medium text-[hsl(var(--severity-critical))]">
-                      ${f.waste_monthly_usd.toFixed(2)}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-[hsl(var(--muted-foreground))]">—</span>
-                  )}
+                  {(() => {
+                    const impact = resolveMonthlyImpact(f);
+                    if (impact.amount <= 0) {
+                      return <span className="text-xs text-[hsl(var(--muted-foreground))]">—</span>;
+                    }
+                    return (
+                      <div className="inline-flex items-center gap-1.5">
+                        <span className="font-medium text-[hsl(var(--severity-critical))]">
+                          ${impact.amount.toFixed(2)}
+                        </span>
+                        {impact.estimated ? (
+                          <span className="rounded bg-[hsl(var(--muted))] px-1 py-0.5 text-[10px] uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
+                            est.
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
                 </TableCell>
                 <TableCell className="text-right font-mono text-xs tabular-nums text-[hsl(var(--muted-foreground))]">
                   {f.priority_score}
@@ -220,3 +245,4 @@ export function FindingTable({ findings, onSelect }: FindingTableProps) {
     </div>
   );
 }
+

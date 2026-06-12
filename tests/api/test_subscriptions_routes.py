@@ -432,6 +432,51 @@ def test_onboarding_template_json_route_serves_valid_arm_template() -> None:
     assert "cloudGuardIQPrincipalId" in body["parameters"]
 
 
+
+def test_onboarding_template_includes_optin_policy_assignment() -> None:
+    """The bundled template carries an opt-in policy-initiative assignment.
+
+    The Reader role assignment must remain resources[0] (Deploy blade and the
+    existing test rely on it); the policy assignment is a conditional copy loop
+    that produces nothing when policySetDefinitionIds is empty (the default).
+    """
+    import json
+
+    _wire()
+    client = _client()
+    app.dependency_overrides.clear()
+    try:
+        r = client.get("/subscriptions/onboarding-template.json")
+    finally:
+        app.dependency_overrides[verify_token] = lambda: TokenPayload(
+            sub="user-1", tid="tenant-A",
+        )
+    assert r.status_code == 200, r.text
+    body = json.loads(r.content)
+
+    # Reader stays first so the existing contract holds.
+    assert body["resources"][0]["type"] == (
+        "Microsoft.Authorization/roleAssignments"
+    )
+
+    # Opt-in initiative assignment is present, conditional, and a copy loop.
+    policy = next(
+        res
+        for res in body["resources"]
+        if res["type"] == "Microsoft.Authorization/policyAssignments"
+    )
+    assert "condition" in policy
+    assert policy["copy"]["count"] == (
+        "[length(parameters('policySetDefinitionIds'))]"
+    )
+    assert policy["properties"]["enforcementMode"] == "Default"
+
+    # Default is empty => Reader-only behaviour is unchanged.
+    param = body["parameters"]["policySetDefinitionIds"]
+    assert param["type"] == "array"
+    assert param["defaultValue"] == []
+    assert body["outputs"]["assignedInitiativeCount"]["type"] == "int"
+
 def test_onboarding_template_endpoint_uses_bundled_url_when_env_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -571,9 +616,8 @@ def test_onboarding_parameters_rejects_non_guid() -> None:
 def test_onboarding_template_emits_parameters_uri_when_base_url_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When public_api_base_url is configured the deploy_url embeds uriParameters."""
-    from urllib.parse import quote
-
+    """parameters_uri stays available for the manual CLI flow; the deploy
+    URL prefills parameters via template defaults, not /uriParameters/."""
     client = TestClient(app)
     _wire()
 
@@ -591,8 +635,12 @@ def test_onboarding_template_emits_parameters_uri_when_base_url_set(
     body = r.json()
     expected_params = f"https://api.example.com/subscriptions/onboarding-parameters/{pid}"
     assert body["parameters_uri"] == expected_params
-    assert "/uriParameters/" in body["deploy_url"]
-    assert quote(expected_params, safe="") in body["deploy_url"]
+    # The portal ignores remote parameter files, so the deploy URL
+    # prefills via template defaults (principal_id query), not
+    # /uriParameters/.
+    assert "/uriParameters/" not in body["deploy_url"]
+    assert "principal_id" in body["deploy_url"]
+    assert pid in body["deploy_url"]
 
 
 def test_onboarding_template_omits_parameters_uri_when_base_url_unset(
@@ -616,3 +664,146 @@ def test_onboarding_template_omits_parameters_uri_when_base_url_unset(
     body = r.json()
     assert body["parameters_uri"] == ""
     assert "/uriParameters/" not in body["deploy_url"]
+# ---------------------------------------------------------------------------
+# Automatic latest-initiative discovery -> Deploy-to-Azure parameter wiring
+# ---------------------------------------------------------------------------
+
+_CIS_AZURE_GUID = "06f19060-9e68-4070-92ca-f15cc126059e"
+_POLICY_SET_PREFIX = (
+    "/providers/Microsoft.Authorization/policySetDefinitions/"
+)
+
+
+def test_onboarding_parameters_includes_initiatives_when_requested() -> None:
+    """initiatives query param adds policySetDefinitionIds to the ARM params."""
+    client = TestClient(app)
+    pid = "c237acc3-b7d8-4bb9-ad58-f0343ff8f331"
+    r = client.get(
+        f"/subscriptions/onboarding-parameters/{pid}"
+        f"?initiatives={_CIS_AZURE_GUID}"
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["parameters"]["cloudGuardIQPrincipalId"]["value"] == pid
+    ids = body["parameters"]["policySetDefinitionIds"]["value"]
+    assert ids == [_POLICY_SET_PREFIX + _CIS_AZURE_GUID]
+
+
+def test_onboarding_parameters_filters_invalid_initiative_guids() -> None:
+    """Non-GUID initiative tokens are dropped; valid ones are kept."""
+    client = TestClient(app)
+    pid = "c237acc3-b7d8-4bb9-ad58-f0343ff8f331"
+    r = client.get(
+        f"/subscriptions/onboarding-parameters/{pid}"
+        f"?initiatives=not-a-guid,{_CIS_AZURE_GUID}"
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    ids = body["parameters"]["policySetDefinitionIds"]["value"]
+    assert ids == [_POLICY_SET_PREFIX + _CIS_AZURE_GUID]
+
+
+def test_onboarding_parameters_omits_initiatives_when_none_valid() -> None:
+    """No policySetDefinitionIds key when no valid GUID supplied."""
+    client = TestClient(app)
+    pid = "c237acc3-b7d8-4bb9-ad58-f0343ff8f331"
+    r = client.get(
+        f"/subscriptions/onboarding-parameters/{pid}?initiatives=nope"
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "policySetDefinitionIds" not in body["parameters"]
+
+
+def test_onboarding_template_assign_frameworks_populates_initiatives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """assign_frameworks auto-populates the deploy parameters with latest GUIDs."""
+    from urllib.parse import quote
+
+    client = TestClient(app)
+    _wire()
+
+    raw = "https://raw.githubusercontent.com/sandyshd/CloudGuardIQ/development/infra/templates/cloudguardiq-reader.json"
+    pid = "c237acc3-b7d8-4bb9-ad58-f0343ff8f331"
+    settings = Settings()
+    settings.onboarding_template_uri = raw
+    settings.public_api_base_url = "https://api.example.com"
+    settings.azure_principal_id = pid
+    monkeypatch.setattr(subs_module, "_get_settings", lambda: settings)
+
+    r = client.get(
+        "/subscriptions/onboarding-template"
+        "?tenant_id=tenant-A&assign_frameworks=CIS_AZURE"
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert f"initiatives={_CIS_AZURE_GUID}" in body["parameters_uri"]
+    assert quote(f"initiatives={_CIS_AZURE_GUID}", safe="") in body["deploy_url"]
+    assigned = body["assigned_initiatives"]
+    assert len(assigned) == 1
+    assert assigned[0]["framework_id"] == "CIS_AZURE"
+    assert assigned[0]["source"] == "static"
+
+
+def test_onboarding_template_default_has_no_assigned_initiatives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without assign_frameworks the deploy stays Reader-only (back-compat)."""
+    client = TestClient(app)
+    _wire()
+
+    raw = "https://raw.githubusercontent.com/sandyshd/CloudGuardIQ/development/infra/templates/cloudguardiq-reader.json"
+    pid = "c237acc3-b7d8-4bb9-ad58-f0343ff8f331"
+    settings = Settings()
+    settings.onboarding_template_uri = raw
+    settings.public_api_base_url = "https://api.example.com"
+    settings.azure_principal_id = pid
+    monkeypatch.setattr(subs_module, "_get_settings", lambda: settings)
+
+    r = client.get("/subscriptions/onboarding-template?tenant_id=tenant-A")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "initiatives=" not in body["parameters_uri"]
+    assert body["assigned_initiatives"] == []
+
+
+def test_available_initiatives_returns_static_fallback() -> None:
+    """available-initiatives returns the pinned map when discovery is unavailable."""
+    client = TestClient(app)
+    _wire()
+    r = client.get("/subscriptions/available-initiatives?tenant_id=tenant-A")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    frameworks = {i["framework_id"] for i in body["initiatives"]}
+    assert "CIS_AZURE" in frameworks
+    cis = next(i for i in body["initiatives"] if i["framework_id"] == "CIS_AZURE")
+    assert cis["definition_id"].endswith(_CIS_AZURE_GUID)
+    assert cis["source"] == "static"
+
+
+def test_onboarding_template_json_prefills_defaults_from_query() -> None:
+    """Query params inject defaultValue so the Deploy blade opens
+    pre-filled (the portal does not fetch remote parameter files)."""
+    import json
+
+    _wire()
+    client = _client()
+    pid = "c237acc3-b7d8-4bb9-ad58-f0343ff8f331"
+    app.dependency_overrides.clear()
+    try:
+        r = client.get(
+            "/subscriptions/onboarding-template.json"
+            f"?principal_id={pid}&initiatives={_CIS_AZURE_GUID}"
+        )
+    finally:
+        app.dependency_overrides[verify_token] = lambda: TokenPayload(
+            sub="user-1", tid="tenant-A",
+        )
+    assert r.status_code == 200, r.text
+    body = json.loads(r.content)
+    params = body["parameters"]
+    assert params["cloudGuardIQPrincipalId"]["defaultValue"] == pid
+    assert params["policySetDefinitionIds"]["defaultValue"] == [
+        _POLICY_SET_PREFIX + _CIS_AZURE_GUID
+    ]

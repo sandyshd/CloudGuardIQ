@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { triggerScan } from "../api/scans";
+import { extractScanLastEventAt, formatScanError, formatScanTimestamp } from "../lib/errors";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
 import { PageHeader } from "../components/common/PageHeader";
@@ -23,35 +24,12 @@ import {
   X as XIcon,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import {
+  findingSource,
+  type FindingSource,
+} from "../components/common/SourceBadge";
 import type { FindingResult, Severity, FindingType, FindingStatus } from "../types";
 
-function formatScanError(err: unknown): string {
-  const anyErr = err as {
-    response?: { status?: number; data?: { detail?: unknown } };
-    message?: string;
-  };
-  const status = anyErr?.response?.status;
-  const detail = anyErr?.response?.data?.detail;
-  if (status === 429 && detail && typeof detail === "object") {
-    const d = detail as Record<string, unknown>;
-    const tier = String(d.current_tier ?? "free");
-    const cap = Number(d.cap ?? 0);
-    const retry = Number(d.retry_after_seconds ?? 0);
-    const minutes = Math.ceil(retry / 60);
-    const wait =
-      retry < 60
-        ? `${retry}s`
-        : minutes < 60
-          ? `${minutes}m`
-          : `${Math.ceil(minutes / 60)}h`;
-    const last = typeof d.last_event_at === "string" ? d.last_event_at : "";
-    const lastSuffix = last ? ` (last scan: ${last})` : "";
-    return `Your ${tier} plan allows one scan every ${cap} minute${cap === 1 ? "" : "s"}. Try again in ${wait}${lastSuffix}, or upgrade for more frequent scans.`;
-  }
-  if (typeof detail === "string") return detail;
-  if (err instanceof Error) return err.message;
-  return "Scan failed";
-}
 
 const SEVERITY_ORDER: Severity[] = [
   "CRITICAL",
@@ -104,9 +82,15 @@ const TYPE_OPTIONS: { id: FindingType | "ALL"; label: string }[] = [
   { id: "COMPLIANCE", label: "Compliance" },
 ];
 
+const SOURCE_OPTIONS: { id: FindingSource | "ALL"; label: string }[] = [
+  { id: "ALL", label: "All sources" },
+  { id: "AZURE_POLICY", label: "Azure Policy" },
+  { id: "NATIVE", label: "CloudGuardIQ" },
+];
+
 export function Findings() {
   const [subscriptionFilter, setSubscriptionFilter] = useState<string | "ALL" | "">("");
-  const { subscriptions, selected: selectedSub } = useSubscriptions();
+  const { subscriptions, selected: selectedSub, refresh: refreshSubscriptions } = useSubscriptions();
   const { toast } = useToast();
 
   const effectiveSub =
@@ -116,12 +100,22 @@ export function Findings() {
         ? subscriptionFilter
         : selectedSub?.subscription_id;
 
-  const { findings, loading, error, refresh, applyUpdate } = useFindings(effectiveSub);
+  const { findings, loading, error, refresh, applyUpdate, seed } = useFindings(effectiveSub);
+  const [lastScanAtOverride, setLastScanAtOverride] = useState<string | null>(null);
+  const currentSubscription = effectiveSub
+    ? subscriptions.find((s) => s.subscription_id === effectiveSub) ?? null
+    : selectedSub;
+  const lastScanAt =
+    lastScanAtOverride ?? currentSubscription?.last_scan_at ?? null;
+  const lastScanLabel = lastScanAt
+    ? `Last scan: ${formatScanTimestamp(lastScanAt)}`
+    : "Last scan: never";
   const navigate = useNavigate();
   const [selected, setSelected] = useState<FindingResult | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Severity | "ALL">("ALL");
   const [typeFilter, setTypeFilter] = useState<FindingType | "ALL">("ALL");
   const [statusFilter, setStatusFilter] = useState<FindingStatus | "ALL">("ALL");
+  const [sourceFilter, setSourceFilter] = useState<FindingSource | "ALL">("ALL");
   const [search, setSearch] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -137,7 +131,7 @@ export function Findings() {
     };
     for (const f of findings) {
       if (typeFilter !== "ALL" && f.finding_type !== typeFilter) continue;
-      if (statusFilter !== "ALL" && (f.status ?? "OPEN") !== statusFilter) continue;
+      if (statusFilter === "ALL" ? (f.status ?? "OPEN") === "RESOLVED" : (f.status ?? "OPEN") !== statusFilter) continue;
       base[f.severity] = (base[f.severity] ?? 0) + 1;
     }
     return base;
@@ -147,7 +141,7 @@ export function Findings() {
     () =>
       findings.filter((f) => {
         if (typeFilter !== "ALL" && f.finding_type !== typeFilter) return false;
-        if (statusFilter !== "ALL" && (f.status ?? "OPEN") !== statusFilter) return false;
+        if (statusFilter === "ALL" ? (f.status ?? "OPEN") === "RESOLVED" : (f.status ?? "OPEN") !== statusFilter) return false;
         return true;
       }).length,
     [findings, typeFilter, statusFilter],
@@ -164,14 +158,23 @@ export function Findings() {
     setScanning(true);
     setScanError(null);
     try {
-      await triggerScan({ subscription_id: subId, include_cost: true });
-      await refresh();
+      const result = await triggerScan({ subscription_id: subId, include_cost: true });
+      // Seed straight from the scan response. Cosmos indexes upserts
+      // asynchronously, so an immediate GET /findings (ORDER BY detected_at)
+      // can return [] for minutes after a scan, blanking the page until the
+      // index catches up. The scan response already holds the full findings
+      // array, so render it now; the periodic refresh reconciles later.
+      seed(result.findings ?? []);
+      setLastScanAtOverride(new Date().toISOString());
       toast({ tone: "success", title: "Scan complete" });
     } catch (err) {
       const msg = formatScanError(err);
       setScanError(msg);
+      const fallbackLastScanAt = extractScanLastEventAt(err);
+      if (fallbackLastScanAt) setLastScanAtOverride(fallbackLastScanAt);
       toast({ tone: "error", title: "Scan failed", description: msg });
     } finally {
+      void refreshSubscriptions();
       setScanning(false);
       scanInFlight.current = false;
     }
@@ -182,7 +185,8 @@ export function Findings() {
     return findings.filter((f) => {
       if (severityFilter !== "ALL" && f.severity !== severityFilter) return false;
       if (typeFilter !== "ALL" && f.finding_type !== typeFilter) return false;
-      if (statusFilter !== "ALL" && (f.status ?? "OPEN") !== statusFilter) return false;
+      if (statusFilter === "ALL" ? (f.status ?? "OPEN") === "RESOLVED" : (f.status ?? "OPEN") !== statusFilter) return false;
+      if (sourceFilter !== "ALL" && findingSource(f.rule_id) !== sourceFilter) return false;
       if (q) {
         const blob = [
           f.rule_name,
@@ -199,12 +203,13 @@ export function Findings() {
       }
       return true;
     });
-  }, [findings, severityFilter, typeFilter, statusFilter, search]);
+  }, [findings, severityFilter, typeFilter, statusFilter, sourceFilter, search]);
 
   const hasActiveFilters =
     severityFilter !== "ALL" ||
     typeFilter !== "ALL" ||
     statusFilter !== "ALL" ||
+    sourceFilter !== "ALL" ||
     search.length > 0;
 
   if (loading) {
@@ -237,20 +242,23 @@ export function Findings() {
         title="Findings"
         subtitle="Security, FinOps, and compliance issues detected across your scoped subscriptions."
         actions={
-          <>
-            <Button variant="outline" size="sm" onClick={refresh} aria-label="Refresh">
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleRunScan}
-              disabled={scanning || subscriptions.length === 0}
-            >
-              <Scan className={cn("h-4 w-4", scanning && "animate-pulse")} />
-              {scanning ? "Scanning..." : "Run scan"}
-            </Button>
-          </>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => refresh()} aria-label="Refresh">
+                <RefreshCw className="h-4 w-4" />
+                Refresh
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleRunScan}
+                disabled={scanning || subscriptions.length === 0}
+              >
+                <Scan className={cn("h-4 w-4", scanning && "animate-pulse")} />
+                {scanning ? "Scanning..." : "Run scan"}
+              </Button>
+            </div>
+            <span className="text-xs text-[hsl(var(--muted-foreground))]">{lastScanLabel}</span>
+          </div>
         }
       />
 
@@ -319,7 +327,7 @@ export function Findings() {
               <span className="text-[11px] text-[hsl(var(--muted-foreground))]">
                 {totalCount > 0
                   ? `${Math.round((count / totalCount) * 100)}% of total`
-                  : "—"}
+                  : "ΓÇö"}
               </span>
             </button>
           );
@@ -373,6 +381,19 @@ export function Findings() {
         </select>
 
         <select
+          aria-label="Source"
+          className="h-9 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value as FindingSource | "ALL")}
+        >
+          {SOURCE_OPTIONS.map((opt) => (
+            <option key={opt.id} value={opt.id}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+
+        <select
           aria-label="Subscription"
           className="h-9 max-w-[200px] truncate rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
           value={subscriptionFilter}
@@ -395,6 +416,7 @@ export function Findings() {
               setSeverityFilter("ALL");
               setTypeFilter("ALL");
               setStatusFilter("ALL");
+              setSourceFilter("ALL");
               setSearch("");
             }}
           >
@@ -463,6 +485,12 @@ export function Findings() {
     </div>
   );
 }
+
+
+
+
+
+
 
 
 

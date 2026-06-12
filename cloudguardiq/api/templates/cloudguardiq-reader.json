@@ -1,10 +1,10 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
-  "contentVersion": "1.0.0.0",
+  "contentVersion": "1.1.0.0",
   "metadata": {
     "_generator": {
       "name": "cloudguardiq",
-      "comment": "Assigns the Reader role to the CloudGuardIQ multi-tenant app at subscription scope. Deploy once per subscription to grant CloudGuardIQ read access."
+      "comment": "Grants CloudGuardIQ read access (Reader role) at subscription scope and, optionally, assigns one or more built-in regulatory compliance initiatives (audit-only) so CloudGuardIQ can ingest Microsoft's per-control compliance evaluation. Initiative assignment is opt-in: leave policySetDefinitionIds empty to deploy Reader only."
     }
   },
   "parameters": {
@@ -19,6 +19,13 @@
       "defaultValue": "acdd72a7-3385-48ef-bd42-f606fba81ae7",
       "metadata": {
         "description": "Built-in Reader role id. Override only if you want a more permissive role."
+      }
+    },
+    "policySetDefinitionIds": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "OPT-IN. Full resource ids of built-in regulatory compliance initiatives (policy set definitions) to assign at this subscription, e.g. '/providers/Microsoft.Authorization/policySetDefinitions/<guid>'. Each becomes an audit-only policy assignment so CloudGuardIQ can read Microsoft's compliance evaluation. Leave empty to deploy the Reader role only. Assigning policy requires the deploying user to hold Microsoft.Authorization/policyAssignments/write (Resource Policy Contributor or Owner)."
       }
     }
   },
@@ -36,12 +43,35 @@
         "principalId": "[parameters('cloudGuardIQPrincipalId')]",
         "principalType": "ServicePrincipal"
       }
+    },
+    {
+      "condition": "[greater(length(parameters('policySetDefinitionIds')), 0)]",
+      "type": "Microsoft.Authorization/policyAssignments",
+      "apiVersion": "2024-04-01",
+      "name": "[guid('cloudguardiq-initiative', subscription().subscriptionId, parameters('policySetDefinitionIds')[copyIndex()])]",
+      "copy": {
+        "name": "policyInitiativeLoop",
+        "count": "[length(parameters('policySetDefinitionIds'))]"
+      },
+      "properties": {
+        "policyDefinitionId": "[parameters('policySetDefinitionIds')[copyIndex()]]",
+        "displayName": "[concat('CloudGuardIQ compliance: ', last(split(parameters('policySetDefinitionIds')[copyIndex()], '/')))]",
+        "description": "Assigned by CloudGuardIQ one-click onboarding to enable Azure Policy regulatory compliance evaluation (audit-only).",
+        "enforcementMode": "Default",
+        "metadata": {
+          "assignedBy": "cloudguardiq-onboarding"
+        }
+      }
     }
   ],
   "outputs": {
     "roleAssignmentId": {
       "type": "string",
       "value": "[variables('roleAssignmentName')]"
+    },
+    "assignedInitiativeCount": {
+      "type": "int",
+      "value": "[length(parameters('policySetDefinitionIds'))]"
     }
   }
 }

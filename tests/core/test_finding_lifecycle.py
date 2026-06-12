@@ -100,6 +100,9 @@ class _FakeContainer:
     async def upsert_item(self, doc: dict[str, Any]) -> None:
         self.docs[(doc["id"], doc["subscription_id"])] = dict(doc)
 
+    async def delete_item(self, *, item: str, partition_key: str) -> None:
+        self.docs.pop((item, partition_key), None)
+
     async def query_items(self, query: str, parameters: list[Any] | None = None,
                           partition_key: str | None = None) -> Any:
         for (_id, sub), d in self.docs.items():
@@ -186,3 +189,131 @@ async def test_mark_unseen_findings_resolved() -> None:
     assert saved_b["status"] == "RESOLVED"
     assert saved_b["resolved_by"] == "auto:scan"
     assert saved_b["auto_resolved_scan_id"] == "s2"
+
+
+@pytest.mark.asyncio
+async def test_mark_unseen_resolves_present_and_deletes_gone() -> None:
+    from cloudguardiq.core.database import CosmosRepository
+
+    repo = _FakeRepo()
+    present = _snap("vm-present")
+    gone = _snap("vm-gone")
+    a = FindingResult(rule_id="VM-001", severity=Severity.HIGH,
+                      resource_snapshot=present, tenant_id="tenant-x")
+    b = FindingResult(rule_id="VM-001", severity=Severity.HIGH,
+                      resource_snapshot=gone, tenant_id="tenant-x")
+    await CosmosRepository.save_finding(repo, a, scan_id="s1")  # type: ignore[arg-type]
+    await CosmosRepository.save_finding(repo, b, scan_id="s1")  # type: ignore[arg-type]
+    # Next scan re-detects neither finding; only vm-present still exists.
+    count = await CosmosRepository.mark_unseen_findings_resolved(
+        repo, present.subscription_id, set(), "s2",  # type: ignore[arg-type]
+        tenant_id="tenant-x",
+        existing_resource_ids={present.id},
+    )
+    assert count == 2
+    # vm-present still exists -> finding RESOLVED (kept for audit).
+    saved_a = repo.container.docs[(a.finding_id, present.subscription_id)]
+    assert saved_a["status"] == "RESOLVED"
+    assert saved_a["resolved_by"] == "auto:scan"
+    # vm-gone no longer exists -> finding deleted from the store.
+    assert (b.finding_id, gone.subscription_id) not in repo.container.docs
+
+
+class _FakeFindingsReadContainer:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = [dict(r) for r in rows]
+
+    async def query_items(
+        self,
+        query: str,
+        parameters: list[Any] | None = None,
+        partition_key: str | None = None,
+    ) -> Any:
+        for row in self.rows:
+            if partition_key and row.get("subscription_id") != partition_key:
+                continue
+            yield dict(row)
+
+
+class _FakeFindingsReadRepo:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.container = _FakeFindingsReadContainer(rows)
+
+    def _findings_container(self) -> _FakeFindingsReadContainer:
+        return self.container
+
+
+@pytest.mark.asyncio
+async def test_get_findings_normalises_legacy_null_string_fields() -> None:
+    from cloudguardiq.core.database import CosmosRepository
+
+    snap = _snap()
+    finding = FindingResult(
+        rule_id="VM-001",
+        severity=Severity.HIGH,
+        resource_snapshot=snap,
+        tenant_id="tenant-x",
+    )
+    doc = finding.model_dump(mode="json")
+    doc["id"] = finding.finding_id
+    doc["subscription_id"] = snap.subscription_id
+    doc["resolved_by"] = None
+    doc["last_seen_scan_id"] = None
+
+    repo = _FakeFindingsReadRepo([doc])
+    rows = await CosmosRepository.get_findings(
+        repo,  # type: ignore[arg-type]
+        subscription_id=snap.subscription_id,
+        tenant_id="tenant-x",
+        limit=50,
+    )
+
+    assert len(rows) == 1
+    assert rows[0].resolved_by == ""
+    assert rows[0].last_seen_scan_id == ""
+
+
+class _FakeSnapshotContainer:
+    def __init__(self) -> None:
+        self.docs: list[dict[str, Any]] = []
+
+    async def upsert_item(self, doc: dict[str, Any]) -> None:
+        self.docs.append(dict(doc))
+
+
+class _FakeSnapshotRepo:
+    def __init__(self) -> None:
+        self.container = _FakeSnapshotContainer()
+
+    def _snapshots_container(self) -> _FakeSnapshotContainer:
+        return self.container
+
+
+@pytest.mark.asyncio
+async def test_save_snapshot_uses_cosmos_safe_id_for_slashy_resource_id() -> None:
+    from cloudguardiq.core.database import CosmosRepository
+
+    repo = _FakeSnapshotRepo()
+    snap = ResourceSnapshot(
+        id=(
+            "azure/storageaccounts/sub-1/rg-1/"
+            "name-with/slash"
+        ),
+        provider="AZURE",
+        subscription_id="sub-1",
+        tenant_id="tenant-x",
+        resource_group="rg-1",
+        resource_name="name-with/slash",
+        resource_type="Microsoft.Storage/storageAccounts",
+        region="eastus",
+        data_tier=DataTier.TIER1_NATIVE,
+    )
+
+    returned = await CosmosRepository.save_snapshot(repo, snap)  # type: ignore[arg-type]
+
+    assert returned == snap.id
+    assert len(repo.container.docs) == 1
+    saved = repo.container.docs[0]
+    assert saved["resource_id"] == snap.id
+    assert saved["id"] != snap.id
+    assert len(saved["id"]) == 64

@@ -17,9 +17,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 from cloudguardiq.adapters.base import AdapterBase
+from cloudguardiq.adapters.gcp.gcp_policy_compliance_adapter import (
+    GCPPolicyComplianceAdapter,
+)
 from cloudguardiq.adapters.pricing import gcp_persistent_disk_monthly_usd
 from cloudguardiq.core.enums import CloudProvider, DataTier
-from cloudguardiq.core.models import ResourceSnapshot
+from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,11 @@ class GCPAdapter(AdapterBase):
     ) -> None:
         self.project_id = project_id
         self._credentials = credentials
+        self._policy_adapter = GCPPolicyComplianceAdapter(
+            project_id=project_id,
+            credentials=credentials,
+        )
+        self._policy_findings: list[FindingResult] = []
 
     # ------------------------------------------------------------------
     # Client helpers
@@ -357,7 +365,26 @@ class GCPAdapter(AdapterBase):
                 *self._scan_service_accounts(),
             ]
 
-        return await asyncio.to_thread(_collect)
+        snapshots, self._policy_findings = await asyncio.gather(
+            asyncio.to_thread(_collect),
+            self._policy_adapter.fetch_findings(),
+        )
+        logger.info(
+            "GCP scan returned %d snapshots, %d policy finding(s)",
+            len(snapshots),
+            len(self._policy_findings),
+        )
+        return snapshots
+
+    async def fetch_policy_findings(self) -> list[FindingResult]:
+        """Fetch GCP policy compliance findings on demand."""
+        self._policy_findings = await self._policy_adapter.fetch_findings()
+        return self._policy_findings
+
+    @property
+    def policy_findings(self) -> list[FindingResult]:
+        """Policy compliance findings from the most recent scan."""
+        return self._policy_findings
 
     async def validate_connection(self) -> bool:
         """Return True when a lightweight project read succeeds."""
@@ -430,3 +457,4 @@ class GCPAdapter(AdapterBase):
     async def get_raw_properties(self, resource_id: str) -> dict[str, Any]:
         """Raw-property fetch is not implemented for the V1 GCP adapter."""
         return {}
+

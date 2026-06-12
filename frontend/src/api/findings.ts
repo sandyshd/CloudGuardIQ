@@ -1,20 +1,12 @@
 import apiClient from "./client";
 import type { FindingResult, RemediationCard } from "../types";
 
-export interface DateRangeParams {
-  from?: string;
-  to?: string;
-}
-
 export async function getFindings(
   subscriptionId?: string,
   limit = 5000,
-  range?: DateRangeParams,
 ): Promise<FindingResult[]> {
   const params: Record<string, string | number> = { limit };
   if (subscriptionId) params.subscription_id = subscriptionId;
-  if (range?.from) params.from_date = range.from;
-  if (range?.to) params.to_date = range.to;
   const { data } = await apiClient.get<FindingResult[]>("/findings", { params });
   return data;
 }

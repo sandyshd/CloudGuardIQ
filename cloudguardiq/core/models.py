@@ -137,6 +137,10 @@ class FindingResult(BaseModel):
     evidence: dict[str, Any] = Field(default_factory=dict)
     compliance_frameworks: list[str] = Field(default_factory=list)
     waste_monthly_usd: float = 0.0
+    direct_waste_monthly_usd: float = 0.0
+    estimated_impact_monthly_usd: float = 0.0
+    finops_method: str = "NONE"
+    finops_confidence: str = "LOW"
     priority_score: float = 0.0
     detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -177,6 +181,15 @@ class FindingResult(BaseModel):
         """Alias for finding_id (legacy code uses .id)."""
         return self.finding_id
 
+    @property
+    def effective_monthly_impact_usd(self) -> float:
+        """Return the best monthly cost impact signal for this finding."""
+        return max(
+            self.waste_monthly_usd,
+            self.direct_waste_monthly_usd,
+            self.estimated_impact_monthly_usd,
+            0.0,
+        )
     def model_post_init(self, __context: Any) -> None:
         """Populate rule_name, finding_type, and a deterministic finding_id.
 
@@ -199,6 +212,20 @@ class FindingResult(BaseModel):
                 self.finding_type = FindingType.FINOPS
             elif self.category == FindingCategory.COMPLIANCE:
                 self.finding_type = FindingType.COMPLIANCE
+
+        self.direct_waste_monthly_usd = max(
+            self.direct_waste_monthly_usd,
+            self.waste_monthly_usd,
+            0.0,
+        )
+        if self.direct_waste_monthly_usd > 0.0:
+            self.waste_monthly_usd = self.direct_waste_monthly_usd
+            self.finops_method = "DIRECT"
+            self.finops_confidence = "HIGH"
+        elif self.estimated_impact_monthly_usd > 0.0 and self.finops_method == "NONE":
+            self.finops_method = "ESTIMATED"
+            if self.finops_confidence == "LOW":
+                self.finops_confidence = "MEDIUM"
 
         if _looks_like_default_uuid(self.finding_id):
             stable = self._compute_stable_id()
@@ -253,7 +280,7 @@ class FindingResult(BaseModel):
             Severity.INFORMATIONAL: 20.0,
         }
         severity_score = severity_map.get(self.severity, 0.0)
-        cost_score = min(self.waste_monthly_usd, 100.0)
+        cost_score = min(self.effective_monthly_impact_usd, 100.0)
         compliance_score = min(len(self.compliance_frameworks) * 25.0, 100.0)
         self.priority_score = round(
             alpha * severity_score + beta * cost_score + gamma * compliance_score,
@@ -316,3 +343,6 @@ class ScanResponse(BaseModel):
     snapshots_count: int
     findings_count: int
     findings: list[FindingResult] = Field(default_factory=list)
+
+
+

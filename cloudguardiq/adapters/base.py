@@ -27,6 +27,11 @@ class CapabilityFlags:
     tier1_available: bool = True
     tier2_available: bool = False
     tier3_available: bool = False
+    # True when at least one built-in regulatory Policy initiative
+    # (see adapters.azure.azure_policy_compliance_adapter.FRAMEWORK_INITIATIVES) is
+    # assigned to the subscription, so Microsoft's authoritative per-control
+    # compliance evaluation can be ingested.
+    policy_compliance_available: bool = False
     detected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 

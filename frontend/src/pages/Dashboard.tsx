@@ -42,7 +42,7 @@ import type { FindingResult, Severity, DataTier } from "../types";
 import { cn } from "../lib/utils";
 
 
-import { toFriendlyMessage } from "../lib/errors";
+import { extractScanLastEventAt, formatScanError, formatScanTimestamp } from "../lib/errors";
 const SEV_WEIGHT: Record<Severity, number> = {
   CRITICAL: 10,
   HIGH: 5,
@@ -58,6 +58,13 @@ const SEV_COLOR: Record<Severity, string> = {
   LOW: "hsl(var(--severity-low))",
   INFORMATIONAL: "hsl(var(--severity-info))",
 };
+
+function impactOf(f: FindingResult): number {
+  const direct = Math.max(f.direct_waste_monthly_usd ?? f.waste_monthly_usd ?? 0, 0);
+  const estimated = Math.max(f.estimated_impact_monthly_usd ?? 0, 0);
+  return Math.max(direct, estimated, 0);
+}
+
 
 
 function postureScore(findings: FindingResult[]): number {
@@ -108,18 +115,28 @@ function relativeTime(iso: string): string {
 export function Dashboard() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { subscriptions, loading: subsLoading, selected: selectedSub } =
+  const { subscriptions, loading: subsLoading, selected: selectedSub, refresh: refreshSubscriptions } =
     useSubscriptions();
-  const { findings, loading, refresh } = useFindings(selectedSub?.subscription_id);
+  const { findings, loading, refresh, seed } = useFindings(selectedSub?.subscription_id);
   const { scorecard, loading: scorecardLoading } = useComplianceScorecard(selectedSub?.subscription_id);
   const { posture } = usePostureScore(selectedSub?.subscription_id);
   const { range } = useTimeRange();
   const [selectedFinding, setSelectedFinding] = useState<FindingResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [lastScanAtOverride, setLastScanAtOverride] = useState<string | null>(null);
   const scanInFlight = useRef(false);
 
   const isLoading = loading || subsLoading;
+  const selectedSubId = selectedSub?.subscription_id;
+  const selectedFromList = selectedSubId
+    ? subscriptions.find((s) => s.subscription_id === selectedSubId) ?? null
+    : null;
+  const lastScanAt =
+    lastScanAtOverride ?? selectedFromList?.last_scan_at ?? selectedSub?.last_scan_at ?? null;
+  const lastScanLabel = lastScanAt
+    ? `Last scan: ${formatScanTimestamp(lastScanAt)}`
+    : "Last scan: never";
 
   const handleRunScan = async () => {
     const subId = selectedSub?.subscription_id;
@@ -128,20 +145,27 @@ export function Dashboard() {
     setScanning(true);
     setScanError(null);
     try {
-      await triggerScan({ subscription_id: subId, include_cost: true });
-      await refresh();
+      const result = await triggerScan({ subscription_id: subId, include_cost: true });
+      // Seed from the scan response directly. Cosmos indexes upserts
+      // asynchronously, so an immediate GET /findings can return [] for
+      // minutes after a scan; the scan response already carries the findings.
+      seed(result.findings ?? []);
+      setLastScanAtOverride(new Date().toISOString());
       toast({ title: "Scan complete", description: "Findings refreshed." });
     } catch (err) {
-      const msg = toFriendlyMessage(err, "Scan failed");
+      const msg = formatScanError(err);
       setScanError(msg);
+      const fallbackLastScanAt = extractScanLastEventAt(err);
+      if (fallbackLastScanAt) setLastScanAtOverride(fallbackLastScanAt);
       toast({ title: "Scan failed", description: msg, tone: "error" });
     } finally {
+      void refreshSubscriptions();
       scanInFlight.current = false;
       setScanning(false);
     }
   };
 
-  // ── Derived metrics ────────────────────────────────────────────────────
+  //  Derived metrics 
   const metrics = useMemo(() => {
     const open = findings.filter((f) => (f.status ?? "OPEN") === "OPEN");
     const score = postureScore(findings);
@@ -174,7 +198,7 @@ export function Dashboard() {
 
     // Savings from FINOPS findings.
     const finops = findings.filter((f) => f.finding_type === "FINOPS");
-    const savings = finops.reduce((s, f) => s + (f.waste_monthly_usd ?? 0), 0);
+    const savings = finops.reduce((s, f) => s + impactOf(f), 0);
 
     // Cost by service (top 8).
     const byService = new Map<string, number>();
@@ -218,7 +242,7 @@ export function Dashboard() {
     const tier2Active = TIER2_VALUES.some((t) => tiers.has(t));
     const tier3Active = TIER3_VALUES.some((t) => tiers.has(t));
 
-    // Cloud provider presence (excluding Terraform — that's an IaC source, not a cloud).
+    // Cloud provider presence (excluding Terraform - that's an IaC source, not a cloud).
     const providersSeen = new Set<string>();
     resources.forEach((r) => providersSeen.add(r.provider));
     const azureActive = providersSeen.has("AZURE");
@@ -254,7 +278,7 @@ export function Dashboard() {
     };
   }, [findings]);
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  //  Render 
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -304,16 +328,19 @@ export function Dashboard() {
     <div className="space-y-6">
       <PageHeader
         title="Overview"
-        subtitle={`${selectedSub?.subscription_id ?? "—"} · ${findings.length} findings across ${metrics.resourcesCount} resources`}
+        subtitle={`${selectedSub?.subscription_id ?? "-"} - ${findings.filter((f) => (f.status ?? "OPEN") !== "RESOLVED").length} findings across ${metrics.resourcesCount} resources`}
         actions={
-          <Button onClick={handleRunScan} disabled={scanning} variant="outline" size="sm">
-            {scanning ? (
-              <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Scan className="mr-2 h-4 w-4" />
-            )}
-            {scanning ? "Scanning…" : "Run scan"}
-          </Button>
+          <div className="flex flex-col items-end gap-1">
+            <Button onClick={handleRunScan} disabled={scanning} size="sm">
+              {scanning ? (
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Scan className="mr-2 h-4 w-4" />
+              )}
+              {scanning ? "Scanning..." : "Run scan"}
+            </Button>
+            <span className="text-xs text-[hsl(var(--muted-foreground))]">{lastScanLabel}</span>
+          </div>
         }
       />
 
@@ -323,7 +350,7 @@ export function Dashboard() {
         </Alert>
       )}
 
-      {/* ── Hero KPI row ─────────────────────────────────────────────── */}
+      {/*  Hero KPI row  */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {/* 1. Security Posture Score */}
         <Card>
@@ -462,7 +489,7 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* ── Below KPIs: Findings over time (2/3) + Top risks (1/3) ───── */}
+      {/*  Below KPIs: Findings over time (2/3) + Top risks (1/3)  */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between">
@@ -531,7 +558,7 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* ── Second row: Cost by service + Compliance scorecard ───────── */}
+      {/*  Second row: Cost by service + Compliance scorecard  */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between">
@@ -541,7 +568,7 @@ export function Dashboard() {
               onClick={() => navigate("/finops")}
               className="text-xs font-medium text-[hsl(var(--primary))] hover:underline"
             >
-              Cost Explorer →
+              Cost Explorer {"->"}
             </button>
           </CardHeader>
           <CardContent>
@@ -586,7 +613,7 @@ export function Dashboard() {
                         className="flex flex-col items-center gap-1 rounded-md p-2 text-center transition-colors hover:bg-[hsl(var(--accent)/0.08)]"
                         title={
                           evaluated
-                            ? `${fw.controls_passed}/${fw.controls_total} controls passing · ${fw.open_findings} open finding${fw.open_findings === 1 ? "" : "s"}`
+                            ? `${fw.controls_passed}/${fw.controls_total} controls passing - ${fw.open_findings} open finding${fw.open_findings === 1 ? "" : "s"}`
                             : "Not yet evaluated"
                         }
                       >
@@ -608,7 +635,7 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* ── Third row: Recent activity + Data source health ──────────── */}
+      {/*  Third row: Recent activity + Data source health  */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -659,7 +686,7 @@ export function Dashboard() {
                           onClick={() => setSelectedFinding(f)}
                           className="mt-0.5 truncate text-left text-xs text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--primary))] hover:underline"
                         >
-                          {f.rule_name || f.rule_id} ·{" "}
+                          {f.rule_name || f.rule_id} -{" "}
                           {f.resource_snapshot?.resource_name ?? "resource"}
                         </button>
                       </div>
@@ -677,21 +704,21 @@ export function Dashboard() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-[11px] text-[hsl(var(--muted-foreground))]">
-              Cloud-agnostic tiers — same signal model across Azure, AWS, and GCP.
+              Cloud-agnostic tiers - same signal model across Azure, AWS, and GCP.
             </p>
             <DataSourceRow
-              label="Tier 1 — Native"
-              hint="Resource Graph · AWS Config · GCP Asset Inventory"
+              label="Tier 1 - Native"
+              hint="Resource Graph - AWS Config - GCP Asset Inventory"
               status="connected"
             />
             <DataSourceRow
-              label="Tier 2 — Enriched (free CSPM)"
-              hint="Defender for Cloud · Security Hub · Security Command Center"
+              label="Tier 2 - Enriched (free CSPM)"
+              hint="Defender for Cloud - Security Hub - Security Command Center"
               status={metrics.tier2Active ? "connected" : "not_connected"}
             />
             <DataSourceRow
-              label="Tier 3 — Deep (paid)"
-              hint="Defender paid · GuardDuty / Inspector · SCC Premium"
+              label="Tier 3 - Deep (paid)"
+              hint="Defender paid - GuardDuty / Inspector - SCC Premium"
               status={metrics.tier3Active ? "connected" : "not_connected"}
             />
             <div className="border-t border-[hsl(var(--border))] pt-3">
@@ -701,17 +728,17 @@ export function Dashboard() {
               <div className="space-y-2">
                 <DataSourceRow
                   label="Azure"
-                  hint="Resource Manager · Cost Management"
+                  hint="Resource Manager - Cost Management"
                   status={metrics.azureActive ? "connected" : "not_connected"}
                 />
                 <DataSourceRow
                   label="AWS"
-                  hint="Config · Cost Explorer"
+                  hint="Config - Cost Explorer"
                   status={metrics.awsActive ? "connected" : "not_connected"}
                 />
                 <DataSourceRow
                   label="GCP"
-                  hint="Asset Inventory · Billing"
+                  hint="Asset Inventory - Billing"
                   status={metrics.gcpActive ? "connected" : "not_connected"}
                 />
               </div>
@@ -769,6 +796,12 @@ function DataSourceRow({
     </div>
   );
 }
+
+
+
+
+
+
 
 
 

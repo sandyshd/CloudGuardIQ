@@ -9,12 +9,14 @@ Partition key mapping (must match Terraform container definitions):
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
 from azure.identity.aio import DefaultAzureCredential
+from pydantic import ValidationError
 
 from cloudguardiq.adapters.base import CapabilityFlags
 from cloudguardiq.core.config import Settings
@@ -87,6 +89,94 @@ def _build_finding_lookup_query(
     return query, params
 
 
+# Backward-compatibility: historical rows may contain nulls for fields that are
+# now strongly typed as str/list/dict in Pydantic models. Normalise those values
+# at read-time so one legacy row cannot fail the entire /findings response.
+def _normalise_finding_doc(raw: dict[str, Any]) -> dict[str, Any]:
+    """Return a FindingResult-compatible copy of a Cosmos finding document."""
+    doc = dict(raw)
+
+    for key in (
+        "finding_id",
+        "tenant_id",
+        "rule_id",
+        "rule_name",
+        "description",
+        "resolved_by",
+        "last_seen_scan_id",
+    ):
+        if doc.get(key) is None:
+            doc[key] = ""
+
+    if doc.get("evidence") is None:
+        doc["evidence"] = {}
+    if doc.get("compliance_frameworks") is None:
+        doc["compliance_frameworks"] = []
+
+    snapshot = doc.get("resource_snapshot")
+    if isinstance(snapshot, dict):
+        snap = dict(snapshot)
+        for key in (
+            "id",
+            "tenant_id",
+            "subscription_id",
+            "resource_group",
+            "resource_type",
+            "resource_name",
+            "region",
+            "raw_hash",
+        ):
+            if snap.get(key) is None:
+                snap[key] = ""
+        if snap.get("config") is None:
+            snap["config"] = {}
+        if snap.get("tags") is None:
+            snap["tags"] = {}
+        doc["resource_snapshot"] = snap
+
+    return doc
+
+
+# Cosmos does not allow / \ ? # in `id`. ResourceSnapshot.id may include
+# those characters (resource path segments), so convert to a deterministic
+# hash when needed and keep the original value in `resource_id`.
+def _cosmos_safe_snapshot_id(snapshot_id: str) -> str:
+    """Return a Cosmos-safe document id for a snapshot."""
+    forbidden = {"/", "\\", "?", "#"}
+    if any(ch in snapshot_id for ch in forbidden):
+        return hashlib.sha256(snapshot_id.encode("utf-8")).hexdigest()
+    return snapshot_id
+
+
+# Resolve/delete helpers for the post-scan reconciliation sweep.
+def _finding_resource_id(doc: dict[str, Any]) -> str:
+    """Return the best resource identifier stored on a finding document."""
+    snap = doc.get("resource_snapshot")
+    if isinstance(snap, dict):
+        for key in ("id", "resource_id", "resource_name"):
+            value = snap.get(key)
+            if isinstance(value, str) and value:
+                return value
+    raw = doc.get("resource_id")
+    return raw if isinstance(raw, str) else ""
+
+
+def _finding_resource_gone(
+    doc: dict[str, Any], existing_resource_ids: set[str],
+) -> bool:
+    """Return True when a finding's resource is absent from the live scan.
+
+    We only treat a resource as deleted when it can be positively identified
+    *and* is missing from the current scan's resource set. A finding with no
+    resolvable resource id is never deleted -- it is left for resolution so a
+    malformed row cannot be silently dropped.
+    """
+    res_id = _finding_resource_id(doc)
+    if not res_id:
+        return False
+    return res_id not in existing_resource_ids
+
+
 class CosmosRepository:
     """Async Cosmos DB repository for CloudGuardIQ entities."""
 
@@ -147,6 +237,10 @@ class CosmosRepository:
         doc = snapshot.model_dump(mode="json")
         # Root-level tenant_id for tenant-scoped queries (Phase 1 isolation)
         doc["tenant_id"] = snapshot.tenant_id
+        # Keep the canonical resource id for application logic while using a
+        # Cosmos-safe document id for storage constraints.
+        doc["resource_id"] = snapshot.id
+        doc["id"] = _cosmos_safe_snapshot_id(snapshot.id)
         # /provider is already in the model; ensure it is at root level
         await self._snapshots_container().upsert_item(doc)
         logger.info("Saved snapshot %s (tenant=%s)", snapshot.id, snapshot.tenant_id or "-")
@@ -255,16 +349,29 @@ class CosmosRepository:
         scan_id: str,
         *,
         tenant_id: str | None = None,
+        existing_resource_ids: set[str] | None = None,
     ) -> int:
-        """Auto-resolve OPEN findings that were not re-detected by *scan_id*.
+        """Reconcile OPEN findings that were not re-detected by *scan_id*.
 
-        Called at the end of ``_persist_scan_results``: any OPEN row in the
-        subscription whose ``id`` is missing from *seen_finding_ids* must
-        correspond to an issue the customer fixed (or a resource that was
-        deleted) since the previous scan. We flip ``status`` to ``RESOLVED``
-        and stamp ``resolved_at`` / ``resolved_by='auto:scan'`` so the row
-        falls out of the active dashboard while still being available for
-        audit. Returns the number of findings auto-resolved.
+        Called at the end of ``_persist_scan_results``. Every OPEN row whose
+        ``id`` is missing from *seen_finding_ids* is no longer reported by the
+        scanner, and is reconciled one of two ways so Cosmos mirrors the live
+        subscription exactly:
+
+        * **Issue fixed (resource still present):** the resource the finding
+          points at is still in the subscription (its id is in
+          *existing_resource_ids*), so the customer remediated the issue. We
+          flip ``status`` to ``RESOLVED`` and stamp
+          ``resolved_by='auto:scan'`` -- the row leaves the active dashboard
+          but stays for audit.
+        * **Resource deleted:** the resource no longer exists (its id is
+          absent from *existing_resource_ids*). Nothing remains to remediate,
+          so the finding is deleted outright.
+
+        When *existing_resource_ids* is ``None`` (legacy callers / tests) the
+        two cases cannot be told apart, so we conservatively resolve rather
+        than delete. Returns the number of findings reconciled (resolved +
+        deleted).
         """
         from datetime import datetime as _dt
         from datetime import timezone as _tz
@@ -289,28 +396,46 @@ class CosmosRepository:
             ]
 
         now_iso = _dt.now(_tz.utc).isoformat()
-        resolved = 0
+        reconciled = 0
         for item in candidates:
             fid = item.get("id")
             if not isinstance(fid, str) or fid in seen_finding_ids:
                 continue
+
+            if existing_resource_ids is not None and _finding_resource_gone(
+                item, existing_resource_ids,
+            ):
+                # Resource deleted from the subscription -- drop the finding
+                # so Cosmos stays in exact sync with the live state.
+                try:
+                    await self._findings_container().delete_item(
+                        item=fid, partition_key=subscription_id,
+                    )
+                    reconciled += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Auto-delete failed for %s: %s", fid, exc,
+                    )
+                continue
+
+            # Resource still present (or unknown) -- the issue was fixed.
             item["status"] = "RESOLVED"
             item["resolved_at"] = now_iso
             item["resolved_by"] = "auto:scan"
             item["auto_resolved_scan_id"] = scan_id
             try:
                 await self._findings_container().upsert_item(item)
-                resolved += 1
+                reconciled += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Auto-resolve failed for %s: %s", fid, exc,
                 )
-        if resolved:
+        if reconciled:
             logger.info(
-                "Auto-resolved %d unseen findings for sub %s (scan=%s)",
-                resolved, subscription_id, scan_id,
+                "Reconciled %d unseen findings for sub %s (scan=%s)",
+                reconciled, subscription_id, scan_id,
             )
-        return resolved
+        return reconciled
 
     async def update_finding_status(
         self,
@@ -391,12 +516,21 @@ class CosmosRepository:
             from_date=from_date,
             to_date=to_date,
         )
-        items: list[dict[str, Any]] = []
+        results: list[FindingResult] = []
         async for item in self._findings_container().query_items(
             query=query, parameters=params, partition_key=subscription_id
         ):
-            items.append(item)
-        return [FindingResult.model_validate(i) for i in items]
+            try:
+                results.append(FindingResult.model_validate(_normalise_finding_doc(item)))
+            except ValidationError as exc:
+                finding_key = str(item.get("finding_id") or item.get("id") or "unknown")
+                logger.warning(
+                    "Skipping invalid finding row %s in %s: %s",
+                    finding_key,
+                    subscription_id,
+                    exc.errors()[0].get("msg", str(exc)),
+                )
+        return results
 
     async def get_finding(
         self,
@@ -586,6 +720,9 @@ class CosmosRepository:
                 tier1_available=item.get("tier1_available", True),
                 tier2_available=item.get("tier2_available", False),
                 tier3_available=item.get("tier3_available", False),
+                policy_compliance_available=item.get(
+                    "policy_compliance_available", False
+                ),
                 detected_at=datetime.fromisoformat(item["detected_at"]).replace(
                     tzinfo=timezone.utc
                 )
@@ -595,7 +732,115 @@ class CosmosRepository:
         except Exception:
             logger.debug("No capability flags found for %s", sub_id)
             return None
+    # ------------------------------------------------------------------
+    # Azure Policy regulatory-compliance control maps
+    # ------------------------------------------------------------------
 
+    async def get_policy_control_map(
+        self, initiative_id: str
+    ) -> dict[str, str] | None:
+        """Return the cached ``policy_definition_id -> control_id`` map.
+
+        Used by ``AzurePolicyComplianceAdapter`` to avoid re-reading initiative
+        metadata on every scan. Returns ``None`` on a cache miss, an expired
+        entry, or any read error.
+        """
+        import time as _time
+
+        digest = hashlib.sha256(initiative_id.encode()).hexdigest()
+        doc_id = f"policy_control_map:{digest}"
+        try:
+            item = await self._system_container().read_item(
+                item=doc_id, partition_key="policy_control_map"
+            )
+        except Exception:
+            logger.debug("No policy control map cached for %s", initiative_id)
+            return None
+        expires_ts = item.get("expires_ts")
+        if isinstance(expires_ts, (int, float)) and expires_ts < _time.time():
+            logger.debug("Policy control map for %s expired", initiative_id)
+            return None
+        mapping = item.get("mapping")
+        return dict(mapping) if isinstance(mapping, dict) else None
+
+    async def save_policy_control_map(
+        self,
+        initiative_id: str,
+        mapping: dict[str, str],
+        *,
+        ttl_days: int = 30,
+    ) -> None:
+        """Upsert a ``policy_definition_id -> control_id`` map for an initiative.
+
+        Stored under partition_key ``policy_control_map`` with an
+        application-level expiry timestamp (``ttl_days`` days from now).
+        """
+        import time as _time
+
+        digest = hashlib.sha256(initiative_id.encode()).hexdigest()
+        doc_id = f"policy_control_map:{digest}"
+        doc: dict[str, Any] = {
+            "id": doc_id,
+            "type": "policy_control_map",
+            "initiative_id": initiative_id,
+            "mapping": dict(mapping),
+            "expires_ts": int(_time.time()) + ttl_days * 86400,
+        }
+        await self._system_container().upsert_item(doc)
+        logger.info("Saved policy control map for %s", initiative_id)
+
+    async def get_latest_initiatives(
+        self, subscription_id: str
+    ) -> dict[str, Any] | None:
+        """Return the cached latest-initiative-per-framework map for a sub.
+
+        Used by ``AzurePolicyComplianceAdapter.discover_latest_initiatives`` to
+        avoid re-listing every built-in policy set definition on each scan.
+        Returns ``None`` on a cache miss, an expired entry, or any read error.
+        """
+        import time as _time
+
+        digest = hashlib.sha256(subscription_id.encode()).hexdigest()
+        doc_id = f"latest_initiatives:{digest}"
+        try:
+            item = await self._system_container().read_item(
+                item=doc_id, partition_key="latest_initiatives"
+            )
+        except Exception:
+            logger.debug("No latest-initiative map cached for %s", subscription_id)
+            return None
+        expires_ts = item.get("expires_ts")
+        if isinstance(expires_ts, (int, float)) and expires_ts < _time.time():
+            logger.debug("Latest-initiative map for %s expired", subscription_id)
+            return None
+        mapping = item.get("initiatives")
+        return dict(mapping) if isinstance(mapping, dict) else None
+
+    async def save_latest_initiatives(
+        self,
+        subscription_id: str,
+        initiatives: dict[str, Any],
+        *,
+        ttl_days: int = 7,
+    ) -> None:
+        """Upsert the latest-initiative-per-framework map for a subscription.
+
+        Stored under partition_key ``latest_initiatives`` with an
+        application-level expiry timestamp (``ttl_days`` days from now).
+        """
+        import time as _time
+
+        digest = hashlib.sha256(subscription_id.encode()).hexdigest()
+        doc_id = f"latest_initiatives:{digest}"
+        doc: dict[str, Any] = {
+            "id": doc_id,
+            "type": "latest_initiatives",
+            "subscription_id": subscription_id,
+            "initiatives": dict(initiatives),
+            "expires_ts": int(_time.time()) + ttl_days * 86400,
+        }
+        await self._system_container().upsert_item(doc)
+        logger.info("Saved latest-initiative map for %s", subscription_id)
     # ------------------------------------------------------------------
     # Cascading purge (Phase 2.7 -- soft-delete retention)
     # ------------------------------------------------------------------

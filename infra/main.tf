@@ -630,6 +630,17 @@ resource "azurerm_role_assignment" "container_app_reader" {
   principal_id         = azurerm_container_app.api.identity[0].principal_id
 }
 
+# Security Reader for Container App managed identity. Reader's "*/read"
+# wildcard does NOT grant Microsoft.PolicyInsights/policyStates/queryResults/
+# action, which is the POST operation the Azure Policy compliance adapter uses
+# to read regulatory-compliance (AZPOL-) findings. Without this, policy
+# ingestion silently returns [] (403 swallowed) while native scans still work.
+resource "azurerm_role_assignment" "container_app_security_reader" {
+  scope                = data.azurerm_subscription.current.id
+  role_definition_name = "Security Reader"
+  principal_id         = azurerm_container_app.api.identity[0].principal_id
+}
+
 # ==========================================================================
 # Azure Functions — Timer-Triggered Scans + AI Worker
 # ==========================================================================
@@ -749,6 +760,16 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
 resource "azurerm_role_assignment" "function_app_reader" {
   scope                = data.azurerm_subscription.current.id
   role_definition_name = "Reader"
+  principal_id         = azurerm_linux_function_app.cloudguardiq.identity[0].principal_id
+}
+
+# Security Reader for Function App managed identity. Required for the
+# timer-driven ScanPipeline to read Azure Policy compliance states via
+# Microsoft.PolicyInsights/policyStates/queryResults/action, which the plain
+# Reader role does not grant. See container_app_security_reader above.
+resource "azurerm_role_assignment" "function_app_security_reader" {
+  scope                = data.azurerm_subscription.current.id
+  role_definition_name = "Security Reader"
   principal_id         = azurerm_linux_function_app.cloudguardiq.identity[0].principal_id
 }
 

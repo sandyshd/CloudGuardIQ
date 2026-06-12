@@ -78,9 +78,11 @@ export async function getOnboardingSessionV1(
 
 export async function generateOnboardingArtifactsV1(
   sessionId: string,
+  assignFrameworks?: string,
 ): Promise<OnboardingSessionResponseV1> {
   const { data } = await apiClient.post<OnboardingSessionResponseV1>(
     `/v1/onboarding/sessions/${sessionId}/generate-artifacts`,
+    assignFrameworks === undefined ? undefined : { assign_frameworks: assignFrameworks },
   );
   return data;
 }

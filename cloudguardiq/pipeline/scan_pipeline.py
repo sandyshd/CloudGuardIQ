@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from cloudguardiq.adapters.pricing.live_prices import refresh_prices
 from cloudguardiq.billing.plans import UNLIMITED, get_plan
 from cloudguardiq.billing.quota import check_ai_quota
 from cloudguardiq.billing.repository import BillingRepository
@@ -90,6 +91,12 @@ class ScanPipeline:
 
         logger.info("Scan %s started for subscription %s", scan_id, subscription_id)
 
+        # Refresh pricing cache (no-op if refreshed within the last 24 h)
+        try:
+            await refresh_prices()
+        except Exception as _pricing_exc:  # noqa: BLE001
+            logger.warning("Pricing cache refresh failed: %s", _pricing_exc)
+
         # Step 1: Scan resources
         try:
             snapshots = await self._adapter.scan()
@@ -104,6 +111,18 @@ class ScanPipeline:
 
         # Step 2: Evaluate policies
         findings = self._policy_engine.evaluate(snapshots)
+
+        # Step 2b: Merge Azure Policy regulatory-compliance findings (Tier 1,
+        # free) the adapter emits directly, bypassing the rule registry. The
+        # local rules above still run unchanged for FinOps + safety checks.
+        policy_findings = getattr(self._adapter, "policy_findings", None)
+        if policy_findings:
+            findings.extend(policy_findings)
+            logger.info(
+                "Merged %d Azure Policy compliance finding(s) into scan %s",
+                len(policy_findings),
+                scan_id,
+            )
         if tenant_id:
             for finding in findings:
                 finding.tenant_id = tenant_id
@@ -141,14 +160,26 @@ class ScanPipeline:
                     )
             # Auto-resolve OPEN findings that were not re-detected this scan.
             # Best-effort: a Cosmos hiccup must not fail the timer-driven scan.
-            try:
-                await self._db.mark_unseen_findings_resolved(
-                    subscription_id, seen_ids, scan_id,
-                    tenant_id=tenant_id or None,
-                )
-            except Exception as exc:  # noqa: BLE001
+            # Only sweep when the scan enumerated resources -- a 0-snapshot
+            # scan is degraded (auth/permission/transient failure), not proof
+            # that prior findings were remediated, so resolving them would
+            # wrongly blank the dashboard.
+            if snapshots:
+                try:
+                    await self._db.mark_unseen_findings_resolved(
+                        subscription_id, seen_ids, scan_id,
+                        tenant_id=tenant_id or None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Auto-resolve sweep failed for scan %s: %s",
+                        scan_id, exc,
+                    )
+            else:
                 logger.warning(
-                    "Auto-resolve sweep failed for scan %s: %s", scan_id, exc,
+                    "Scan %s enumerated 0 resources -- skipping auto-resolve "
+                    "sweep to preserve existing findings (degraded scan).",
+                    scan_id,
                 )
         else:
             logger.error("No database connection -- cannot save findings")

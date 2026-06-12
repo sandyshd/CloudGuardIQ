@@ -15,13 +15,16 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from cloudguardiq.adapters.aws.aws_policy_compliance_adapter import (
+    AWSPolicyComplianceAdapter,
+)
 from cloudguardiq.adapters.base import AdapterBase
 from cloudguardiq.adapters.pricing import (
     aws_ebs_monthly_usd,
     aws_eip_unattached_monthly_usd,
 )
 from cloudguardiq.core.enums import CloudProvider, DataTier
-from cloudguardiq.core.models import ResourceSnapshot
+from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,12 @@ class AWSAdapter(AdapterBase):
         self.account_id = account_id
         self.region = region
         self._session = session
+        self._policy_adapter = AWSPolicyComplianceAdapter(
+            account_id=account_id,
+            region=region,
+            session=session,
+        )
+        self._policy_findings: list[FindingResult] = []
 
     # ------------------------------------------------------------------
     # Session / client helpers
@@ -341,6 +350,7 @@ class AWSAdapter(AdapterBase):
 
     async def scan(self) -> list[ResourceSnapshot]:
         """Scan the configured account/region and return all snapshots."""
+
         def _collect() -> list[ResourceSnapshot]:
             return [
                 *self._scan_s3_buckets(),
@@ -351,7 +361,26 @@ class AWSAdapter(AdapterBase):
                 *self._scan_eips(),
             ]
 
-        return await asyncio.to_thread(_collect)
+        snapshots, self._policy_findings = await asyncio.gather(
+            asyncio.to_thread(_collect),
+            self._policy_adapter.fetch_findings(),
+        )
+        logger.info(
+            "AWS scan returned %d snapshots, %d policy finding(s)",
+            len(snapshots),
+            len(self._policy_findings),
+        )
+        return snapshots
+
+    async def fetch_policy_findings(self) -> list[FindingResult]:
+        """Fetch AWS policy compliance findings on demand."""
+        self._policy_findings = await self._policy_adapter.fetch_findings()
+        return self._policy_findings
+
+    @property
+    def policy_findings(self) -> list[FindingResult]:
+        """Policy compliance findings from the most recent scan."""
+        return self._policy_findings
 
     async def validate_connection(self) -> bool:
         """Return True when STS GetCallerIdentity succeeds."""
@@ -423,3 +452,7 @@ class AWSAdapter(AdapterBase):
     async def get_raw_properties(self, resource_id: str) -> dict[str, Any]:
         """Raw-property fetch is not implemented for the V1 AWS adapter."""
         return {}
+
+
+
+
