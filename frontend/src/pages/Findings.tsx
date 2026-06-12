@@ -131,7 +131,7 @@ export function Findings() {
     };
     for (const f of findings) {
       if (typeFilter !== "ALL" && f.finding_type !== typeFilter) continue;
-      if (statusFilter !== "ALL" && (f.status ?? "OPEN") !== statusFilter) continue;
+      if (statusFilter === "ALL" ? (f.status ?? "OPEN") === "RESOLVED" : (f.status ?? "OPEN") !== statusFilter) continue;
       base[f.severity] = (base[f.severity] ?? 0) + 1;
     }
     return base;
@@ -141,7 +141,7 @@ export function Findings() {
     () =>
       findings.filter((f) => {
         if (typeFilter !== "ALL" && f.finding_type !== typeFilter) return false;
-        if (statusFilter !== "ALL" && (f.status ?? "OPEN") !== statusFilter) return false;
+        if (statusFilter === "ALL" ? (f.status ?? "OPEN") === "RESOLVED" : (f.status ?? "OPEN") !== statusFilter) return false;
         return true;
       }).length,
     [findings, typeFilter, statusFilter],
@@ -185,7 +185,7 @@ export function Findings() {
     return findings.filter((f) => {
       if (severityFilter !== "ALL" && f.severity !== severityFilter) return false;
       if (typeFilter !== "ALL" && f.finding_type !== typeFilter) return false;
-      if (statusFilter !== "ALL" && (f.status ?? "OPEN") !== statusFilter) return false;
+      if (statusFilter === "ALL" ? (f.status ?? "OPEN") === "RESOLVED" : (f.status ?? "OPEN") !== statusFilter) return false;
       if (sourceFilter !== "ALL" && findingSource(f.rule_id) !== sourceFilter) return false;
       if (q) {
         const blob = [

@@ -218,6 +218,7 @@ async def lifespan(
         consent_repository=_consent_repo,
         onboarding_session_repository=_onboarding_session_repo,
         credential_factory=build_default_factory(settings),
+        cosmos_repository=_repo,
     )
     from cloudguardiq.api import onboarding_v1 as onboarding_v1_module
 
@@ -778,10 +779,16 @@ async def _persist_scan_results(
     # empty scan would wrongly flip every OPEN finding to RESOLVED and blank
     # the dashboard -- the bug reported after re-running "Run Scan".
     if snapshots:
+        existing_resource_ids: set[str] = set()
+        for snap in snapshots:
+            for value in (snap.id, snap.resource_id, snap.resource_name):
+                if value:
+                    existing_resource_ids.add(value)
         try:
             await repo.mark_unseen_findings_resolved(
                 subscription_id, seen_ids, scan_id,
                 tenant_id=tenant_for_scan or None,
+                existing_resource_ids=existing_resource_ids,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -1054,6 +1061,21 @@ async def scan_subscription(
             repo, scan_id, request.subscription_id,
             snapshots, findings, time.perf_counter() - start,
         )
+
+    # Stamp last_scan_at on the subscription record so the UI shows the real
+    # last-scan time from the database on every page load -- not just right
+    # after clicking "Run Scan". Best-effort: a missing record or a Cosmos
+    # hiccup must never fail the scan.
+    if _subs_repo is not None:
+        try:
+            await _subs_repo.mark_scanned(
+                tenant_id_for_scan, request.subscription_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to stamp last_scan_at for %s: %s",
+                request.subscription_id, exc,
+            )
 
     return ScanResponse(
         subscription_id=request.subscription_id,

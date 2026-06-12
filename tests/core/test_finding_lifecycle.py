@@ -100,6 +100,9 @@ class _FakeContainer:
     async def upsert_item(self, doc: dict[str, Any]) -> None:
         self.docs[(doc["id"], doc["subscription_id"])] = dict(doc)
 
+    async def delete_item(self, *, item: str, partition_key: str) -> None:
+        self.docs.pop((item, partition_key), None)
+
     async def query_items(self, query: str, parameters: list[Any] | None = None,
                           partition_key: str | None = None) -> Any:
         for (_id, sub), d in self.docs.items():
@@ -186,6 +189,34 @@ async def test_mark_unseen_findings_resolved() -> None:
     assert saved_b["status"] == "RESOLVED"
     assert saved_b["resolved_by"] == "auto:scan"
     assert saved_b["auto_resolved_scan_id"] == "s2"
+
+
+@pytest.mark.asyncio
+async def test_mark_unseen_resolves_present_and_deletes_gone() -> None:
+    from cloudguardiq.core.database import CosmosRepository
+
+    repo = _FakeRepo()
+    present = _snap("vm-present")
+    gone = _snap("vm-gone")
+    a = FindingResult(rule_id="VM-001", severity=Severity.HIGH,
+                      resource_snapshot=present, tenant_id="tenant-x")
+    b = FindingResult(rule_id="VM-001", severity=Severity.HIGH,
+                      resource_snapshot=gone, tenant_id="tenant-x")
+    await CosmosRepository.save_finding(repo, a, scan_id="s1")  # type: ignore[arg-type]
+    await CosmosRepository.save_finding(repo, b, scan_id="s1")  # type: ignore[arg-type]
+    # Next scan re-detects neither finding; only vm-present still exists.
+    count = await CosmosRepository.mark_unseen_findings_resolved(
+        repo, present.subscription_id, set(), "s2",  # type: ignore[arg-type]
+        tenant_id="tenant-x",
+        existing_resource_ids={present.id},
+    )
+    assert count == 2
+    # vm-present still exists -> finding RESOLVED (kept for audit).
+    saved_a = repo.container.docs[(a.finding_id, present.subscription_id)]
+    assert saved_a["status"] == "RESOLVED"
+    assert saved_a["resolved_by"] == "auto:scan"
+    # vm-gone no longer exists -> finding deleted from the store.
+    assert (b.finding_id, gone.subscription_id) not in repo.container.docs
 
 
 class _FakeFindingsReadContainer:

@@ -90,6 +90,7 @@ class SubscriptionResponse(BaseModel):
     provider: str = "AZURE"
     aws_account_id: str = ""
     gcp_project_id: str = ""
+    last_scan_at: datetime | None = None
 
     @classmethod
     def from_record(cls, rec: SubscriptionRecord) -> SubscriptionResponse:
@@ -101,6 +102,7 @@ class SubscriptionResponse(BaseModel):
             provider=rec.provider.value,
             aws_account_id=rec.aws_account_id,
             gcp_project_id=rec.gcp_project_id,
+            last_scan_at=rec.last_scan_at,
         )
 
 
@@ -149,6 +151,7 @@ class PatchSubscriptionRequest(BaseModel):
 
 
 _repository: SubscriptionsRepository | None = None
+_cosmos_repo: Any | None = None
 _billing_repo: BillingRepository | None = None
 _settings: Settings | None = None
 _consent_repo: TenantConsentRepository | None = None
@@ -179,6 +182,7 @@ def configure(
     consent_repository: TenantConsentRepository | None = None,
     onboarding_session_repository: OnboardingSessionRepository | None = None,
     credential_factory: object | None = None,
+    cosmos_repository: Any | None = None,
 ) -> None:
     """Wire dependencies from the application startup hook.
 
@@ -189,12 +193,14 @@ def configure(
     """
     global _repository, _billing_repo, _settings  # noqa: PLW0603
     global _consent_repo, _onboarding_repo, _credential_factory  # noqa: PLW0603
+    global _cosmos_repo  # noqa: PLW0603
     _repository = repository
     _billing_repo = billing_repository
     _settings = settings
     _consent_repo = consent_repository
     _onboarding_repo = onboarding_session_repository
     _credential_factory = credential_factory
+    _cosmos_repo = cosmos_repository
 
 
 def _get_consent_repo() -> TenantConsentRepository | None:
@@ -326,7 +332,27 @@ async def list_subscriptions(
             await repo.upsert(claimed)
             records.append(claimed)
 
-    return [SubscriptionResponse.from_record(r) for r in records]
+    responses: list[SubscriptionResponse] = []
+    for r in records:
+        resp = SubscriptionResponse.from_record(r)
+        # Fall back to scan history so the UI shows the last scan time even
+        # for subscriptions scanned before last_scan_at was stamped on the
+        # record. Best-effort: a Cosmos failure leaves last_scan_at null.
+        if resp.last_scan_at is None and _cosmos_repo is not None:
+            try:
+                latest = await _cosmos_repo.get_latest_scan_for_subscription(
+                    r.subscription_id,
+                )
+            except Exception:  # noqa: BLE001
+                latest = None
+            if latest:
+                ts = latest.get("_ts")
+                if isinstance(ts, (int, float)):
+                    resp.last_scan_at = datetime.fromtimestamp(
+                        ts, tz=timezone.utc,
+                    )
+        responses.append(resp)
+    return responses
 
 
 @router.post(

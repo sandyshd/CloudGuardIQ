@@ -148,6 +148,35 @@ def _cosmos_safe_snapshot_id(snapshot_id: str) -> str:
     return snapshot_id
 
 
+# Resolve/delete helpers for the post-scan reconciliation sweep.
+def _finding_resource_id(doc: dict[str, Any]) -> str:
+    """Return the best resource identifier stored on a finding document."""
+    snap = doc.get("resource_snapshot")
+    if isinstance(snap, dict):
+        for key in ("id", "resource_id", "resource_name"):
+            value = snap.get(key)
+            if isinstance(value, str) and value:
+                return value
+    raw = doc.get("resource_id")
+    return raw if isinstance(raw, str) else ""
+
+
+def _finding_resource_gone(
+    doc: dict[str, Any], existing_resource_ids: set[str],
+) -> bool:
+    """Return True when a finding's resource is absent from the live scan.
+
+    We only treat a resource as deleted when it can be positively identified
+    *and* is missing from the current scan's resource set. A finding with no
+    resolvable resource id is never deleted -- it is left for resolution so a
+    malformed row cannot be silently dropped.
+    """
+    res_id = _finding_resource_id(doc)
+    if not res_id:
+        return False
+    return res_id not in existing_resource_ids
+
+
 class CosmosRepository:
     """Async Cosmos DB repository for CloudGuardIQ entities."""
 
@@ -320,16 +349,29 @@ class CosmosRepository:
         scan_id: str,
         *,
         tenant_id: str | None = None,
+        existing_resource_ids: set[str] | None = None,
     ) -> int:
-        """Auto-resolve OPEN findings that were not re-detected by *scan_id*.
+        """Reconcile OPEN findings that were not re-detected by *scan_id*.
 
-        Called at the end of ``_persist_scan_results``: any OPEN row in the
-        subscription whose ``id`` is missing from *seen_finding_ids* must
-        correspond to an issue the customer fixed (or a resource that was
-        deleted) since the previous scan. We flip ``status`` to ``RESOLVED``
-        and stamp ``resolved_at`` / ``resolved_by='auto:scan'`` so the row
-        falls out of the active dashboard while still being available for
-        audit. Returns the number of findings auto-resolved.
+        Called at the end of ``_persist_scan_results``. Every OPEN row whose
+        ``id`` is missing from *seen_finding_ids* is no longer reported by the
+        scanner, and is reconciled one of two ways so Cosmos mirrors the live
+        subscription exactly:
+
+        * **Issue fixed (resource still present):** the resource the finding
+          points at is still in the subscription (its id is in
+          *existing_resource_ids*), so the customer remediated the issue. We
+          flip ``status`` to ``RESOLVED`` and stamp
+          ``resolved_by='auto:scan'`` -- the row leaves the active dashboard
+          but stays for audit.
+        * **Resource deleted:** the resource no longer exists (its id is
+          absent from *existing_resource_ids*). Nothing remains to remediate,
+          so the finding is deleted outright.
+
+        When *existing_resource_ids* is ``None`` (legacy callers / tests) the
+        two cases cannot be told apart, so we conservatively resolve rather
+        than delete. Returns the number of findings reconciled (resolved +
+        deleted).
         """
         from datetime import datetime as _dt
         from datetime import timezone as _tz
@@ -354,28 +396,46 @@ class CosmosRepository:
             ]
 
         now_iso = _dt.now(_tz.utc).isoformat()
-        resolved = 0
+        reconciled = 0
         for item in candidates:
             fid = item.get("id")
             if not isinstance(fid, str) or fid in seen_finding_ids:
                 continue
+
+            if existing_resource_ids is not None and _finding_resource_gone(
+                item, existing_resource_ids,
+            ):
+                # Resource deleted from the subscription -- drop the finding
+                # so Cosmos stays in exact sync with the live state.
+                try:
+                    await self._findings_container().delete_item(
+                        item=fid, partition_key=subscription_id,
+                    )
+                    reconciled += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Auto-delete failed for %s: %s", fid, exc,
+                    )
+                continue
+
+            # Resource still present (or unknown) -- the issue was fixed.
             item["status"] = "RESOLVED"
             item["resolved_at"] = now_iso
             item["resolved_by"] = "auto:scan"
             item["auto_resolved_scan_id"] = scan_id
             try:
                 await self._findings_container().upsert_item(item)
-                resolved += 1
+                reconciled += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Auto-resolve failed for %s: %s", fid, exc,
                 )
-        if resolved:
+        if reconciled:
             logger.info(
-                "Auto-resolved %d unseen findings for sub %s (scan=%s)",
-                resolved, subscription_id, scan_id,
+                "Reconciled %d unseen findings for sub %s (scan=%s)",
+                reconciled, subscription_id, scan_id,
             )
-        return resolved
+        return reconciled
 
     async def update_finding_status(
         self,

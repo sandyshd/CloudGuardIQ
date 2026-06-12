@@ -328,7 +328,7 @@ export function Dashboard() {
     <div className="space-y-6">
       <PageHeader
         title="Overview"
-        subtitle={`${selectedSub?.subscription_id ?? "-"} - ${findings.length} findings across ${metrics.resourcesCount} resources`}
+        subtitle={`${selectedSub?.subscription_id ?? "-"} - ${findings.filter((f) => (f.status ?? "OPEN") !== "RESOLVED").length} findings across ${metrics.resourcesCount} resources`}
         actions={
           <div className="flex flex-col items-end gap-1">
             <Button onClick={handleRunScan} disabled={scanning} size="sm">
