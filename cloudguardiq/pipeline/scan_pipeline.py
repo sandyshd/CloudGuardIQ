@@ -17,6 +17,7 @@ from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.billing.usage import UsageRepository
 from cloudguardiq.core.enums import Severity
 from cloudguardiq.core.models import FindingResult
+from cloudguardiq.policy.engine import dedupe_findings_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,10 @@ class ScanPipeline:
                 len(policy_findings),
                 scan_id,
             )
+
+        # Collapse finding_id collisions from the policy merge so the
+        # persisted (deduped) count matches the reported findings_count.
+        findings = dedupe_findings_by_id(findings)
         if tenant_id:
             for finding in findings:
                 finding.tenant_id = tenant_id

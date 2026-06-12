@@ -26,6 +26,25 @@ PolicyRuleCallable = Callable[[ResourceSnapshot], list[FindingResult]]
 # Keep backward-compatible alias
 PolicyRule = PolicyRuleCallable
 
+
+def dedupe_findings_by_id(
+    findings: list[FindingResult],
+) -> list[FindingResult]:
+    """Collapse findings that share a stable ``finding_id``.
+
+    Cosmos upserts findings on ``finding_id``, so a list containing the
+    same id twice persists as a single row. Returning the list verbatim
+    would make the scan response (and the dashboard count seeded from it)
+    larger than the number of rows actually stored -- the count then
+    shrinks on the next page load. Collapsing here keeps the reported
+    count equal to the stored count. The first occurrence of each id wins,
+    preserving order.
+    """
+    deduped: dict[str, FindingResult] = {}
+    for f in findings:
+        deduped.setdefault(f.finding_id, f)
+    return list(deduped.values())
+
 # Severity weights for priority scoring
 _SEVERITY_WEIGHT: dict[Severity, float] = {
     Severity.CRITICAL: 100.0,
@@ -271,10 +290,7 @@ class PolicyEngine:
         # lower than the response count, shrinking the dashboard after a
         # refresh. Collapse duplicates here so the canonical result matches
         # what is stored.
-        deduped: dict[str, FindingResult] = {}
-        for f in all_findings:
-            deduped.setdefault(f.finding_id, f)
-        all_findings = list(deduped.values())
+        all_findings = dedupe_findings_by_id(all_findings)
 
         # Compute priority scores and sort descending
         _enrich_finops_impact(all_findings)
@@ -321,10 +337,7 @@ class PolicyEngine:
         # lower than the response count, shrinking the dashboard after a
         # refresh. Collapse duplicates here so the canonical result matches
         # what is stored.
-        deduped: dict[str, FindingResult] = {}
-        for f in all_findings:
-            deduped.setdefault(f.finding_id, f)
-        all_findings = list(deduped.values())
+        all_findings = dedupe_findings_by_id(all_findings)
 
         # Compute priority scores and sort descending
         _enrich_finops_impact(all_findings)

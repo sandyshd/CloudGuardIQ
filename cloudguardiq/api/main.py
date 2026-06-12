@@ -78,7 +78,11 @@ from cloudguardiq.onboarding.audit_event_repository import AuditEventRepository
 from cloudguardiq.onboarding.cloud_connection_repository import CloudConnectionRepository
 from cloudguardiq.onboarding.credential_ref_repository import CredentialRefRepository
 from cloudguardiq.pipeline.scan_pipeline import ScanResult
-from cloudguardiq.policy.engine import PolicyEngine, PolicyRule
+from cloudguardiq.policy.engine import (
+    PolicyEngine,
+    PolicyRule,
+    dedupe_findings_by_id,
+)
 from cloudguardiq.posture.score import (
     PostureScore,
     compute_posture_score,
@@ -1029,6 +1033,13 @@ async def scan_subscription(
                 "Azure Policy compliance ingestion failed for %s: %s",
                 request.subscription_id, exc,
             )
+
+    # Collapse any finding_id collisions introduced by merging the Azure
+    # Policy findings into the rule-engine output. Cosmos upserts on
+    # finding_id, so without this the response count (seeded into the
+    # dashboard) exceeds the rows actually persisted, and the count shrinks
+    # on reload.
+    findings = dedupe_findings_by_id(findings)
 
     # Stamp tenant ownership on every snapshot and finding before
     # persistence. Without this, rows are written with tenant_id="" and
