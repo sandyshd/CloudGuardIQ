@@ -56,6 +56,7 @@ class ScanPipeline:
         *,
         billing_repo: BillingRepository | None = None,
         usage_repo: UsageRepository | None = None,
+        auto_generate_ai: bool = False,
     ) -> None:
         """Initialise the scan pipeline.
 
@@ -76,6 +77,7 @@ class ScanPipeline:
         self._sender = service_bus_sender
         self._billing_repo = billing_repo
         self._usage_repo = usage_repo
+        self._auto_generate_ai = auto_generate_ai
 
     async def run(self, subscription_id: str, tenant_id: str = "") -> ScanResult:
         """Execute the full scan pipeline.
@@ -142,12 +144,24 @@ class ScanPipeline:
         # cap only applies to the AI generation that the queue triggers.
         # Highest-priority findings are queued first so a capped tenant
         # still gets remediation for the most important issues.
-        deferred_count = await self._queue_findings(findings, tenant_id)
-        if deferred_count:
+        # AI auto-generation is opt-in. By default we do NOT queue findings
+        # for GPT remediation on every scan -- that spends tokens on findings
+        # nobody opens. Cards are generated lazily when a user clicks
+        # 'Get AI remediation' in the UI. Set ai_autogenerate_on_scan=True
+        # (wired via auto_generate_ai) to restore eager pre-generation.
+        if self._auto_generate_ai:
+            deferred_count = await self._queue_findings(findings, tenant_id)
+            if deferred_count:
+                logger.info(
+                    "Deferred %d finding(s) past tenant=%s AI quota; "
+                    "raw findings still saved -- upgrade to unlock more",
+                    deferred_count, tenant_id or "<unknown>",
+                )
+        else:
             logger.info(
-                "Deferred %d finding(s) past tenant=%s AI quota; "
-                "raw findings still saved -- upgrade to unlock more",
-                deferred_count, tenant_id or "<unknown>",
+                "AI auto-generation disabled -- not queuing %d finding(s) "
+                "for GPT; remediation cards are generated on demand.",
+                len(findings),
             )
 
         # Step 4: Save findings to Cosmos DB (lifecycle-aware merge)

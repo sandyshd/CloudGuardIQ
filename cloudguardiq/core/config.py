@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Azure OpenAI
     azure_openai_endpoint: str = ""
     azure_openai_deployment: str = "gpt-5.1"
+    # When True, every scheduled/interactive scan eagerly generates an AI
+    # remediation card for each finding via the Service Bus worker -- one
+    # GPT call per finding per scan, which is expensive. Default False:
+    # cards are generated lazily, only when a user clicks 'Get AI
+    # remediation' (POST /findings/{id}/generate-remediation), then cached.
+    ai_autogenerate_on_scan: bool = False
 
     # Azure AD
     azure_tenant_id: str = ""

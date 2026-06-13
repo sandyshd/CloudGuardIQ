@@ -121,6 +121,7 @@ async def _build_scan_pipeline(
         service_bus_sender=sender,
         billing_repo=billing_repo,
         usage_repo=usage_repo,
+        auto_generate_ai=settings.ai_autogenerate_on_scan,
     )
 
 

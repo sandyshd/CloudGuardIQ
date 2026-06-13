@@ -32,6 +32,7 @@ import {
   applyTerraformFix,
   getFinding,
   getFindings,
+  getRemediation,
   markFindingResolved,
   snoozeFinding,
   generateRemediation,
@@ -71,14 +72,18 @@ export function AIFix() {
     setLoading(true);
     setError(null);
     try {
-      const [f, all] = await Promise.all([
+      const [f, all, cached] = await Promise.all([
         getFinding(findingId, selectedSub?.subscription_id),
         getFindings(selectedSub?.subscription_id).catch(
           () => [] as FindingResult[],
         ),
+        getRemediation(findingId).catch(() => null),
       ]);
       setFinding(f);
       setSimilar(all.filter((x) => x.finding_id !== findingId).slice(0, 3));
+      // Show a previously generated card if one is cached; do NOT trigger
+      // a new GPT call -- generation is on demand only.
+      if (cached) setCard(cached);
     } catch (err) {
       setError(toFriendlyMessage(err, "Failed to load finding."));
     } finally {
@@ -105,12 +110,6 @@ export function AIFix() {
       setGenerating(false);
     }
   }, [findingId]);
-
-  useEffect(() => {
-    if (finding && !card && !generating && !generationError) {
-      runGenerate();
-    }
-  }, [finding, card, generating, generationError, runGenerate]);
 
   const narrativeParagraphs = useMemo(
     () => splitParagraphs(card?.narrative),
@@ -352,9 +351,20 @@ export function AIFix() {
                   </div>
                 </div>
               ) : (
-                <p className="italic text-[hsl(var(--muted-foreground))]">
-                  Preparing AI remediation…
-                </p>
+                <div className="space-y-3">
+                  <p className="text-[hsl(var(--muted-foreground))]">
+                    Generate an AI-powered remediation plan for this
+                    finding. This runs a single GPT analysis and may take
+                    10–30 seconds.
+                  </p>
+                  <Button
+                    size="sm"
+                    onClick={runGenerate}
+                    disabled={generating}
+                  >
+                    Generate AI remediation
+                  </Button>
+                </div>
               )}
             </CardContent>
           </Card>

@@ -164,6 +164,7 @@ class TestScanPipeline:
             ai_engine=mock_ai_engine,
             db=mock_db,
             service_bus_sender=mock_sender,
+            auto_generate_ai=True,
         )
 
         result = await pipeline.run("sub-test")
@@ -185,6 +186,37 @@ class TestScanPipeline:
         assert mock_sender.send_messages.await_count == 3
 
         # Verify findings were saved to DB
+        assert mock_db.save_finding.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_pipeline_skips_ai_queue_by_default(
+        self,
+        mock_adapter: AsyncMock,
+        mock_policy_engine: MagicMock,
+        mock_ai_engine: AsyncMock,
+        mock_db: MagicMock,
+        mock_sender: AsyncMock,
+    ) -> None:
+        """Default pipeline does NOT queue findings for AI generation.
+
+        AI remediation is on-demand only; the scheduled scan must persist
+        every finding but spend no GPT tokens. Regression guard for the
+        cost-optimisation change.
+        """
+        pipeline = ScanPipeline(
+            adapter=mock_adapter,
+            policy_engine=mock_policy_engine,
+            ai_engine=mock_ai_engine,
+            db=mock_db,
+            service_bus_sender=mock_sender,
+        )
+
+        result = await pipeline.run("sub-test")
+
+        # No findings queued to Service Bus -> no GPT spend.
+        assert mock_sender.send_messages.await_count == 0
+        # But every finding is still detected and persisted.
+        assert result.findings_count == 3
         assert mock_db.save_finding.await_count == 3
 
     @pytest.mark.asyncio

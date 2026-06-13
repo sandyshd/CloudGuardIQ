@@ -70,6 +70,7 @@ def _build_pipeline(
         service_bus_sender=sender,
         billing_repo=billing_repo,
         usage_repo=usage_repo,
+        auto_generate_ai=True,
     )
     return pipeline, sender.send_messages
 
