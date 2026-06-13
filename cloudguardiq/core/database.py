@@ -603,12 +603,22 @@ class CosmosRepository:
         )
         return card.card_id
 
-    async def get_remediation_card(self, card_id: str) -> RemediationCard | None:
-        """Retrieve a single RemediationCard by id (cross-partition query)."""
-        query = "SELECT * FROM c WHERE c.card_id = @card_id"
-        params: list[dict[str, object]] = [{"name": "@card_id", "value": card_id}]
+    async def get_remediation_card(self, finding_id: str) -> RemediationCard | None:
+        """Retrieve the latest RemediationCard for a finding.
+
+        Cards are partitioned by ``/finding_id``; when a finding has been
+        regenerated several times the newest card (by ``generated_at``) is
+        returned. Runs as a single-partition query for efficiency.
+        """
+        query = (
+            "SELECT * FROM c WHERE c.finding_id = @finding_id "
+            "ORDER BY c.generated_at DESC"
+        )
+        params: list[dict[str, object]] = [
+            {"name": "@finding_id", "value": finding_id}
+        ]
         async for item in self._remediations_container().query_items(
-            query=query, parameters=params
+            query=query, parameters=params, partition_key=finding_id
         ):
             return RemediationCard.model_validate(item)
         return None
