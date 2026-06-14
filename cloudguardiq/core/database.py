@@ -89,6 +89,34 @@ def _build_finding_lookup_query(
     return query, params
 
 
+def _build_snapshots_query(
+    tenant_id: str,
+    subscription_id: str,
+    limit: int = 1000,
+) -> tuple[str, list[dict[str, object]]]:
+    """Return (query, params) for listing resource snapshots within a tenant.
+
+    Snapshots are partitioned by ``/provider``, so this is a cross-partition
+    query scoped by ``subscription_id`` (and ``tenant_id`` when provided for
+    Phase 1 isolation). Rows are ordered by ``cost_monthly`` descending so the
+    most expensive resources surface first on the Resources page.
+    """
+    params: list[dict[str, object]] = [
+        {"name": "@limit", "value": limit},
+        {"name": "@sub_id", "value": subscription_id},
+        {"name": "@tenant_id", "value": tenant_id},
+    ]
+    clauses: list[str] = ["c.subscription_id = @sub_id"]
+    if tenant_id:
+        clauses.insert(0, "c.tenant_id = @tenant_id")
+    query = (
+        "SELECT TOP @limit * FROM c WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY c.cost_monthly DESC"
+    )
+    return query, params
+
+
 # Backward-compatibility: historical rows may contain nulls for fields that are
 # now strongly typed as str/list/dict in Pydantic models. Normalise those values
 # at read-time so one legacy row cannot fail the entire /findings response.
@@ -133,6 +161,42 @@ def _normalise_finding_doc(raw: dict[str, Any]) -> dict[str, Any]:
         if snap.get("tags") is None:
             snap["tags"] = {}
         doc["resource_snapshot"] = snap
+
+    return doc
+
+
+def _normalise_snapshot_doc(raw: dict[str, Any]) -> dict[str, Any]:
+    """Return a ResourceSnapshot-compatible copy of a Cosmos snapshot doc.
+
+    ``save_snapshot`` stores the canonical resource id in ``resource_id`` and a
+    Cosmos-safe hash in ``id``; restore the canonical id so the model surfaces
+    the human-readable resource path. Legacy rows may carry nulls for fields
+    that are now strongly typed, so null-guard them to keep one bad row from
+    failing the whole /resources response.
+    """
+    doc = dict(raw)
+
+    resource_id = doc.get("resource_id")
+    if isinstance(resource_id, str) and resource_id:
+        doc["id"] = resource_id
+
+    for key in (
+        "tenant_id",
+        "subscription_id",
+        "resource_group",
+        "resource_type",
+        "resource_name",
+        "region",
+        "raw_hash",
+    ):
+        if doc.get(key) is None:
+            doc[key] = ""
+    if doc.get("config") is None:
+        doc["config"] = {}
+    if doc.get("tags") is None:
+        doc["tags"] = {}
+    if doc.get("cost_monthly") is None:
+        doc["cost_monthly"] = 0.0
 
     return doc
 
@@ -245,6 +309,43 @@ class CosmosRepository:
         await self._snapshots_container().upsert_item(doc)
         logger.info("Saved snapshot %s (tenant=%s)", snapshot.id, snapshot.tenant_id or "-")
         return snapshot.id
+
+    async def get_snapshots(
+        self,
+        subscription_id: str,
+        limit: int = 1000,
+        *,
+        tenant_id: str = "",
+    ) -> list[ResourceSnapshot]:
+        """Return resource snapshots for a subscription, costliest first.
+
+        Snapshots are partitioned by ``/provider``; this issues a
+        cross-partition query scoped by ``subscription_id`` (and
+        ``tenant_id`` when provided for Phase 1 isolation). Invalid legacy
+        rows are skipped rather than failing the whole response.
+        """
+        query, params = _build_snapshots_query(
+            tenant_id=tenant_id,
+            subscription_id=subscription_id,
+            limit=limit,
+        )
+        results: list[ResourceSnapshot] = []
+        async for item in self._snapshots_container().query_items(
+            query=query, parameters=params,
+        ):
+            try:
+                results.append(
+                    ResourceSnapshot.model_validate(_normalise_snapshot_doc(item))
+                )
+            except ValidationError as exc:
+                snap_key = str(item.get("resource_id") or item.get("id") or "unknown")
+                logger.warning(
+                    "Skipping invalid snapshot row %s in %s: %s",
+                    snap_key,
+                    subscription_id,
+                    exc.errors()[0].get("msg", str(exc)),
+                )
+        return results
 
     # ------------------------------------------------------------------
     # Finding operations  (partition key: /subscription_id)

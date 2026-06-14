@@ -11,6 +11,7 @@ import { SelfHeal } from "./pages/SelfHeal";
 import { Settings } from "./pages/Settings";
 import { Reports } from "./pages/Reports";
 import { ComingSoon } from "./pages/ComingSoon";
+import { Resources } from "./pages/Resources";
 
 export default function App() {
   return (
@@ -30,7 +31,7 @@ export default function App() {
               <Route path="/self-heal" element={<SelfHeal />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/integrations" element={<ComingSoon />} />
-              <Route path="/resources" element={<ComingSoon />} />
+              <Route path="/resources" element={<Resources />} />
               <Route path="/policies" element={<ComingSoon />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/audit" element={<ComingSoon />} />

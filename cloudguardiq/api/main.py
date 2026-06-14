@@ -1137,6 +1137,43 @@ async def list_findings(
     return sorted(demo, key=lambda f: f.priority_score, reverse=True)[:limit]
 
 
+@app.get("/resources", response_model=list[ResourceSnapshot])
+async def list_resources(
+    subscription_id: str = Query(default=""),
+    limit: int = Query(default=1000, ge=1, le=5000),
+    user: TokenPayload = _auth,
+) -> list[ResourceSnapshot]:
+    """Return ResourceSnapshots for a subscription, costliest first.
+
+    Reads persisted snapshots produced by the most recent scan -- never calls
+    cloud provider APIs directly (that stays inside AdapterBase). A Cosmos
+    failure degrades gracefully to an empty list.
+    """
+    repo = get_repo()
+    sub_id = ""
+    if subscription_id:
+        sub_id = await _validate_owned_subscription(user, subscription_id)
+        bind_context(subscription_id=sub_id, provider="azure")
+    settings = get_settings()
+    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
+    if repo is not None and sub_id:
+        try:
+            return await repo.get_snapshots(
+                sub_id,
+                tenant_id=tenant_id,
+                limit=limit,
+            )
+        except Exception as exc:
+            logger.warning("Failed to query snapshots from Cosmos: %s", exc)
+            return []
+
+    # No subscription selected: empty in production. Demo data only in
+    # auth-disabled (local/dev) mode so it cannot leak into a live tenant.
+    if not settings.auth_disabled:
+        return []
+    return [f.resource_snapshot for f in _demo_findings() if f.resource_snapshot][:limit]
+
+
 @app.get("/findings/{finding_id}", response_model=FindingResult)
 async def get_finding(
     finding_id: str,
