@@ -20,6 +20,29 @@ function computeScore(findings: FindingResult[]): number {
   return Math.round(((findings.length - failing) / findings.length) * 100);
 }
 
+/**
+ * Industry-standard compliance readiness score: passing controls / total
+ * controls evaluated, pooled across every framework on the scorecard. This
+ * is the SAME methodology used by the per-framework posture tiles and the
+ * PDF readiness reports (``compute_scorecard`` on the backend), so the
+ * headline number now reconciles with both instead of diverging from them.
+ *
+ * Cross-mapped controls are counted within each framework they belong to,
+ * matching the "Failing controls" tile convention below.
+ */
+function aggregateControlScore(scorecard: FrameworkScore[]): number {
+  const totals = scorecard.reduce(
+    (acc, fw) => {
+      acc.passed += fw.controls_passed;
+      acc.total += fw.controls_total;
+      return acc;
+    },
+    { passed: 0, total: 0 },
+  );
+  if (totals.total === 0) return 100;
+  return Math.round((totals.passed / totals.total) * 100);
+}
+
 export function ComplianceKpis({ findings, scorecard }: ComplianceKpisProps) {
   const stats = useMemo(() => {
     // Match the backend definition of "open" (status === OPEN) so the
@@ -29,10 +52,20 @@ export function ComplianceKpis({ findings, scorecard }: ComplianceKpisProps) {
     const compliance = findings.filter(
       (f) => f.compliance_frameworks.length > 0 && f.status === "OPEN",
     );
-    const frameworks = new Set<string>();
+    // "Frameworks tracked" must mean evaluated frameworks (CIS, NIST, ...),
+    // not the distinct control-level tags ("CIS_3.1", "NIST_SC-28", ...) a
+    // finding carries. When the scorecard is present we count the framework
+    // rows that actually evaluate at least one control so this tile
+    // reconciles with the posture tiles below and the PDF reports. The
+    // tag-set is only a fallback while the scorecard loads.
+    const frameworkTags = new Set<string>();
     compliance.forEach((f) =>
-      f.compliance_frameworks.forEach((fw) => frameworks.add(fw)),
+      f.compliance_frameworks.forEach((fw) => frameworkTags.add(fw)),
     );
+    const evaluatedFrameworks =
+      scorecard && scorecard.length > 0
+        ? scorecard.filter((fw) => fw.controls_total > 0).length
+        : frameworkTags.size;
     const critical = compliance.filter((f) => f.severity === "CRITICAL").length;
     const high = compliance.filter((f) => f.severity === "HIGH").length;
     // ``controls_failed`` is per framework, so the same backing rule (and
@@ -44,8 +77,11 @@ export function ComplianceKpis({ findings, scorecard }: ComplianceKpisProps) {
       0,
     );
     return {
-      score: computeScore(compliance),
-      frameworks: frameworks.size,
+      score:
+        scorecard && scorecard.length > 0
+          ? aggregateControlScore(scorecard)
+          : computeScore(compliance),
+      frameworks: evaluatedFrameworks,
       open: compliance.length,
       criticalHigh: critical + high,
       failingControls,
