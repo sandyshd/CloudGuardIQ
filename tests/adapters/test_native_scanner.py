@@ -179,6 +179,124 @@ def raw_aks_resources() -> list[dict[str, Any]]:
 
 
 @pytest.fixture
+def raw_appservice_resources() -> list[dict[str, Any]]:
+    """Raw Resource Graph output for an App Service site."""
+    return [
+        {
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg1"
+                "/providers/Microsoft.Web/sites/web1"
+            ),
+            "name": "web1",
+            "resourceGroup": "rg1",
+            "location": "eastus",
+            "tags": {},
+            "properties_httpsOnly": False,
+            "properties_clientCertEnabled": False,
+            "properties_siteConfig_minTlsVersion": "1.0",
+        },
+    ]
+
+
+@pytest.fixture
+def raw_activity_alert_resources() -> list[dict[str, Any]]:
+    """Raw Resource Graph output for an activity log alert."""
+    return [
+        {
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg1"
+                "/providers/Microsoft.Insights/activityLogAlerts/alert1"
+            ),
+            "name": "alert1",
+            "resourceGroup": "rg1",
+            "location": "global",
+            "tags": {},
+            "properties_condition": {
+                "allOf": [
+                    {"field": "category", "equals": "Administrative"},
+                    {
+                        "field": "operationName",
+                        "equals": "Microsoft.KeyVault/vaults/write",
+                    },
+                ]
+            },
+        },
+    ]
+
+
+@pytest.fixture
+def raw_log_profile_resources() -> list[dict[str, Any]]:
+    """Raw Resource Graph output for a log profile."""
+    return [
+        {
+            "id": (
+                "/subscriptions/sub-1"
+                "/providers/Microsoft.Insights/logProfiles/default"
+            ),
+            "name": "default",
+            "resourceGroup": "",
+            "location": "global",
+            "tags": {},
+            "properties_retentionPolicy_days": 30,
+        },
+    ]
+
+
+@pytest.fixture
+def raw_disk_resources() -> list[dict[str, Any]]:
+    """Raw Resource Graph output for an unattached managed disk."""
+    return [
+        {
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg1"
+                "/providers/Microsoft.Compute/disks/disk1"
+            ),
+            "name": "disk1",
+            "resourceGroup": "rg1",
+            "location": "eastus",
+            "tags": {},
+            "properties_diskState": "Unattached",
+        },
+    ]
+
+
+@pytest.fixture
+def raw_public_ip_resources() -> list[dict[str, Any]]:
+    """Raw Resource Graph output for an unassigned public IP."""
+    return [
+        {
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg1"
+                "/providers/Microsoft.Network/publicIPAddresses/pip1"
+            ),
+            "name": "pip1",
+            "resourceGroup": "rg1",
+            "location": "eastus",
+            "tags": {},
+            "properties_ipConfiguration": None,
+        },
+    ]
+
+
+@pytest.fixture
+def raw_load_balancer_resources() -> list[dict[str, Any]]:
+    """Raw Resource Graph output for an empty load balancer."""
+    return [
+        {
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg1"
+                "/providers/Microsoft.Network/loadBalancers/lb1"
+            ),
+            "name": "lb1",
+            "resourceGroup": "rg1",
+            "location": "eastus",
+            "tags": {},
+            "properties_backendAddressPools": [],
+        },
+    ]
+
+
+@pytest.fixture
 def raw_inventory_resources() -> list[dict[str, Any]]:
     """Generic inventory rows: a duplicate storage account plus other types."""
     return [
@@ -668,4 +786,167 @@ class TestAksSnapshots:
         # Rich typed snapshots win: SQL retains config, AKS retains config.
         sql = next(s for s in snapshots if s.resource_type == "Microsoft.Sql/servers")
         assert sql.config["public_network_access"] == "Enabled"
+
+
+class TestAppServiceSnapshots:
+    async def test_appservice_config_populated(
+        self,
+        mock_credential: MagicMock,
+        raw_appservice_resources: list[dict[str, Any]],
+    ) -> None:
+        """App Service snapshots carry the config keys App Service rules read."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"microsoft.web/sites": raw_appservice_resources},
+        )
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        sites = [s for s in snapshots if s.resource_type == "Microsoft.Web/sites"]
+        assert len(sites) == 1
+        cfg = sites[0].config
+        assert cfg["https_only"] is False
+        assert cfg["min_tls_version"] == "1.0"
+        assert cfg["client_cert_enabled"] is False
+        assert "auth_enabled" in cfg
+
+
+class TestMonitorSnapshots:
+    async def test_activity_alert_monitored_operations(
+        self,
+        mock_credential: MagicMock,
+        raw_activity_alert_resources: list[dict[str, Any]],
+    ) -> None:
+        """Activity log alert snapshots expose the monitored operation names."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"activitylogalerts": raw_activity_alert_resources},
+        )
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        alerts = [
+            s
+            for s in snapshots
+            if s.resource_type == "Microsoft.Insights/activityLogAlerts"
+        ]
+        assert len(alerts) == 1
+        ops = alerts[0].config["monitored_operations"]
+        assert "Microsoft.KeyVault/vaults/write" in ops
+
+    async def test_log_profile_retention_days(
+        self,
+        mock_credential: MagicMock,
+        raw_log_profile_resources: list[dict[str, Any]],
+    ) -> None:
+        """Log profile snapshots carry retention_days for MON-002."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"logprofiles": raw_log_profile_resources},
+        )
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        profiles = [
+            s
+            for s in snapshots
+            if s.resource_type == "Microsoft.Insights/logProfiles"
+        ]
+        assert len(profiles) == 1
+        assert profiles[0].config["retention_days"] == 30
+        # Subscription-scoped resource (no RG) must still validate.
+        assert profiles[0].resource_group == "unknown"
+
+
+class TestFinopsSnapshots:
+    async def test_disk_state_populated(
+        self,
+        mock_credential: MagicMock,
+        raw_disk_resources: list[dict[str, Any]],
+    ) -> None:
+        """Managed disk snapshots carry disk_state for FIN-001."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"microsoft.compute/disks": raw_disk_resources},
+        )
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        disks = [s for s in snapshots if s.resource_type == "Microsoft.Compute/disks"]
+        assert len(disks) == 1
+        assert disks[0].config["disk_state"] == "Unattached"
+
+    async def test_public_ip_association(
+        self,
+        mock_credential: MagicMock,
+        raw_public_ip_resources: list[dict[str, Any]],
+    ) -> None:
+        """Unassigned public IP snapshots carry ip_association=None for FIN-002."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"publicipaddresses": raw_public_ip_resources},
+        )
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        pips = [
+            s
+            for s in snapshots
+            if s.resource_type == "Microsoft.Network/publicIPAddresses"
+        ]
+        assert len(pips) == 1
+        assert pips[0].config["ip_association"] is None
+
+    async def test_load_balancer_backend_pool_count(
+        self,
+        mock_credential: MagicMock,
+        raw_load_balancer_resources: list[dict[str, Any]],
+    ) -> None:
+        """Empty load balancer snapshots carry backend_pool_count=0 for FIN-003."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"loadbalancers": raw_load_balancer_resources},
+        )
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        lbs = [
+            s
+            for s in snapshots
+            if s.resource_type == "Microsoft.Network/loadBalancers"
+        ]
+        assert len(lbs) == 1
+        assert lbs[0].config["backend_pool_count"] == 0
+
+    async def test_unassigned_public_ip_finding_fires(
+        self,
+        mock_credential: MagicMock,
+        raw_public_ip_resources: list[dict[str, Any]],
+    ) -> None:
+        """FIN-002 fires end-to-end on an unassigned public IP snapshot."""
+        from cloudguardiq.policy.engine import PolicyEngine
+
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"publicipaddresses": raw_public_ip_resources},
+        )
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        findings = PolicyEngine().evaluate(snapshots)
+        assert any(f.rule_id == "FIN-002" for f in findings)
 

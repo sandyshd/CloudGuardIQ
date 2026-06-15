@@ -270,6 +270,50 @@ Resources
     properties.networkProfile.networkPolicy
 """.strip()
 
+_APPSERVICE_QUERY = """
+Resources
+| where type == "microsoft.web/sites"
+| project id, name, resourceGroup, location, tags,
+    properties.httpsOnly,
+    properties.clientCertEnabled,
+    properties.siteConfig.minTlsVersion
+""".strip()
+
+_ACTIVITY_ALERT_QUERY = """
+Resources
+| where type == "microsoft.insights/activitylogalerts"
+| project id, name, resourceGroup, location, tags,
+    properties.condition
+""".strip()
+
+_LOG_PROFILE_QUERY = """
+Resources
+| where type == "microsoft.insights/logprofiles"
+| project id, name, resourceGroup, location, tags,
+    properties.retentionPolicy.days
+""".strip()
+
+_DISK_QUERY = """
+Resources
+| where type == "microsoft.compute/disks"
+| project id, name, resourceGroup, location, tags,
+    properties.diskState
+""".strip()
+
+_PUBLIC_IP_QUERY = """
+Resources
+| where type == "microsoft.network/publicipaddresses"
+| project id, name, resourceGroup, location, tags,
+    properties.ipConfiguration
+""".strip()
+
+_LOAD_BALANCER_QUERY = """
+Resources
+| where type == "microsoft.network/loadbalancers"
+| project id, name, resourceGroup, location, tags,
+    properties.backendAddressPools
+""".strip()
+
 
 class NativeScanner:
     """Orchestrates Azure Resource Graph queries, snapshot normalisation, and rule evaluation.
@@ -311,6 +355,12 @@ class NativeScanner:
         sql_task = self._query_resource_graph(_SQL_QUERY)
         sql_audit_task = self._query_resource_graph(_SQL_AUDIT_QUERY)
         aks_task = self._query_resource_graph(_AKS_QUERY)
+        appservice_task = self._query_resource_graph(_APPSERVICE_QUERY)
+        activity_alert_task = self._query_resource_graph(_ACTIVITY_ALERT_QUERY)
+        log_profile_task = self._query_resource_graph(_LOG_PROFILE_QUERY)
+        disk_task = self._query_resource_graph(_DISK_QUERY)
+        public_ip_task = self._query_resource_graph(_PUBLIC_IP_QUERY)
+        load_balancer_task = self._query_resource_graph(_LOAD_BALANCER_QUERY)
         inventory_task = self._query_resource_graph(_INVENTORY_QUERY)
 
         (
@@ -321,6 +371,12 @@ class NativeScanner:
             raw_sql,
             raw_sql_audit,
             raw_aks,
+            raw_appservice,
+            raw_activity_alert,
+            raw_log_profile,
+            raw_disk,
+            raw_public_ip,
+            raw_load_balancer,
             raw_inventory,
         ) = await asyncio.gather(
             storage_task,
@@ -330,6 +386,12 @@ class NativeScanner:
             sql_task,
             sql_audit_task,
             aks_task,
+            appservice_task,
+            activity_alert_task,
+            log_profile_task,
+            disk_task,
+            public_ip_task,
+            load_balancer_task,
             inventory_task,
         )
 
@@ -340,6 +402,12 @@ class NativeScanner:
             self._build_keyvault_snapshots(raw_kv),
             self._build_sql_snapshots(raw_sql, raw_sql_audit),
             self._build_aks_snapshots(raw_aks),
+            self._build_appservice_snapshots(raw_appservice),
+            self._build_activity_alert_snapshots(raw_activity_alert),
+            self._build_log_profile_snapshots(raw_log_profile),
+            self._build_disk_snapshots(raw_disk),
+            self._build_public_ip_snapshots(raw_public_ip),
+            self._build_load_balancer_snapshots(raw_load_balancer),
         )
 
         # Rich typed snapshots take precedence; track their IDs for dedup.
@@ -727,6 +795,269 @@ class NativeScanner:
                     subscription_id=self._subscription_id,
                     resource_group=r.get("resourceGroup", ""),
                     resource_type="Microsoft.ContainerService/managedClusters",
+                    resource_name=r.get("name", ""),
+                    region=r.get("location", ""),
+                    provider=CloudProvider.AZURE,
+                    data_tier=DataTier.TIER1_NATIVE,
+                    config=config,
+                    tags=r.get("tags") or {},
+                ),
+            )
+        return snapshots
+
+    async def _build_appservice_snapshots(
+        self, raw_resources: list[dict[str, Any]],
+    ) -> list[ResourceSnapshot]:
+        """Normalise App Service (Microsoft.Web/sites) resources.
+
+        ``https_only``, ``client_cert_enabled`` and ``min_tls_version`` are
+        derivable from Resource Graph. ``auth_enabled`` lives in the
+        ``authsettings`` child resource which Resource Graph does not expose;
+        it is best-effort read from the site properties and defaults to
+        ``False`` so APP-003 evaluates against a known-safe baseline.
+
+        Args:
+            raw_resources: Raw rows for ``microsoft.web/sites``.
+
+        Returns:
+            A list of ``TIER1_NATIVE`` App Service snapshots.
+        """
+        snapshots: list[ResourceSnapshot] = []
+        for r in raw_resources:
+            props = r.get("properties", r)
+            config: dict[str, Any] = {
+                "https_only": _coalesce(
+                    _get_nested(r, "properties_httpsOnly"),
+                    _get_nested(props, "httpsOnly"),
+                ),
+                "client_cert_enabled": _coalesce(
+                    _get_nested(r, "properties_clientCertEnabled"),
+                    _get_nested(props, "clientCertEnabled"),
+                ),
+                "min_tls_version": _coalesce(
+                    _get_nested(r, "properties_siteConfig_minTlsVersion"),
+                    _get_nested(props, "siteConfig", "minTlsVersion"),
+                ),
+                "auth_enabled": bool(
+                    _coalesce(
+                        _get_nested(r, "properties_siteAuthEnabled"),
+                        _get_nested(props, "siteAuthEnabled"),
+                    )
+                ),
+            }
+            snapshots.append(
+                ResourceSnapshot(
+                    subscription_id=self._subscription_id,
+                    resource_group=r.get("resourceGroup", ""),
+                    resource_type="Microsoft.Web/sites",
+                    resource_name=r.get("name", ""),
+                    region=r.get("location", ""),
+                    provider=CloudProvider.AZURE,
+                    data_tier=DataTier.TIER1_NATIVE,
+                    config=config,
+                    tags=r.get("tags") or {},
+                ),
+            )
+        return snapshots
+
+    async def _build_activity_alert_snapshots(
+        self, raw_resources: list[dict[str, Any]],
+    ) -> list[ResourceSnapshot]:
+        """Normalise activity log alert resources into ResourceSnapshot objects.
+
+        The set of monitored operations is extracted from the alert condition
+        (``condition.allOf[].equals`` where ``field == "operationName"``) so
+        MON-001 can compare it against the required critical operations.
+
+        Args:
+            raw_resources: Raw rows for ``microsoft.insights/activitylogalerts``.
+
+        Returns:
+            A list of ``TIER1_NATIVE`` activity log alert snapshots.
+        """
+        snapshots: list[ResourceSnapshot] = []
+        for r in raw_resources:
+            props = r.get("properties", r)
+            condition = _coalesce(
+                _get_nested(r, "properties_condition"),
+                _get_nested(props, "condition"),
+            )
+            operations: list[str] = []
+            all_of = (condition or {}).get("allOf", []) if isinstance(condition, dict) else []
+            for clause in all_of:
+                if not isinstance(clause, dict):
+                    continue
+                if clause.get("field") == "operationName" and clause.get("equals"):
+                    operations.append(str(clause["equals"]))
+            config: dict[str, Any] = {"monitored_operations": operations}
+            snapshots.append(
+                ResourceSnapshot(
+                    subscription_id=self._subscription_id,
+                    resource_group=r.get("resourceGroup", "") or "unknown",
+                    resource_type="Microsoft.Insights/activityLogAlerts",
+                    resource_name=r.get("name", ""),
+                    region=r.get("location", "") or "global",
+                    provider=CloudProvider.AZURE,
+                    data_tier=DataTier.TIER1_NATIVE,
+                    config=config,
+                    tags=r.get("tags") or {},
+                ),
+            )
+        return snapshots
+
+    async def _build_log_profile_snapshots(
+        self, raw_resources: list[dict[str, Any]],
+    ) -> list[ResourceSnapshot]:
+        """Normalise log profile resources into ResourceSnapshot objects.
+
+        Log profiles are subscription-scoped (no resource group), so the
+        resource group defaults to ``"unknown"`` to satisfy snapshot
+        validation. ``retention_days`` drives MON-002.
+
+        Args:
+            raw_resources: Raw rows for ``microsoft.insights/logprofiles``.
+
+        Returns:
+            A list of ``TIER1_NATIVE`` log profile snapshots.
+        """
+        snapshots: list[ResourceSnapshot] = []
+        for r in raw_resources:
+            props = r.get("properties", r)
+            config: dict[str, Any] = {
+                "retention_days": _coalesce(
+                    _get_nested(r, "properties_retentionPolicy_days"),
+                    _get_nested(props, "retentionPolicy", "days"),
+                )
+                or 0,
+            }
+            snapshots.append(
+                ResourceSnapshot(
+                    subscription_id=self._subscription_id,
+                    resource_group=r.get("resourceGroup", "") or "unknown",
+                    resource_type="Microsoft.Insights/logProfiles",
+                    resource_name=r.get("name", ""),
+                    region=r.get("location", "") or "global",
+                    provider=CloudProvider.AZURE,
+                    data_tier=DataTier.TIER1_NATIVE,
+                    config=config,
+                    tags=r.get("tags") or {},
+                ),
+            )
+        return snapshots
+
+    async def _build_disk_snapshots(
+        self, raw_resources: list[dict[str, Any]],
+    ) -> list[ResourceSnapshot]:
+        """Normalise managed disk resources into ResourceSnapshot objects.
+
+        ``disk_state`` drives FIN-001 (which additionally requires a non-zero
+        monthly cost supplied by cost enrichment).
+
+        Args:
+            raw_resources: Raw rows for ``microsoft.compute/disks``.
+
+        Returns:
+            A list of ``TIER1_NATIVE`` managed disk snapshots.
+        """
+        snapshots: list[ResourceSnapshot] = []
+        for r in raw_resources:
+            props = r.get("properties", r)
+            config: dict[str, Any] = {
+                "disk_state": _coalesce(
+                    _get_nested(r, "properties_diskState"),
+                    _get_nested(props, "diskState"),
+                ),
+            }
+            snapshots.append(
+                ResourceSnapshot(
+                    subscription_id=self._subscription_id,
+                    resource_group=r.get("resourceGroup", ""),
+                    resource_type="Microsoft.Compute/disks",
+                    resource_name=r.get("name", ""),
+                    region=r.get("location", ""),
+                    provider=CloudProvider.AZURE,
+                    data_tier=DataTier.TIER1_NATIVE,
+                    config=config,
+                    tags=r.get("tags") or {},
+                ),
+            )
+        return snapshots
+
+    async def _build_public_ip_snapshots(
+        self, raw_resources: list[dict[str, Any]],
+    ) -> list[ResourceSnapshot]:
+        """Normalise public IP resources into ResourceSnapshot objects.
+
+        ``ip_association`` is the id of the IP configuration the address is
+        attached to, or ``None`` when the address is reserved but unassigned
+        (which FIN-002 flags as waste).
+
+        Args:
+            raw_resources: Raw rows for ``microsoft.network/publicipaddresses``.
+
+        Returns:
+            A list of ``TIER1_NATIVE`` public IP snapshots.
+        """
+        snapshots: list[ResourceSnapshot] = []
+        for r in raw_resources:
+            props = r.get("properties", r)
+            ip_config = _coalesce(
+                _get_nested(r, "properties_ipConfiguration"),
+                _get_nested(props, "ipConfiguration"),
+            )
+            association: Any = None
+            if isinstance(ip_config, dict):
+                association = ip_config.get("id")
+            elif ip_config:
+                association = ip_config
+            config: dict[str, Any] = {"ip_association": association}
+            snapshots.append(
+                ResourceSnapshot(
+                    subscription_id=self._subscription_id,
+                    resource_group=r.get("resourceGroup", ""),
+                    resource_type="Microsoft.Network/publicIPAddresses",
+                    resource_name=r.get("name", ""),
+                    region=r.get("location", ""),
+                    provider=CloudProvider.AZURE,
+                    data_tier=DataTier.TIER1_NATIVE,
+                    config=config,
+                    tags=r.get("tags") or {},
+                ),
+            )
+        return snapshots
+
+    async def _build_load_balancer_snapshots(
+        self, raw_resources: list[dict[str, Any]],
+    ) -> list[ResourceSnapshot]:
+        """Normalise load balancer resources into ResourceSnapshot objects.
+
+        ``backend_pool_count`` is the number of backend address pools; FIN-003
+        flags balancers with zero pools and a non-zero monthly cost.
+
+        Args:
+            raw_resources: Raw rows for ``microsoft.network/loadbalancers``.
+
+        Returns:
+            A list of ``TIER1_NATIVE`` load balancer snapshots.
+        """
+        snapshots: list[ResourceSnapshot] = []
+        for r in raw_resources:
+            props = r.get("properties", r)
+            pools = (
+                _coalesce(
+                    _get_nested(r, "properties_backendAddressPools"),
+                    _get_nested(props, "backendAddressPools"),
+                )
+                or []
+            )
+            config: dict[str, Any] = {
+                "backend_pool_count": len(pools) if isinstance(pools, list) else 0,
+            }
+            snapshots.append(
+                ResourceSnapshot(
+                    subscription_id=self._subscription_id,
+                    resource_group=r.get("resourceGroup", ""),
+                    resource_type="Microsoft.Network/loadBalancers",
                     resource_name=r.get("name", ""),
                     region=r.get("location", ""),
                     provider=CloudProvider.AZURE,
