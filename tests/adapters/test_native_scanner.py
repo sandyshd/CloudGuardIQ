@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from cloudguardiq.adapters.base import AdapterBase
 from cloudguardiq.adapters.native_scanner import RULE_REGISTRY, NativeScanner
 from cloudguardiq.core.enums import DataTier
 from cloudguardiq.core.models import ResourceSnapshot
@@ -118,6 +119,59 @@ def raw_kv_resources() -> list[dict[str, Any]]:
             "properties_enableSoftDelete": True,
             "properties_enablePurgeProtection": False,
             "properties_publicNetworkAccess": "Enabled",
+        },
+    ]
+
+
+@pytest.fixture
+def raw_inventory_resources() -> list[dict[str, Any]]:
+    """Generic inventory rows: a duplicate storage account plus other types."""
+    return [
+        {
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg1"
+                "/providers/Microsoft.Storage/storageAccounts/sa1"
+            ),
+            "name": "sa1",
+            "type": "microsoft.storage/storageaccounts",
+            "resourceGroup": "rg1",
+            "location": "eastus",
+            "tags": {"env": "prod"},
+            "subscriptionId": "sub-1",
+        },
+        {
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg2"
+                "/providers/Microsoft.Web/sites/web1"
+            ),
+            "name": "web1",
+            "type": "microsoft.web/sites",
+            "resourceGroup": "rg2",
+            "location": "westus",
+            "tags": {},
+            "subscriptionId": "sub-1",
+        },
+        {
+            "id": (
+                "/subscriptions/sub-1/resourceGroups/rg2"
+                "/providers/Microsoft.ContainerRegistry/registries/acr1"
+            ),
+            "name": "acr1",
+            "type": "microsoft.containerregistry/registries",
+            "resourceGroup": "rg2",
+            "location": "westus",
+            "tags": {},
+            "subscriptionId": "sub-1",
+        },
+        {
+            # Subscription-scoped resource with no RG / region.
+            "id": "/subscriptions/sub-1/providers/Microsoft.Authorization/policyAssignments/pa1",
+            "name": "pa1",
+            "type": "microsoft.authorization/policyassignments",
+            "resourceGroup": "",
+            "location": "",
+            "tags": {},
+            "subscriptionId": "sub-1",
         },
     ]
 
@@ -333,3 +387,103 @@ class TestScanSucceedsWhenCostApiFails:
         assert len(snapshots) >= 1
         # Cost should remain 0 since cost API failed
         assert all(s.cost_monthly == 0.0 for s in snapshots)
+
+
+class _ValidatorAdapter(AdapterBase):
+    """Minimal concrete adapter used only to exercise validate_snapshot()."""
+
+    async def scan(self) -> list[ResourceSnapshot]:
+        return []
+
+    async def get_api_contract(self) -> dict[str, Any]:
+        return {}
+
+    async def validate_connection(self) -> bool:
+        return True
+
+    async def list_resources(self, subscription_id: str) -> list[ResourceSnapshot]:
+        return []
+
+    async def get_resource(self, resource_id: str) -> ResourceSnapshot | None:
+        return None
+
+    async def get_cost(self, resource_id: str) -> float:
+        return 0.0
+
+    async def enrich_with_defender(
+        self, snapshots: list[ResourceSnapshot]
+    ) -> list[ResourceSnapshot]:
+        return snapshots
+
+    async def get_raw_properties(self, resource_id: str) -> dict[str, Any]:
+        return {}
+
+
+class TestGenericInventoryScan:
+    async def test_inventory_captures_all_types_without_duplicates(
+        self,
+        mock_credential: MagicMock,
+        raw_storage_resources: list[dict[str, Any]],
+        raw_inventory_resources: list[dict[str, Any]],
+    ) -> None:
+        """Generic inventory adds every other type once, without duplicating typed snapshots."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {
+                "storageaccounts": raw_storage_resources,
+                "subscriptionId": raw_inventory_resources,
+            },
+        )
+
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        # One rich storage snapshot + web/sites + containerregistry + policyAssignments.
+        assert len(snapshots) == 4
+
+        # (a) Every distinct id appears exactly once.
+        ids = [s.id for s in snapshots]
+        assert len(ids) == len(set(ids))
+
+        # (b) The storage account is NOT duplicated and retains its rich config.
+        storage = [s for s in snapshots if "storageAccounts" in s.resource_type]
+        assert len(storage) == 1
+        assert storage[0].config["allow_blob_public_access"] is True
+        assert storage[0].config["minimum_tls_version"] == "TLS1_0"
+
+        # Generic-only types are present as inventory snapshots with empty config.
+        types = {s.resource_type for s in snapshots}
+        assert "microsoft.web/sites" in types
+        assert "microsoft.containerregistry/registries" in types
+        web = next(s for s in snapshots if s.resource_type == "microsoft.web/sites")
+        assert web.config == {}
+        assert web.data_tier == DataTier.TIER1_NATIVE
+
+        # (c) Every snapshot passes validate_snapshot(), incl. RG/region-less ones.
+        validator = _ValidatorAdapter()
+        assert all(validator.validate_snapshot(s) for s in snapshots)
+
+    async def test_inventory_only_snapshot_defaults_missing_fields(
+        self,
+        mock_credential: MagicMock,
+        raw_inventory_resources: list[dict[str, Any]],
+    ) -> None:
+        """Resources without RG/region default to 'unknown' so validation passes."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"subscriptionId": raw_inventory_resources},
+        )
+
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        policy_assignment = next(
+            s for s in snapshots if "policyassignments" in s.resource_type
+        )
+        assert policy_assignment.resource_group == "unknown"
+        assert policy_assignment.region == "unknown"
+

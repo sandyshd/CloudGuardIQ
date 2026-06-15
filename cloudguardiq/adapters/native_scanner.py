@@ -241,6 +241,11 @@ Resources
     properties.publicNetworkAccess
 """.strip()
 
+_INVENTORY_QUERY = """
+Resources
+| project id, name, type, resourceGroup, location, tags, subscriptionId
+""".strip()
+
 
 class NativeScanner:
     """Orchestrates Azure Resource Graph queries, snapshot normalisation, and rule evaluation.
@@ -279,9 +284,10 @@ class NativeScanner:
         nsg_task = self._query_resource_graph(_NSG_QUERY)
         vm_task = self._query_resource_graph(_VM_QUERY)
         kv_task = self._query_resource_graph(_KV_QUERY)
+        inventory_task = self._query_resource_graph(_INVENTORY_QUERY)
 
-        raw_storage, raw_nsg, raw_vm, raw_kv = await asyncio.gather(
-            storage_task, nsg_task, vm_task, kv_task,
+        raw_storage, raw_nsg, raw_vm, raw_kv, raw_inventory = await asyncio.gather(
+            storage_task, nsg_task, vm_task, kv_task, inventory_task,
         )
 
         snapshots_lists = await asyncio.gather(
@@ -291,9 +297,21 @@ class NativeScanner:
             self._build_keyvault_snapshots(raw_kv),
         )
 
+        # Rich typed snapshots take precedence; track their IDs for dedup.
         snapshots: list[ResourceSnapshot] = []
+        seen_ids: set[str] = set()
         for s_list in snapshots_lists:
-            snapshots.extend(s_list)
+            for snap in s_list:
+                snapshots.append(snap)
+                seen_ids.add(snap.id)
+
+        # Merge generic inventory snapshots for every other resource type,
+        # skipping any resource already captured by a typed builder.
+        generic_snapshots = await self._build_generic_snapshots(raw_inventory)
+        for snap in generic_snapshots:
+            if snap.id not in seen_ids:
+                snapshots.append(snap)
+                seen_ids.add(snap.id)
 
         # Best-effort cost enrichment
         resource_ids = [s.id for s in snapshots]
@@ -547,7 +565,42 @@ class NativeScanner:
             )
         return snapshots
 
-    # ------------------------------------------------------------------
+    async def _build_generic_snapshots(
+        self, raw_resources: list[dict[str, Any]],
+    ) -> list[ResourceSnapshot]:
+        """Normalise generic Resource Graph inventory rows into ResourceSnapshot objects.
+
+        Every resource type in the subscription is captured as a lightweight
+        inventory snapshot with an empty ``config``. These snapshots exist for
+        inventory completeness only -- policy rules still fire exclusively on the
+        types they understand. Resources that are subscription-scoped and have no
+        resource group or region default those fields to ``"unknown"`` so that
+        ``AdapterBase.validate_snapshot`` does not reject them.
+
+        Args:
+            raw_resources: Raw rows returned by the generic inventory KQL query.
+
+        Returns:
+            A list of ``TIER1_NATIVE`` inventory snapshots, one per row.
+        """
+        snapshots: list[ResourceSnapshot] = []
+        for r in raw_resources:
+            snapshots.append(
+                ResourceSnapshot(
+                    subscription_id=r.get("subscriptionId") or self._subscription_id,
+                    resource_group=r.get("resourceGroup") or "unknown",
+                    resource_type=r.get("type") or "unknown",
+                    resource_name=r.get("name") or "unknown",
+                    region=r.get("location") or "unknown",
+                    provider=CloudProvider.AZURE,
+                    data_tier=DataTier.TIER1_NATIVE,
+                    config={},
+                    tags=r.get("tags") or {},
+                ),
+            )
+        return snapshots
+
+        # ------------------------------------------------------------------
     # Cost enrichment
     # ------------------------------------------------------------------
 
