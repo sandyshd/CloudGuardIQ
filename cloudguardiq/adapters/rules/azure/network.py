@@ -127,6 +127,7 @@ class SSHOpenToInternetRule(PolicyRule):
     """NET-001: Flag NSGs with SSH port 22 open to the internet."""
 
     rule_id: str = "NET-001"
+    resource_types: list[str] = ["Microsoft.Network/networkSecurityGroups"]
     rule_name: str = "SSH port 22 open to internet"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
@@ -163,6 +164,7 @@ class RDPOpenToInternetRule(PolicyRule):
     """NET-002: Flag NSGs with RDP port 3389 open to the internet."""
 
     rule_id: str = "NET-002"
+    resource_types: list[str] = ["Microsoft.Network/networkSecurityGroups"]
     rule_name: str = "RDP port 3389 open to internet"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
@@ -198,6 +200,7 @@ class AnyPortOpenToInternetRule(PolicyRule):
     """NET-003: Flag NSGs with any port open to the internet (catch-all)."""
 
     rule_id: str = "NET-003"
+    resource_types: list[str] = ["Microsoft.Network/networkSecurityGroups"]
     rule_name: str = "Any port open to internet"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
@@ -233,6 +236,7 @@ class NSGFlowLogsRule(PolicyRule):
     """NET-004: Flag NSGs without flow logs enabled."""
 
     rule_id: str = "NET-004"
+    resource_types: list[str] = ["Microsoft.Network/networkSecurityGroups"]
     rule_name: str = "NSG flow logs not enabled"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
@@ -269,6 +273,7 @@ class InboundAllowAllRule(PolicyRule):
     """NET-005: Flag NSGs with an inbound allow-all rule."""
 
     rule_id: str = "NET-005"
+    resource_types: list[str] = ["Microsoft.Network/networkSecurityGroups"]
     rule_name: str = "Inbound allow-all rule exists"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
@@ -304,6 +309,7 @@ class DDoSProtectionRule(PolicyRule):
     """NET-006: Flag internet-facing VNets without DDoS protection."""
 
     rule_id: str = "NET-006"
+    resource_types: list[str] = ["Microsoft.Network/virtualNetworks"]
     rule_name: str = "No DDoS protection on VNet"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY

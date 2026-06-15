@@ -85,6 +85,7 @@ class OSDiskEncryptionRule(PolicyRule):
     """VM-001: OS disk encryption not enabled."""
 
     rule_id: str = "VM-001"
+    resource_types: list[str] = ["Microsoft.Compute/virtualMachines"]
     rule_name: str = "OS disk encryption not enabled"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
@@ -123,6 +124,7 @@ class UnmanagedDiskRule(PolicyRule):
     """VM-002: Unmanaged disk in use (old classic disk)."""
 
     rule_id: str = "VM-002"
+    resource_types: list[str] = ["Microsoft.Compute/virtualMachines"]
     rule_name: str = "Unmanaged disk in use"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
@@ -156,6 +158,7 @@ class NoBackupPolicyRule(PolicyRule):
     """VM-003: No backup policy assigned."""
 
     rule_id: str = "VM-003"
+    resource_types: list[str] = ["Microsoft.Compute/virtualMachines"]
     rule_name: str = "No backup policy assigned"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
@@ -193,6 +196,7 @@ class PublicIPDirectAttachedRule(PolicyRule):
     """VM-004: Public IP directly attached to VM NIC (not via load balancer)."""
 
     rule_id: str = "VM-004"
+    resource_types: list[str] = ["Microsoft.Compute/virtualMachines"]
     rule_name: str = "Public IP directly attached to VM"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
@@ -226,6 +230,7 @@ class OutdatedOSImageRule(PolicyRule):
     """VM-005: Outdated OS image (Windows 2016 or Ubuntu 18.04 or older)."""
 
     rule_id: str = "VM-005"
+    resource_types: list[str] = ["Microsoft.Compute/virtualMachines"]
     rule_name: str = "Outdated OS image"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
@@ -273,6 +278,7 @@ class MissingCostTagsRule(PolicyRule):
     """VM-006: VM missing required cost attribution tags."""
 
     rule_id: str = "VM-006"
+    resource_types: list[str] = ["Microsoft.Compute/virtualMachines"]
     rule_name: str = "Missing required cost attribution tags"
     severity: Severity = Severity.LOW
     finding_type: FindingType = FindingType.FINOPS
@@ -305,6 +311,7 @@ class IdleVMRule(PolicyRule):
     """VM-007: Idle VM — CPU utilisation <5% over last 7 days."""
 
     rule_id: str = "VM-007"
+    resource_types: list[str] = ["Microsoft.Compute/virtualMachines"]
     rule_name: str = "Idle VM detected"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.FINOPS

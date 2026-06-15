@@ -56,6 +56,7 @@ class OwnerRoleDirectUserRule(PolicyRule):
     """IAM-001: Owner role assigned directly to a user (not managed identity/service principal)."""
 
     rule_id: str = "IAM-001"
+    resource_types: list[str] = ["Microsoft.Authorization/roleAssignments"]
     rule_name: str = "Owner role assigned directly to a user"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
@@ -96,6 +97,7 @@ class OwnerRoleSubscriptionScopeRule(PolicyRule):
     """IAM-002: Owner role assigned at subscription root scope."""
 
     rule_id: str = "IAM-002"
+    resource_types: list[str] = ["Microsoft.Authorization/roleAssignments"]
     rule_name: str = "Owner role at subscription root scope"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
@@ -131,6 +133,7 @@ class SPOwnerMultipleSubscriptionsRule(PolicyRule):
     """IAM-003: Service principal has Owner role on multiple subscriptions."""
 
     rule_id: str = "IAM-003"
+    resource_types: list[str] = ["Microsoft.Authorization/roleAssignments"]
     rule_name: str = "Service principal Owner on multiple subscriptions"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
@@ -170,6 +173,7 @@ class GuestPrivilegedRoleRule(PolicyRule):
     """IAM-004: Guest user has privileged role (Contributor or higher)."""
 
     rule_id: str = "IAM-004"
+    resource_types: list[str] = ["Microsoft.Authorization/roleAssignments"]
     rule_name: str = "Guest user with privileged role"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
@@ -210,6 +214,7 @@ class ClassicAdminRoleRule(PolicyRule):
     """IAM-005: Classic administrator roles still assigned."""
 
     rule_id: str = "IAM-005"
+    resource_types: list[str] = ["Microsoft.Authorization/roleAssignments"]
     rule_name: str = "Classic administrator roles still assigned"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
@@ -243,6 +248,7 @@ class NoMFAConditionalAccessRule(PolicyRule):
     """IAM-006: No conditional access policy enforcing MFA evidence."""
 
     rule_id: str = "IAM-006"
+    resource_types: list[str] = ["Microsoft.Authorization/roleAssignments"]
     rule_name: str = "No conditional access policy enforcing MFA"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
@@ -279,6 +285,7 @@ class ExternalUserPrivilegedRoleRule(PolicyRule):
     """IAM-007: External (B2B) user with Owner or Contributor role."""
 
     rule_id: str = "IAM-007"
+    resource_types: list[str] = ["Microsoft.Authorization/roleAssignments"]
     rule_name: str = "External user with privileged role"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
@@ -319,6 +326,7 @@ class SPPasswordExpiryRule(PolicyRule):
     """IAM-008: Service principal password expiry not set (>365 days or never expires)."""
 
     rule_id: str = "IAM-008"
+    resource_types: list[str] = ["Microsoft.Authorization/roleAssignments"]
     rule_name: str = "Service principal password expiry not set"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY

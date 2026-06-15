@@ -81,6 +81,7 @@ class SoftDeleteRule(PolicyRule):
     """KV-001: Soft delete not enabled."""
 
     rule_id: str = "KV-001"
+    resource_types: list[str] = ["Microsoft.KeyVault/vaults"]
     rule_name: str = "Soft delete not enabled"
     severity: Severity = Severity.CRITICAL
     finding_type: FindingType = FindingType.SECURITY
@@ -118,6 +119,7 @@ class PurgeProtectionRule(PolicyRule):
     """KV-002: Purge protection not enabled."""
 
     rule_id: str = "KV-002"
+    resource_types: list[str] = ["Microsoft.KeyVault/vaults"]
     rule_name: str = "Purge protection not enabled"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
@@ -155,6 +157,7 @@ class PublicNetworkAccessRule(PolicyRule):
     """KV-003: Public network access enabled (not private endpoint only)."""
 
     rule_id: str = "KV-003"
+    resource_types: list[str] = ["Microsoft.KeyVault/vaults"]
     rule_name: str = "Public network access enabled"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.SECURITY
@@ -189,6 +192,7 @@ class NoDiagnosticLoggingRule(PolicyRule):
     """KV-004: No diagnostic logging configured."""
 
     rule_id: str = "KV-004"
+    resource_types: list[str] = ["Microsoft.KeyVault/vaults"]
     rule_name: str = "No diagnostic logging configured"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY
@@ -227,6 +231,7 @@ class SecretNoExpiryRule(PolicyRule):
     """KV-005: Secrets with no expiry date set."""
 
     rule_id: str = "KV-005"
+    resource_types: list[str] = ["Microsoft.KeyVault/vaults"]
     rule_name: str = "Secrets with no expiry date set"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.SECURITY

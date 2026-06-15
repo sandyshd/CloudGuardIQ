@@ -81,6 +81,7 @@ class UnattachedManagedDiskRule(PolicyRule):
     """FIN-001: Unattached managed disk (no VM assigned)."""
 
     rule_id: str = "FIN-001"
+    resource_types: list[str] = ["Microsoft.Compute/disks"]
     rule_name: str = "Unattached managed disk"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.FINOPS
@@ -113,6 +114,7 @@ class UnassignedPublicIPRule(PolicyRule):
     """FIN-002: Unassigned public IP address."""
 
     rule_id: str = "FIN-002"
+    resource_types: list[str] = ["Microsoft.Network/publicIPAddresses"]
     rule_name: str = "Unassigned public IP address"
     severity: Severity = Severity.LOW
     finding_type: FindingType = FindingType.FINOPS
@@ -158,6 +160,7 @@ class EmptyLoadBalancerRule(PolicyRule):
     """FIN-003: Empty load balancer (no backend pool configured)."""
 
     rule_id: str = "FIN-003"
+    resource_types: list[str] = ["Microsoft.Network/loadBalancers"]
     rule_name: str = "Empty load balancer"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.FINOPS
@@ -191,6 +194,7 @@ class HotTierBlobNotAccessedRule(PolicyRule):
     """FIN-004: Hot-tier storage blobs not accessed in 30+ days."""
 
     rule_id: str = "FIN-004"
+    resource_types: list[str] = ["Microsoft.Storage/storageAccounts"]
     rule_name: str = "Hot-tier blobs not accessed in 30+ days"
     severity: Severity = Severity.LOW
     finding_type: FindingType = FindingType.FINOPS
@@ -228,6 +232,7 @@ class OversizedVMRule(PolicyRule):
     """FIN-005: Oversized VM SKU — utilisation <20% CPU and <20% memory."""
 
     rule_id: str = "FIN-005"
+    resource_types: list[str] = ["Microsoft.Compute/virtualMachines"]
     rule_name: str = "Oversized VM SKU"
     severity: Severity = Severity.HIGH
     finding_type: FindingType = FindingType.FINOPS
@@ -265,6 +270,7 @@ class DevTestOutsideBusinessHoursRule(PolicyRule):
     """FIN-006: Dev/test resources running outside business hours."""
 
     rule_id: str = "FIN-006"
+    resource_types: list[str] = ["Microsoft.Compute/virtualMachines"]
     rule_name: str = "Dev/test resource running outside business hours"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.FINOPS
@@ -302,6 +308,7 @@ class AppGatewayLowUtilisationRule(PolicyRule):
     """FIN-007: Application Gateway with <10% capacity utilisation."""
 
     rule_id: str = "FIN-007"
+    resource_types: list[str] = ["Microsoft.Network/applicationGateways"]
     rule_name: str = "Application Gateway low utilisation"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.FINOPS
@@ -337,6 +344,7 @@ class AKSNoAutoscalerRule(PolicyRule):
     """FIN-008: AKS node pool always at max (no autoscaler configured)."""
 
     rule_id: str = "FIN-008"
+    resource_types: list[str] = ["Microsoft.ContainerService/managedClusters"]
     rule_name: str = "AKS node pool without autoscaler"
     severity: Severity = Severity.MEDIUM
     finding_type: FindingType = FindingType.FINOPS
