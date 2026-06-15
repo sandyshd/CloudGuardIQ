@@ -246,6 +246,30 @@ Resources
 | project id, name, type, resourceGroup, location, tags, subscriptionId
 """.strip()
 
+_SQL_QUERY = """
+Resources
+| where type == "microsoft.sql/servers"
+| project id, name, resourceGroup, location, tags,
+    properties.publicNetworkAccess,
+    properties.minimalTlsVersion
+""".strip()
+
+_SQL_AUDIT_QUERY = """
+Resources
+| where type == "microsoft.sql/servers/auditingsettings"
+| project id, name, properties.state
+""".strip()
+
+_AKS_QUERY = """
+Resources
+| where type == "microsoft.containerservice/managedclusters"
+| project id, name, resourceGroup, location, tags,
+    properties.enableRBAC,
+    properties.apiServerAccessProfile.enablePrivateCluster,
+    properties.apiServerAccessProfile.authorizedIPRanges,
+    properties.networkProfile.networkPolicy
+""".strip()
+
 
 class NativeScanner:
     """Orchestrates Azure Resource Graph queries, snapshot normalisation, and rule evaluation.
@@ -284,10 +308,29 @@ class NativeScanner:
         nsg_task = self._query_resource_graph(_NSG_QUERY)
         vm_task = self._query_resource_graph(_VM_QUERY)
         kv_task = self._query_resource_graph(_KV_QUERY)
+        sql_task = self._query_resource_graph(_SQL_QUERY)
+        sql_audit_task = self._query_resource_graph(_SQL_AUDIT_QUERY)
+        aks_task = self._query_resource_graph(_AKS_QUERY)
         inventory_task = self._query_resource_graph(_INVENTORY_QUERY)
 
-        raw_storage, raw_nsg, raw_vm, raw_kv, raw_inventory = await asyncio.gather(
-            storage_task, nsg_task, vm_task, kv_task, inventory_task,
+        (
+            raw_storage,
+            raw_nsg,
+            raw_vm,
+            raw_kv,
+            raw_sql,
+            raw_sql_audit,
+            raw_aks,
+            raw_inventory,
+        ) = await asyncio.gather(
+            storage_task,
+            nsg_task,
+            vm_task,
+            kv_task,
+            sql_task,
+            sql_audit_task,
+            aks_task,
+            inventory_task,
         )
 
         snapshots_lists = await asyncio.gather(
@@ -295,6 +338,8 @@ class NativeScanner:
             self._build_nsg_snapshots(raw_nsg),
             self._build_vm_snapshots(raw_vm),
             self._build_keyvault_snapshots(raw_kv),
+            self._build_sql_snapshots(raw_sql, raw_sql_audit),
+            self._build_aks_snapshots(raw_aks),
         )
 
         # Rich typed snapshots take precedence; track their IDs for dedup.
@@ -555,6 +600,133 @@ class NativeScanner:
                     subscription_id=self._subscription_id,
                     resource_group=r.get("resourceGroup", ""),
                     resource_type="Microsoft.KeyVault/vaults",
+                    resource_name=r.get("name", ""),
+                    region=r.get("location", ""),
+                    provider=CloudProvider.AZURE,
+                    data_tier=DataTier.TIER1_NATIVE,
+                    config=config,
+                    tags=r.get("tags") or {},
+                ),
+            )
+        return snapshots
+
+    async def _build_sql_snapshots(
+        self,
+        raw_resources: list[dict[str, Any]],
+        raw_audit_settings: list[dict[str, Any]],
+    ) -> list[ResourceSnapshot]:
+        """Normalise SQL server resources into ResourceSnapshot objects.
+
+        Auditing state lives on the ``auditingSettings/Default`` child
+        resource, so it is fetched separately and joined back to its parent
+        server by ARM resource id. Servers without a matching auditing row
+        report ``"unknown"`` rather than a (potentially false) ``"disabled"``.
+
+        Args:
+            raw_resources: Raw Resource Graph rows for ``microsoft.sql/servers``.
+            raw_audit_settings: Raw rows for ``.../auditingsettings`` children.
+
+        Returns:
+            A list of ``TIER1_NATIVE`` SQL server snapshots.
+        """
+        audit_map: dict[str, str] = {}
+        for a in raw_audit_settings:
+            audit_id = str(a.get("id", "")).lower()
+            parent_id = audit_id.split("/auditingsettings", 1)[0]
+            state = _coalesce(
+                _get_nested(a, "properties_state"),
+                _get_nested(a.get("properties", {}), "state"),
+            )
+            if parent_id and state is not None:
+                audit_map[parent_id] = str(state)
+
+        snapshots: list[ResourceSnapshot] = []
+        for r in raw_resources:
+            props = r.get("properties", r)
+            server_id = str(r.get("id", "")).lower()
+            config: dict[str, Any] = {
+                "public_network_access": _coalesce(
+                    _get_nested(r, "properties_publicNetworkAccess"),
+                    _get_nested(props, "publicNetworkAccess"),
+                ),
+                "minimal_tls_version": _coalesce(
+                    _get_nested(r, "properties_minimalTlsVersion"),
+                    _get_nested(props, "minimalTlsVersion"),
+                ),
+                "auditing_state": audit_map.get(server_id, "unknown"),
+            }
+            snapshots.append(
+                ResourceSnapshot(
+                    subscription_id=self._subscription_id,
+                    resource_group=r.get("resourceGroup", ""),
+                    resource_type="Microsoft.Sql/servers",
+                    resource_name=r.get("name", ""),
+                    region=r.get("location", ""),
+                    provider=CloudProvider.AZURE,
+                    data_tier=DataTier.TIER1_NATIVE,
+                    config=config,
+                    tags=r.get("tags") or {},
+                ),
+            )
+        return snapshots
+
+    async def _build_aks_snapshots(
+        self, raw_resources: list[dict[str, Any]],
+    ) -> list[ResourceSnapshot]:
+        """Normalise AKS managed cluster resources into ResourceSnapshot objects.
+
+        All fields the AKS rules read (RBAC, private cluster, authorized IP
+        ranges, network policy) are top-level on the cluster, so a single
+        Resource Graph query is sufficient.
+
+        Args:
+            raw_resources: Raw rows for ``microsoft.containerservice/managedclusters``.
+
+        Returns:
+            A list of ``TIER1_NATIVE`` AKS cluster snapshots.
+        """
+        snapshots: list[ResourceSnapshot] = []
+        for r in raw_resources:
+            props = r.get("properties", r)
+            config: dict[str, Any] = {
+                "enable_rbac": _coalesce(
+                    _get_nested(r, "properties_enableRBAC"),
+                    _get_nested(props, "enableRBAC"),
+                ),
+                "private_cluster": bool(
+                    _coalesce(
+                        _get_nested(
+                            r,
+                            "properties_apiServerAccessProfile_enablePrivateCluster",
+                        ),
+                        _get_nested(
+                            props,
+                            "apiServerAccessProfile",
+                            "enablePrivateCluster",
+                        ),
+                    )
+                ),
+                "authorized_ip_ranges": _coalesce(
+                    _get_nested(
+                        r,
+                        "properties_apiServerAccessProfile_authorizedIPRanges",
+                    ),
+                    _get_nested(
+                        props, "apiServerAccessProfile", "authorizedIPRanges",
+                    ),
+                )
+                or [],
+                "network_policy": _coalesce(
+                    _get_nested(r, "properties_networkProfile_networkPolicy"),
+                    _get_nested(props, "networkProfile", "networkPolicy"),
+                )
+                or "",
+            }
+            snapshots.append(
+                ResourceSnapshot(
+                    subscription_id=self._subscription_id,
+                    resource_group=r.get("resourceGroup", ""),
+                    resource_type="Microsoft.ContainerService/managedClusters",
                     resource_name=r.get("name", ""),
                     region=r.get("location", ""),
                     provider=CloudProvider.AZURE,
