@@ -262,7 +262,7 @@ class NoMFAConditionalAccessRule(PolicyRule):
 
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if MFA is not enforced via conditional access."""
-        if snapshot.config.get("mfa_enforced") is not True:
+        if snapshot.config.get("mfa_enforced") is False:
             return FindingResult(
                 resource_snapshot=snapshot,
                 rule_id=self.rule_id,
@@ -340,7 +340,7 @@ class SPPasswordExpiryRule(PolicyRule):
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if SP credential expiry exceeds 365 days or is absent."""
         days = snapshot.config.get("credential_expiry_days")
-        if days is None or days > 365:
+        if days is not None and days > 365:
             return FindingResult(
                 resource_snapshot=snapshot,
                 rule_id=self.rule_id,
