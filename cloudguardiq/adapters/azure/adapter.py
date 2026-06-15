@@ -20,6 +20,9 @@ from azure.mgmt.resourcegraph.models import QueryRequest, QueryRequestOptions
 from cloudguardiq.adapters.azure.azure_policy_compliance_adapter import (
     AzurePolicyComplianceAdapter,
 )
+from cloudguardiq.adapters.azure.microsoft_graph_iam_adapter import (
+    MicrosoftGraphIamAdapter,
+)
 from cloudguardiq.adapters.base import AdapterBase
 from cloudguardiq.adapters.capability_detector import CapabilityDetector
 from cloudguardiq.adapters.native_scanner import NativeScanner
@@ -66,6 +69,14 @@ class AzureAdapter(AdapterBase):
             credential=self._async_credential,
             subscription_id=subscription_id,
             db=db,
+        )
+        # Tier 1 (free, Graph Directory.Read + Reader): enrich role-
+        # assignment snapshots with Azure AD identity context (guest/SP
+        # detection, MFA baseline, SP secret expiry, classic admins) so
+        # the IAM-004..008 rules can evaluate. Best-effort; never raises.
+        self._graph_iam_adapter = MicrosoftGraphIamAdapter(
+            credential=self._async_credential,
+            subscription_id=subscription_id,
         )
         # Tier 1 (free, Reader-accessible): ingest Microsoft's authoritative
         # per-control compliance evaluation from Azure Policy. Emits
@@ -114,6 +125,11 @@ class AzureAdapter(AdapterBase):
             len(snapshots),
             len(self._policy_findings),
         )
+
+        # Tier 1 identity enrichment: resolve role-assignment principals
+        # via Microsoft Graph so IAM-004..008 can evaluate. enrich() never
+        # raises -- on failure it returns the snapshots unchanged.
+        snapshots = await self._graph_iam_adapter.enrich(snapshots)
 
         if flags.tier2_available:
             try:

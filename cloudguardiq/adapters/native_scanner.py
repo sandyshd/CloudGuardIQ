@@ -1172,6 +1172,7 @@ class NativeScanner:
             config: dict[str, Any] = {
                 "role_definition_name": row["role_name"],
                 "principal_type": row["principal_type"],
+                "principal_id": row["principal_id"],
                 "scope": row["scope"],
                 "owner_subscription_count": owner_count,
             }
