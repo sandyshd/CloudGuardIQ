@@ -315,6 +315,17 @@ Resources
 """.strip()
 
 
+_ROLE_ASSIGNMENT_QUERY = """
+authorizationresources
+| where type == "microsoft.authorization/roleassignments"
+| project id, name,
+    properties.roleDefinitionId,
+    properties.principalId,
+    properties.principalType,
+    properties.scope
+""".strip()
+
+
 class NativeScanner:
     """Orchestrates Azure Resource Graph queries, snapshot normalisation, and rule evaluation.
 
@@ -361,6 +372,7 @@ class NativeScanner:
         disk_task = self._query_resource_graph(_DISK_QUERY)
         public_ip_task = self._query_resource_graph(_PUBLIC_IP_QUERY)
         load_balancer_task = self._query_resource_graph(_LOAD_BALANCER_QUERY)
+        role_assignment_task = self._query_resource_graph(_ROLE_ASSIGNMENT_QUERY)
         inventory_task = self._query_resource_graph(_INVENTORY_QUERY)
 
         (
@@ -377,6 +389,7 @@ class NativeScanner:
             raw_disk,
             raw_public_ip,
             raw_load_balancer,
+            raw_role_assignment,
             raw_inventory,
         ) = await asyncio.gather(
             storage_task,
@@ -392,6 +405,7 @@ class NativeScanner:
             disk_task,
             public_ip_task,
             load_balancer_task,
+            role_assignment_task,
             inventory_task,
         )
 
@@ -408,6 +422,7 @@ class NativeScanner:
             self._build_disk_snapshots(raw_disk),
             self._build_public_ip_snapshots(raw_public_ip),
             self._build_load_balancer_snapshots(raw_load_balancer),
+            self._build_role_assignment_snapshots(raw_role_assignment),
         )
 
         # Rich typed snapshots take precedence; track their IDs for dedup.
@@ -1060,6 +1075,113 @@ class NativeScanner:
                     resource_type="Microsoft.Network/loadBalancers",
                     resource_name=r.get("name", ""),
                     region=r.get("location", ""),
+                    provider=CloudProvider.AZURE,
+                    data_tier=DataTier.TIER1_NATIVE,
+                    config=config,
+                    tags=r.get("tags") or {},
+                ),
+            )
+        return snapshots
+
+    async def _build_role_assignment_snapshots(
+        self, raw_resources: list[dict[str, Any]],
+    ) -> list[ResourceSnapshot]:
+        """Normalise Azure role assignments into ResourceSnapshot objects.
+
+        Sources rows from the Resource Graph ``authorizationresources`` table and
+        maps the built-in ``roleDefinitionId`` GUID to a human-readable role name
+        so the IAM rules (IAM-001/002/003) can evaluate ``role_definition_name``,
+        ``principal_type``, ``scope`` and ``owner_subscription_count``.
+
+        Args:
+            raw_resources: Raw rows for ``microsoft.authorization/roleassignments``.
+
+        Returns:
+            A list of ``TIER1_NATIVE`` role-assignment snapshots.
+        """
+        # Well-known Azure built-in role definition GUIDs.
+        builtin_roles = {
+            "8e3af657-a8ff-443c-a75c-2fe8c4bcb635": "Owner",
+            "b24988ac-6180-42a0-ab88-20f7382dd24c": "Contributor",
+            "acdd72a7-3385-48ef-bd42-f606fba81ae7": "Reader",
+            "18d7d88d-d35e-4fb5-a5c3-7773c20a72d9": "User Access Administrator",
+        }
+
+        def _sub_id(scope: str) -> str:
+            parts = scope.split("/")
+            if len(parts) >= 3 and parts[1].lower() == "subscriptions":
+                return parts[2]
+            return ""
+
+        # First pass: extract normalised fields per row.
+        rows: list[dict[str, Any]] = []
+        for r in raw_resources:
+            props = r.get("properties", r)
+            role_def_id = str(
+                _coalesce(
+                    _get_nested(r, "properties_roleDefinitionId"),
+                    _get_nested(props, "roleDefinitionId"),
+                )
+                or ""
+            )
+            role_guid = role_def_id.rsplit("/", 1)[-1].lower()
+            role_name = builtin_roles.get(role_guid, role_guid)
+            principal_type = str(
+                _coalesce(
+                    _get_nested(r, "properties_principalType"),
+                    _get_nested(props, "principalType"),
+                )
+                or ""
+            )
+            principal_id = str(
+                _coalesce(
+                    _get_nested(r, "properties_principalId"),
+                    _get_nested(props, "principalId"),
+                )
+                or ""
+            )
+            scope = str(
+                _coalesce(
+                    _get_nested(r, "properties_scope"),
+                    _get_nested(props, "scope"),
+                )
+                or ""
+            )
+            rows.append(
+                {
+                    "raw": r,
+                    "role_name": role_name,
+                    "principal_type": principal_type,
+                    "principal_id": principal_id,
+                    "scope": scope,
+                }
+            )
+
+        # Second pass: count distinct subscriptions where each principal is Owner.
+        owner_subs: dict[str, set[str]] = {}
+        for row in rows:
+            if row["role_name"] == "Owner" and row["principal_id"]:
+                sub = _sub_id(row["scope"])
+                if sub:
+                    owner_subs.setdefault(row["principal_id"], set()).add(sub)
+
+        snapshots: list[ResourceSnapshot] = []
+        for row in rows:
+            r = row["raw"]
+            owner_count = len(owner_subs.get(row["principal_id"], set()))
+            config: dict[str, Any] = {
+                "role_definition_name": row["role_name"],
+                "principal_type": row["principal_type"],
+                "scope": row["scope"],
+                "owner_subscription_count": owner_count,
+            }
+            snapshots.append(
+                ResourceSnapshot(
+                    subscription_id=self._subscription_id,
+                    resource_group="unknown",
+                    resource_type="Microsoft.Authorization/roleAssignments",
+                    resource_name=r.get("name", ""),
+                    region="global",
                     provider=CloudProvider.AZURE,
                     data_tier=DataTier.TIER1_NATIVE,
                     config=config,

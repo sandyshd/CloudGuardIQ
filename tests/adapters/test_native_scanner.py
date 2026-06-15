@@ -950,3 +950,84 @@ class TestFinopsSnapshots:
         findings = PolicyEngine().evaluate(snapshots)
         assert any(f.rule_id == "FIN-002" for f in findings)
 
+
+
+class TestRoleAssignmentSnapshots:
+    """IAM role-assignment snapshots sourced from Resource Graph."""
+
+    @staticmethod
+    def _raw_role_rows() -> list[dict[str, Any]]:
+        owner = (
+            "/subscriptions/sub-1/providers/Microsoft.Authorization/"
+            "roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+        )
+        return [
+            {
+                "id": "/subscriptions/sub-1/.../ra-user",
+                "name": "ra-user",
+                "properties_roleDefinitionId": owner,
+                "properties_principalId": "user-1",
+                "properties_principalType": "User",
+                "properties_scope": "/subscriptions/sub-1",
+            },
+            {
+                "id": "/subscriptions/sub-1/.../ra-sp-1",
+                "name": "ra-sp-1",
+                "properties_roleDefinitionId": owner,
+                "properties_principalId": "sp-1",
+                "properties_principalType": "ServicePrincipal",
+                "properties_scope": "/subscriptions/sub-1",
+            },
+            {
+                "id": "/subscriptions/sub-2/.../ra-sp-2",
+                "name": "ra-sp-2",
+                "properties_roleDefinitionId": owner,
+                "properties_principalId": "sp-1",
+                "properties_principalType": "ServicePrincipal",
+                "properties_scope": "/subscriptions/sub-2/resourceGroups/rg-a",
+            },
+        ]
+
+    async def test_role_assignment_config_populated(
+        self, mock_credential: MagicMock
+    ) -> None:
+        """Role assignment snapshots carry the keys the IAM rules read."""
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"authorizationresources": self._raw_role_rows()},
+        )
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        ras = [
+            s
+            for s in snapshots
+            if s.resource_type == "Microsoft.Authorization/roleAssignments"
+        ]
+        assert len(ras) == 3
+        user = next(s for s in ras if s.resource_name == "ra-user")
+        assert user.config["role_definition_name"] == "Owner"
+        assert user.config["principal_type"] == "User"
+        assert user.config["scope"] == "/subscriptions/sub-1"
+        sp = next(s for s in ras if s.resource_name == "ra-sp-1")
+        assert sp.config["owner_subscription_count"] == 2
+
+    async def test_role_assignment_findings_fire(
+        self, mock_credential: MagicMock
+    ) -> None:
+        """IAM-001/002/003 fire end-to-end from role-assignment snapshots."""
+        from cloudguardiq.policy.engine import PolicyEngine
+
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"authorizationresources": self._raw_role_rows()},
+        )
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock, return_value={}
+        ):
+            snapshots = await scanner.scan()
+
+        fired = {f.rule_id for f in PolicyEngine().evaluate(snapshots)}
+        assert {"IAM-001", "IAM-002", "IAM-003"} <= fired
