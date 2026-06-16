@@ -19,10 +19,7 @@ from cloudguardiq.adapters.aws.aws_policy_compliance_adapter import (
     AWSPolicyComplianceAdapter,
 )
 from cloudguardiq.adapters.base import AdapterBase, CapabilityFlags
-from cloudguardiq.adapters.pricing import (
-    aws_ebs_monthly_usd,
-    aws_eip_unattached_monthly_usd,
-)
+from cloudguardiq.billing.aws_cost_provider import AwsCostProvider
 from cloudguardiq.core.enums import (
     CloudProvider,
     DataTier,
@@ -106,6 +103,11 @@ class AWSAdapter(AdapterBase):
         # Populated by scan() when AWS Security Hub is enabled; merged into
         # the pipeline's findings list alongside policy findings.
         self._securityhub_findings: list[FindingResult] = []
+        self._cost_provider = AwsCostProvider(
+            account_id=account_id,
+            region=region,
+            session=session,
+        )
 
     # ------------------------------------------------------------------
     # Session / client helpers
@@ -239,7 +241,6 @@ class AWSAdapter(AdapterBase):
                             "volume_type": vol_type,
                         },
                         tags=tags,
-                        cost_monthly=aws_ebs_monthly_usd(vol_type, vol_size),
                     )
                 )
         return snaps
@@ -387,9 +388,6 @@ class AWSAdapter(AdapterBase):
         for a in addrs:
             alloc = a.get("AllocationId") or a.get("PublicIp") or ""
             assoc_id = a.get("AssociationId")
-            # AWS bills every public IPv4 hourly; the cost is only "waste"
-            # when the EIP is not associated with a running resource.
-            eip_cost = 0.0 if assoc_id else aws_eip_unattached_monthly_usd()
             snaps.append(
                 self._snapshot(
                     resource_type="AWS::EC2::EIP",
@@ -400,7 +398,6 @@ class AWSAdapter(AdapterBase):
                         "public_ip": a.get("PublicIp"),
                         "domain": a.get("Domain"),
                     },
-                    cost_monthly=eip_cost,
                 )
             )
         return snaps
@@ -1244,6 +1241,74 @@ class AWSAdapter(AdapterBase):
             data_tier=DataTier.TIER2_ENRICHED,
         )
 
+    # ------------------------------------------------------------------
+    # Cost enrichment (live Price List + Cost Explorer)
+    # ------------------------------------------------------------------
+
+    _FINOPS_COST_TYPES = (
+        "AWS::EC2::Volume",
+        "AWS::EC2::Instance",
+        "AWS::EC2::EIP",
+    )
+
+    def _list_price_sku(self, snap: ResourceSnapshot) -> str | None:
+        """Return the logical Price List sku for a cost-bearing snapshot."""
+        if snap.resource_type == "AWS::EC2::Volume":
+            vol_type = snap.config.get("volume_type") or ""
+            size_gb = snap.config.get("size") or 0
+            if not vol_type or not size_gb:
+                return None
+            return f"ebs:{vol_type}:{int(size_gb)}"
+        if snap.resource_type == "AWS::EC2::Instance":
+            instance_type = snap.config.get("instance_type") or ""
+            return f"ec2:{instance_type}" if instance_type else None
+        if snap.resource_type == "AWS::EC2::EIP":
+            # Only idle (unassociated) EIPs are billable waste here.
+            if snap.config.get("association_id"):
+                return None
+            return "eip:idle"
+        return None
+
+    async def _enrich_costs(self, snapshots: list[ResourceSnapshot]) -> None:
+        """Stamp ``cost_monthly`` (and EC2 rightsizing) from live AWS APIs.
+
+        Resolution order per resource:
+          1. Cost Explorer actual (amortized) cost -> Tier-2 enrichment.
+          2. Price List list price (with static catalog fallback) -> Tier-1.
+
+        Best-effort: every lookup degrades gracefully so a billing/pricing
+        outage or IAM denial can never break the scan.
+        """
+        targets = [s for s in snapshots if s.resource_type in self._FINOPS_COST_TYPES]
+        if not targets:
+            return
+
+        resource_ids = [s.resource_name for s in targets]
+        actual = await self._cost_provider.get_actual_cost(resource_ids)
+
+        for snap in targets:
+            rid = snap.resource_name.lower()
+            if rid in actual and actual[rid] > 0:
+                snap.cost_monthly = round(actual[rid], 2)
+                snap.data_tier = DataTier.TIER2_ENRICHED
+            else:
+                sku = self._list_price_sku(snap)
+                if sku is not None:
+                    price = await self._cost_provider.get_list_price(
+                        sku, snap.region, default=snap.cost_monthly,
+                    )
+                    snap.cost_monthly = round(float(price), 2)
+
+            # Live EC2 rightsizing basis for downstream FinOps rules.
+            if snap.resource_type == "AWS::EC2::Instance":
+                instance_type = snap.config.get("instance_type")
+                if instance_type:
+                    savings = await self._cost_provider.estimate_ec2_rightsizing_savings(
+                        str(instance_type), snap.region,
+                    )
+                    if savings > 0:
+                        snap.config["rightsizing_savings_monthly_usd"] = savings
+
     async def scan(self) -> list[ResourceSnapshot]:
         """Scan the configured account/region and return all snapshots."""
 
@@ -1283,6 +1348,11 @@ class AWSAdapter(AdapterBase):
             len(snapshots),
             len(self._policy_findings),
         )
+
+        # Live cost enrichment (Cost Explorer actual, else Price List list
+        # price). Best-effort: never raises so a billing outage cannot break
+        # the scan.
+        await self._enrich_costs(snapshots)
 
         # Security Hub findings as first-class findings. Best-effort; never
         # raises (returns [] on any failure) so a Security Hub outage or a
