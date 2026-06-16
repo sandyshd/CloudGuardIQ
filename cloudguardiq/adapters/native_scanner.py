@@ -431,12 +431,18 @@ class NativeScanner:
                 snapshots.append(snap)
                 seen_ids.add(snap.id)
 
-        # Best-effort cost enrichment
-        resource_ids = [s.id for s in snapshots]
+        # Best-effort cost enrichment. Cost Management keys spend by the
+        # canonical ARM resource id, while ``snap.id`` is a synthesized
+        # cloud-agnostic key -- so we match on a reconstructed ARM id and fall
+        # back to the synthesized id for any provider that returns it.
+        resource_ids = [_azure_arm_id(s) for s in snapshots]
         cost_map = await self._fetch_cost_data(resource_ids)
         for snap in snapshots:
-            if snap.id in cost_map:
-                snap.cost_monthly = cost_map[snap.id]
+            cost = cost_map.get(_azure_arm_id(snap))
+            if cost is None:
+                cost = cost_map.get(snap.id)
+            if cost is not None:
+                snap.cost_monthly = cost
                 # Actual billed cost came from Cost Management -> promote the
                 # provenance tier (never downgrade a higher tier).
                 if snap.data_tier == DataTier.TIER1_NATIVE:
@@ -1281,6 +1287,23 @@ class NativeScanner:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _azure_arm_id(snap: ResourceSnapshot) -> str:
+    """Reconstruct the canonical, lower-cased Azure ARM resource id.
+
+    Azure Cost Management keys spend by the full ARM id
+    (``/subscriptions/<sub>/resourceGroups/<rg>/providers/<type>/<name>``),
+    whereas :attr:`ResourceSnapshot.id` is a synthesized cloud-agnostic key.
+    Reconstructing the ARM id from the snapshot fields lets cost data bind to
+    the right resource. Lower-casing matches the provider, which normalises
+    every returned id to lower case.
+    """
+    return (
+        f"/subscriptions/{snap.subscription_id}"
+        f"/resourceGroups/{snap.resource_group}"
+        f"/providers/{snap.resource_type}/{snap.resource_name}"
+    ).lower()
 
 
 def _get_nested(obj: dict[str, Any], *keys: str) -> Any:

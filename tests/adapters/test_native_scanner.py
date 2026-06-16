@@ -510,6 +510,43 @@ class TestCostDataEnrichment:
         enriched = [s for s in snapshots if s.cost_monthly == 42.50]
         assert len(enriched) == 1
 
+    async def test_cost_enrichment_matches_arm_resource_id(
+        self,
+        mock_credential: MagicMock,
+        raw_storage_resources: list[dict[str, Any]],
+    ) -> None:
+        """Cost must bind when keyed by the real Azure ARM resource id.
+
+        Azure Cost Management returns spend keyed by the canonical ARM id
+        (``/subscriptions/.../providers/Microsoft.Storage/storageAccounts/...``),
+        but ``ResourceSnapshot.id`` is a synthesized cloud-agnostic key. The
+        enrichment must reconstruct and match on the ARM id, otherwise every
+        Azure resource shows a cost of zero.
+        """
+        scanner = _build_scanner_with_mock_rg(
+            mock_credential,
+            {"storageaccounts": raw_storage_resources},
+        )
+
+        with patch.object(
+            scanner, "_fetch_cost_data", new_callable=AsyncMock
+        ) as mock_cost:
+            snapshots_preview = await scanner._build_storage_snapshots(
+                raw_storage_resources
+            )
+            snap = snapshots_preview[0]
+            arm_id = (
+                f"/subscriptions/{snap.subscription_id}"
+                f"/resourceGroups/{snap.resource_group}"
+                f"/providers/{snap.resource_type}/{snap.resource_name}"
+            ).lower()
+            assert arm_id != snap.id, "ARM id and synthesized id should differ"
+            mock_cost.return_value = {arm_id: 42.50}
+            snapshots = await scanner.scan()
+
+        enriched = [s for s in snapshots if s.cost_monthly == 42.50]
+        assert len(enriched) == 1
+
 
 class TestScanSucceedsWhenCostApiFails:
     async def test_scan_succeeds_when_cost_api_fails(
