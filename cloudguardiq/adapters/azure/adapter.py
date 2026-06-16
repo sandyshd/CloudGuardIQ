@@ -9,6 +9,7 @@ AzureAdapter inherits AdapterBase and orchestrates:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -23,10 +24,15 @@ from cloudguardiq.adapters.azure.azure_policy_compliance_adapter import (
 from cloudguardiq.adapters.azure.microsoft_graph_iam_adapter import (
     MicrosoftGraphIamAdapter,
 )
-from cloudguardiq.adapters.base import AdapterBase
+from cloudguardiq.adapters.base import AdapterBase, CapabilityFlags
 from cloudguardiq.adapters.capability_detector import CapabilityDetector
 from cloudguardiq.adapters.native_scanner import NativeScanner
-from cloudguardiq.core.enums import DataTier
+from cloudguardiq.core.enums import (
+    CloudProvider,
+    DataTier,
+    FindingType,
+    Severity,
+)
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
 if TYPE_CHECKING:
@@ -39,6 +45,21 @@ logger = logging.getLogger(__name__)
 # explicit discriminator -- these are informational and expected.
 logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.ERROR)
 logging.getLogger("azure.core.serialization").setLevel(logging.ERROR)
+
+#: Maps a Defender for Cloud assessment severity string to our enum.
+_DEFENDER_SEVERITY_MAP: dict[str, Severity] = {
+    "low": Severity.LOW,
+    "medium": Severity.MEDIUM,
+    "high": Severity.HIGH,
+}
+
+#: Maps a Defender assessment ``name`` to the native rule_id it overlaps.
+#: When both fire for the same resource the pipeline prefers the native
+#: finding (richer remediation) and drops the Defender duplicate. Defender
+#: findings without an entry here are always kept -- uncovered resource
+#: types are the whole point of this ingestion. Extend as overlaps are
+#: confirmed against real assessment ids.
+DEFENDER_TO_NATIVE_RULE: dict[str, str] = {}
 
 
 class AzureAdapter(AdapterBase):
@@ -88,6 +109,9 @@ class AzureAdapter(AdapterBase):
         )
         # Populated by scan(); merged into the pipeline's findings list.
         self._policy_findings: list[FindingResult] = []
+        # Populated by scan() when Defender for Cloud is present; merged
+        # into the pipeline's findings list alongside policy findings.
+        self._defender_findings: list[FindingResult] = []
 
     # ------------------------------------------------------------------
     # AdapterBase abstract methods
@@ -153,6 +177,18 @@ class AzureAdapter(AdapterBase):
                     exc_info=True,
                 )
 
+        # Defender for Cloud assessments as first-class findings. Gated on
+        # capability flags inside the method; never raises (returns [] on
+        # any failure) so a Defender outage cannot break the scan.
+        self._defender_findings = await self.fetch_defender_findings(
+            snapshots, flags=flags,
+        )
+        logger.info(
+            "Defender ingestion produced %d finding(s) for %s",
+            len(self._defender_findings),
+            self._subscription_id,
+        )
+
         return snapshots
 
     async def fetch_policy_findings(self) -> list[FindingResult]:
@@ -178,6 +214,18 @@ class AzureAdapter(AdapterBase):
         assigned).
         """
         return self._policy_findings
+
+    @property
+    def defender_findings(self) -> list[FindingResult]:
+        """Defender for Cloud findings from the most recent ``scan()``.
+
+        The scan pipeline merges these into the rule-engine findings,
+        preferring a native finding when both describe the same
+        (resource, issue) while keeping Defender-only findings for resource
+        types that have no native rule. Empty until ``scan()`` has run (or
+        when Defender for Cloud is not enabled on the subscription).
+        """
+        return self._defender_findings
 
     async def get_api_contract(self) -> dict[str, Any]:
         """Return current API response schema fingerprint for self-healing monitor.
@@ -273,6 +321,204 @@ class AzureAdapter(AdapterBase):
             return f"{rg}/{name}"
         except (ValueError, IndexError):
             return None
+
+    def _security_center_client(self) -> Any:
+        """Return an async Defender for Cloud ``SecurityCenter`` client.
+
+        Isolated so tests can substitute a fake client without importing
+        the Azure SDK or making network calls. All Defender SDK usage is
+        confined to the adapter layer.
+        """
+        from azure.mgmt.security.aio import SecurityCenter
+
+        return SecurityCenter(
+            credential=self._async_credential,
+            subscription_id=self._subscription_id,
+        )
+
+    async def fetch_defender_findings(
+        self,
+        snapshots: list[ResourceSnapshot],
+        flags: CapabilityFlags | None = None,
+    ) -> list[FindingResult]:
+        """Ingest Defender for Cloud assessments as first-class findings.
+
+        Maps every ``Unhealthy`` assessment to a :class:`FindingResult` so
+        resource types without a native rule still surface real security
+        findings. Correlates each assessment to a scanned snapshot by ARM
+        resource id; when no snapshot matches (type not in inventory) the
+        finding is still emitted against a minimal snapshot built from the
+        ARM id. When ``tier3_available`` Defender alerts add deeper signal.
+
+        Gating: returns ``[]`` immediately unless ``tier2_available``.
+        Graceful degradation: any Defender failure is logged and yields
+        ``[]`` -- a Defender outage never breaks the scan.
+
+        Args:
+            snapshots: The Tier 1 inventory used to correlate assessments.
+            flags: Pre-detected capability flags; re-detected when omitted.
+
+        Returns:
+            Normalised, priority-scored Defender findings (never raw
+            payloads).
+        """
+        if flags is None:
+            flags = await self._capability_detector.detect()
+        if not flags.tier2_available:
+            return []
+
+        lookup: dict[str, ResourceSnapshot] = {
+            f"{s.resource_group.lower()}/{s.resource_name.lower()}": s
+            for s in snapshots
+        }
+        findings: list[FindingResult] = []
+        try:
+            client = self._security_center_client()
+        except Exception:
+            logger.warning(
+                "Defender client init failed for %s -- skipping ingestion",
+                self._subscription_id,
+                exc_info=True,
+            )
+            return []
+        try:
+            scope = f"/subscriptions/{self._subscription_id}"
+            async for assessment in client.assessments.list(scope=scope):
+                finding = self._assessment_to_finding(assessment, lookup)
+                if finding is not None:
+                    findings.append(finding)
+        except Exception:
+            logger.warning(
+                "Defender assessment ingestion failed for %s -- "
+                "returning no Defender findings",
+                self._subscription_id,
+                exc_info=True,
+            )
+            findings = []
+        finally:
+            with contextlib.suppress(Exception):
+                await client.close()
+        return findings
+
+    def _assessment_to_finding(
+        self,
+        assessment: Any,
+        lookup: dict[str, ResourceSnapshot],
+    ) -> FindingResult | None:
+        """Convert one Defender assessment to a FindingResult.
+
+        Returns ``None`` for assessments whose status is not ``Unhealthy``.
+        """
+        status = getattr(assessment, "status", None)
+        code = str(getattr(status, "code", "") or "")
+        if code.lower() != "unhealthy":
+            return None
+
+        details = getattr(assessment, "resource_details", None)
+        arm_id = str(getattr(details, "id", "") or "")
+        if not arm_id:
+            full_id = str(getattr(assessment, "id", "") or "")
+            arm_id = full_id.split("/providers/Microsoft.Security/")[0]
+
+        meta = getattr(assessment, "metadata", None)
+        severity_raw = str(getattr(meta, "severity", "") or "")
+        severity = _DEFENDER_SEVERITY_MAP.get(
+            severity_raw.lower(), Severity.MEDIUM,
+        )
+        description = (
+            str(getattr(meta, "description", "") or "")
+            or str(getattr(status, "description", "") or "")
+        )
+        categories = getattr(meta, "categories", None) or []
+        if isinstance(categories, list):
+            frameworks = [str(c) for c in categories]
+        elif categories:
+            frameworks = [str(categories)]
+        else:
+            frameworks = []
+
+        name = str(getattr(assessment, "name", "") or "")
+        display_name = (
+            str(getattr(assessment, "display_name", "") or "")
+            or str(getattr(meta, "display_name", "") or "")
+            or name
+        )
+        rule_id = f"DEFENDER-{name}"
+
+        key = self._extract_arm_resource_key(arm_id) if arm_id else None
+        snapshot = lookup.get(key) if key else None
+        if snapshot is not None:
+            snapshot.data_tier = DataTier.TIER2_FREE_CSPM
+            resource_id = snapshot.id
+        else:
+            snapshot = (
+                self._build_minimal_snapshot(arm_id) if arm_id else None
+            )
+            resource_id = arm_id or rule_id
+
+        evidence: dict[str, Any] = {
+            "assessment_name": name,
+            "status": code,
+            "arm_resource_id": arm_id,
+            "severity": severity_raw,
+            "resource_key": key or "",
+            "native_rule_overlap": DEFENDER_TO_NATIVE_RULE.get(name, ""),
+            "categories": frameworks,
+        }
+        remediation = str(
+            getattr(meta, "remediation_description", "") or ""
+        )
+        if remediation:
+            evidence["remediation"] = remediation
+
+        finding = FindingResult(
+            finding_id=AdapterBase.build_finding_id(rule_id, resource_id),
+            resource_snapshot=snapshot,
+            rule_id=rule_id,
+            rule_name=display_name,
+            severity=severity,
+            finding_type=FindingType.SECURITY,
+            description=description,
+            evidence=evidence,
+            compliance_frameworks=frameworks,
+        )
+        finding.compute_priority_score()
+        return finding
+
+    @staticmethod
+    def _build_minimal_snapshot(arm_id: str) -> ResourceSnapshot:
+        """Build a minimal snapshot from an ARM resource id.
+
+        Used when a Defender assessment targets a resource type absent from
+        the Tier 1 inventory, so the finding still carries resource context
+        downstream. ``config`` is left empty -- the full config is not
+        needed for security scoring.
+        """
+        parts = arm_id.lower().split("/")
+        subscription_id = ""
+        resource_group = ""
+        resource_type = "unknown"
+        resource_name = arm_id.rstrip("/").split("/")[-1] or "unknown"
+        with contextlib.suppress(ValueError, IndexError):
+            subscription_id = parts[parts.index("subscriptions") + 1]
+        with contextlib.suppress(ValueError, IndexError):
+            resource_group = parts[parts.index("resourcegroups") + 1]
+        with contextlib.suppress(ValueError, IndexError):
+            prov_idx = parts.index("providers")
+            resource_type = (
+                "/".join(parts[prov_idx + 1 : prov_idx + 3]) or "unknown"
+            )
+        return ResourceSnapshot(
+            id=arm_id,
+            provider=CloudProvider.AZURE,
+            subscription_id=subscription_id or "unknown",
+            resource_group=resource_group or "unknown",
+            resource_type=resource_type,
+            resource_name=resource_name,
+            region="unknown",
+            config={},
+            data_tier=DataTier.TIER2_FREE_CSPM,
+        )
 
     async def _enrich_with_secure_score(
         self, snapshots: list[ResourceSnapshot]

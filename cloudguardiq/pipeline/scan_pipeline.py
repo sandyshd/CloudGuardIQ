@@ -154,6 +154,24 @@ class ScanPipeline:
                 scan_id,
             )
 
+        # Step 2c: Merge Defender for Cloud findings (Tier 2/3). These cover
+        # resource types with no native rule. When a Defender assessment
+        # overlaps a native rule that already fired for the same resource we
+        # drop the Defender duplicate and keep the richer native finding.
+        defender_findings = getattr(self._adapter, "defender_findings", None)
+        if defender_findings:
+            kept = self._dedupe_defender_against_native(
+                findings, defender_findings,
+            )
+            findings.extend(kept)
+            logger.info(
+                "Merged %d Defender finding(s) into scan %s "
+                "(%d dropped as native duplicates)",
+                len(kept),
+                scan_id,
+                len(defender_findings) - len(kept),
+            )
+
         # Collapse finding_id collisions from the policy merge so the
         # persisted (deduped) count matches the reported findings_count.
         findings = dedupe_findings_by_id(findings)
@@ -263,6 +281,43 @@ class ScanPipeline:
             result.duration_seconds,
         )
         return result
+
+    @staticmethod
+    def _dedupe_defender_against_native(
+        native_findings: list[FindingResult],
+        defender_findings: list[FindingResult],
+    ) -> list[FindingResult]:
+        """Drop Defender findings that duplicate a fired native rule.
+
+        A Defender finding is dropped only when its evidence declares it
+        overlaps a specific native rule (``native_rule_overlap``) AND that
+        rule actually fired for the same resource (``resource_key``).
+        Defender findings without a declared overlap -- the common case for
+        resource types lacking native rules -- are always kept.
+
+        Args:
+            native_findings: Findings already produced by the rule engine
+                and policy merge (the preferred source on overlap).
+            defender_findings: Candidate Defender findings to merge.
+
+        Returns:
+            The subset of ``defender_findings`` to keep.
+        """
+        native_keys: set[tuple[str, str]] = set()
+        for finding in native_findings:
+            snap = finding.resource_snapshot
+            if snap is None:
+                continue
+            rkey = f"{snap.resource_group.lower()}/{snap.resource_name.lower()}"
+            native_keys.add((rkey, finding.rule_id))
+        kept: list[FindingResult] = []
+        for finding in defender_findings:
+            overlap = str(finding.evidence.get("native_rule_overlap") or "")
+            resource_key = str(finding.evidence.get("resource_key") or "")
+            if overlap and (resource_key, overlap) in native_keys:
+                continue
+            kept.append(finding)
+        return kept
 
     async def _resolve_plan(self, tenant_id: str) -> PlanLimits:
         """Resolve the tenant's plan; defaults to FREE when unknown.
