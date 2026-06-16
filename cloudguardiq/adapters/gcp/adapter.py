@@ -16,15 +16,36 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from cloudguardiq.adapters.base import AdapterBase
+from cloudguardiq.adapters.base import AdapterBase, CapabilityFlags
 from cloudguardiq.adapters.gcp.gcp_policy_compliance_adapter import (
     GCPPolicyComplianceAdapter,
 )
 from cloudguardiq.adapters.pricing import gcp_persistent_disk_monthly_usd
-from cloudguardiq.core.enums import CloudProvider, DataTier
+from cloudguardiq.core.enums import (
+    CloudProvider,
+    DataTier,
+    FindingType,
+    Severity,
+)
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
 logger = logging.getLogger(__name__)
+
+#: Maps a Security Command Center finding ``severity`` to our enum.
+_SCC_SEVERITY_MAP: dict[str, Severity] = {
+    "CRITICAL": Severity.CRITICAL,
+    "HIGH": Severity.HIGH,
+    "MEDIUM": Severity.MEDIUM,
+    "LOW": Severity.LOW,
+    "INFO": Severity.INFORMATIONAL,
+}
+
+#: Maps an SCC finding ``category`` to the native rule_id it overlaps.
+#: When both fire for the same resource the pipeline prefers the native
+#: finding (richer remediation) and drops the SCC duplicate. Findings
+#: without an entry are always kept -- uncovered resource types are the
+#: whole point of this ingestion. Extend as overlaps are confirmed.
+SCC_TO_NATIVE_RULE: dict[str, str] = {}
 
 
 def _require_google() -> None:
@@ -65,6 +86,9 @@ class GCPAdapter(AdapterBase):
             credentials=credentials,
         )
         self._policy_findings: list[FindingResult] = []
+        # Populated by scan() when Security Command Center is enabled;
+        # merged into the pipeline's findings list alongside policy findings.
+        self._scc_findings: list[FindingResult] = []
 
     # ------------------------------------------------------------------
     # Client helpers
@@ -995,6 +1019,216 @@ class GCPAdapter(AdapterBase):
     # AdapterBase contract
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Security Command Center ingestion (Tier 2/3 cloud-native findings)
+    # ------------------------------------------------------------------
+
+    def _scc_security_client(self) -> Any:
+        """Return a Security Command Center client.
+
+        Isolated so tests can substitute a fake client without importing
+        the google client libraries or making network calls. All SCC SDK
+        usage is confined to the adapter layer.
+        """
+        from google.cloud import securitycenter_v1
+
+        return securitycenter_v1.SecurityCenterClient(
+            credentials=self._credentials,
+        )
+
+    async def fetch_scc_findings(
+        self,
+        snapshots: list[ResourceSnapshot],
+        flags: CapabilityFlags | None = None,
+    ) -> list[FindingResult]:
+        """Ingest GCP Security Command Center findings as first-class findings.
+
+        Maps every ACTIVE SCC finding to a :class:`FindingResult` so
+        resource types without a native rule still surface real security
+        findings. Correlates each finding to a scanned snapshot by the
+        resource name parsed from ``resource_name``; when no snapshot
+        matches (type not in inventory) the finding is still emitted against
+        a minimal snapshot built from the resource name.
+
+        Gating: when ``flags`` is provided and neither ``tier2_available``
+        nor ``tier3_available`` is set, returns ``[]`` without calling GCP.
+        Otherwise it is best-effort -- a project without SCC or a permission
+        error simply yields ``[]``.
+
+        Args:
+            snapshots: The Tier 1 inventory used to correlate findings.
+            flags: Optional capability flags used only to short-circuit.
+
+        Returns:
+            Normalised, priority-scored SCC findings (never raw payloads).
+        """
+        if flags is not None and not (
+            flags.tier2_available or flags.tier3_available
+        ):
+            return []
+
+        lookup: dict[str, ResourceSnapshot] = {
+            s.resource_name.lower(): s for s in snapshots
+        }
+
+        def _collect_rows() -> list[dict[str, Any]]:
+            rows: list[dict[str, Any]] = []
+            client = self._scc_security_client()
+            req = {
+                "parent": f"projects/{self.project_id}/sources/-",
+                "filter": 'state="ACTIVE"',
+                "page_size": 200,
+            }
+            for item in client.list_findings(request=req):
+                rows.append(self._scc_finding_to_dict(item))
+            return rows
+
+        try:
+            rows = await asyncio.to_thread(_collect_rows)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "GCP SCC ingestion failed for %s -- returning no SCC findings",
+                self.project_id,
+                exc_info=True,
+            )
+            return []
+
+        findings: list[FindingResult] = []
+        for row in rows:
+            finding = self._scc_finding_to_result(row, lookup)
+            if finding is not None:
+                findings.append(finding)
+        return findings
+
+    def _scc_finding_to_result(
+        self,
+        row: dict[str, Any],
+        lookup: dict[str, ResourceSnapshot],
+    ) -> FindingResult | None:
+        """Convert one SCC finding to a FindingResult.
+
+        Returns ``None`` for findings whose ``state`` is not ACTIVE or which
+        carry no resource name.
+        """
+        state = str(row.get("state") or "ACTIVE")
+        if state.upper() != "ACTIVE":
+            return None
+
+        resource_full = str(
+            row.get("resource_name") or row.get("resourceName") or ""
+        )
+        if not resource_full:
+            return None
+
+        category = str(row.get("category") or "SCC finding")
+        description = str(row.get("description") or category)
+        severity_label = str(row.get("severity") or "MEDIUM").upper()
+        severity = _SCC_SEVERITY_MAP.get(severity_label, Severity.MEDIUM)
+
+        rule_id = f"SCC-{category}"
+        resource_name = self._scc_resource_name(resource_full)
+        snapshot = lookup.get(resource_name.lower()) if resource_name else None
+        if snapshot is not None:
+            snapshot.data_tier = DataTier.TIER2_ENRICHED
+            resource_id = snapshot.id
+        else:
+            snapshot = self._build_minimal_snapshot_from_resource(
+                resource_full,
+            )
+            resource_id = resource_full
+
+        resource_key = (
+            f"{snapshot.resource_group.lower()}/{snapshot.resource_name.lower()}"
+        )
+        evidence: dict[str, Any] = {
+            "finding_name": str(row.get("name") or ""),
+            "category": category,
+            "resource_name": resource_full,
+            "severity": severity_label,
+            "state": state,
+            "event_time": str(row.get("event_time") or ""),
+            "resource_key": resource_key,
+            "native_rule_overlap": SCC_TO_NATIVE_RULE.get(category, ""),
+        }
+
+        finding = FindingResult(
+            finding_id=AdapterBase.build_finding_id(rule_id, resource_id),
+            resource_snapshot=snapshot,
+            rule_id=rule_id,
+            rule_name=category,
+            severity=severity,
+            finding_type=FindingType.SECURITY,
+            description=description,
+            evidence=evidence,
+            compliance_frameworks=[],
+        )
+        finding.compute_priority_score()
+        return finding
+
+    @staticmethod
+    def _scc_finding_to_dict(item: Any) -> dict[str, Any]:
+        """Normalise an SCC list item (or dict) into a flat dict."""
+        if isinstance(item, dict):
+            return item
+        finding = getattr(item, "finding", None)
+        out: dict[str, Any] = {}
+        if finding is not None:
+            as_dict = getattr(finding, "to_dict", None)
+            if callable(as_dict):
+                try:
+                    out = dict(as_dict())
+                except Exception:  # pragma: no cover - defensive
+                    out = {}
+        if not out:
+            to_dict = getattr(item, "to_dict", None)
+            if callable(to_dict):
+                try:
+                    out = dict(to_dict())
+                except Exception:  # pragma: no cover - defensive
+                    out = {}
+        resource = getattr(item, "resource", None)
+        res_name = getattr(resource, "name", None) or getattr(
+            item, "resource_name", None
+        )
+        if res_name and "resource_name" not in out:
+            out["resource_name"] = res_name
+        return out
+
+    @staticmethod
+    def _scc_resource_name(resource_full: str) -> str:
+        """Extract the trailing resource name from an SCC resourceName."""
+        if not resource_full:
+            return ""
+        return resource_full.rstrip("/").split("/")[-1]
+
+    def _build_minimal_snapshot_from_resource(
+        self, resource_full: str,
+    ) -> ResourceSnapshot:
+        """Build a minimal snapshot from an SCC resource name.
+
+        Used when an SCC finding targets a resource type absent from the
+        Tier 1 inventory, so the finding still carries resource context
+        downstream. ``config`` is left empty -- the full config is not needed
+        for security scoring.
+        """
+        parts = [p for p in resource_full.split("/") if p]
+        resource_type = "google.cloud.resource"
+        if len(parts) >= 2:
+            resource_type = parts[-2]
+        resource_name = self._scc_resource_name(resource_full) or resource_full
+        return ResourceSnapshot(
+            tenant_id="",
+            provider=CloudProvider.GCP,
+            subscription_id=self.project_id,
+            resource_group="gcp-global",
+            resource_type=resource_type,
+            resource_name=resource_name,
+            region="global",
+            config={},
+            tags={},
+            data_tier=DataTier.TIER2_ENRICHED,
+        )
+
     async def scan(self) -> list[ResourceSnapshot]:
         """Scan the configured project and return all snapshots."""
         _require_google()
@@ -1031,6 +1265,16 @@ class GCPAdapter(AdapterBase):
             len(snapshots),
             len(self._policy_findings),
         )
+
+        # Security Command Center findings as first-class findings.
+        # Best-effort; never raises (returns [] on any failure) so an SCC
+        # outage or a project without SCC cannot break the scan.
+        self._scc_findings = await self.fetch_scc_findings(snapshots)
+        logger.info(
+            "GCP SCC ingestion produced %d finding(s) for %s",
+            len(self._scc_findings),
+            self.project_id,
+        )
         return snapshots
 
     async def fetch_policy_findings(self) -> list[FindingResult]:
@@ -1042,6 +1286,18 @@ class GCPAdapter(AdapterBase):
     def policy_findings(self) -> list[FindingResult]:
         """Policy compliance findings from the most recent scan."""
         return self._policy_findings
+
+    @property
+    def scc_findings(self) -> list[FindingResult]:
+        """SCC findings from the most recent ``scan()``.
+
+        The scan pipeline merges these into the rule-engine findings,
+        preferring a native finding when both describe the same (resource,
+        issue) while keeping SCC-only findings for resource types that have
+        no native rule. Empty until ``scan()`` has run (or when Security
+        Command Center is not enabled on the project).
+        """
+        return self._scc_findings
 
     async def validate_connection(self) -> bool:
         """Return True when a lightweight project read succeeds."""
