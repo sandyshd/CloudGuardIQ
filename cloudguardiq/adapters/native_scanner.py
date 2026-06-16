@@ -8,23 +8,11 @@ with cost data, and exposes a RULE_REGISTRY of all PolicyRule instances.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from functools import partial
 from typing import Any, Literal, Protocol
 
 from azure.core.credentials import TokenCredential
-from azure.core.exceptions import HttpResponseError
-from azure.mgmt.costmanagement import CostManagementClient
-from azure.mgmt.costmanagement.models import (
-    ExportType,
-    QueryAggregation,
-    QueryDataset,
-    QueryDefinition,
-    QueryGrouping,
-    QueryTimePeriod,
-    TimeframeType,
-)
 from azure.mgmt.resourcegraph import ResourceGraphClient
 from azure.mgmt.resourcegraph.models import (
     QueryRequest,
@@ -106,7 +94,7 @@ from cloudguardiq.adapters.rules.azure.storage import (
     PublicBlobAccessRule,
     SharedKeyAuthRule,
 )
-from cloudguardiq.billing.cost_provider import CostWindow
+from cloudguardiq.billing.azure_cost_provider import AzureCostProvider
 from cloudguardiq.core.enums import CloudProvider, DataTier
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
@@ -344,6 +332,7 @@ class NativeScanner:
         self._subscription_id = subscription_id
         self._rg_client = ResourceGraphClient(credential) if credential else None
         self._rules = list(RULE_REGISTRY)
+        self._cost_provider = AzureCostProvider(credential, subscription_id)
 
     def register(self, rule: ScannerRule) -> None:
         """Register a scanner rule (legacy API)."""
@@ -448,8 +437,36 @@ class NativeScanner:
         for snap in snapshots:
             if snap.id in cost_map:
                 snap.cost_monthly = cost_map[snap.id]
+                # Actual billed cost came from Cost Management -> promote the
+                # provenance tier (never downgrade a higher tier).
+                if snap.data_tier == DataTier.TIER1_NATIVE:
+                    snap.data_tier = DataTier.TIER2_ENRICHED
+
+        # Live VM rightsizing estimate (price delta vs. one size down).
+        await self._enrich_rightsizing(snapshots)
 
         return snapshots
+
+    async def _enrich_rightsizing(self, snapshots: list[ResourceSnapshot]) -> None:
+        """Stamp live VM rightsizing savings into snapshot config.
+
+        For each virtual machine snapshot we compute the monthly USD delta
+        between its current SKU and the recommended one-size-down SKU using
+        live Retail Prices, and store it under
+        ``config['rightsizing_savings_monthly_usd']``. Resources without a VM
+        size, a known smaller SKU, or available pricing are left untouched.
+        """
+        for snap in snapshots:
+            if snap.resource_type != "Microsoft.Compute/virtualMachines":
+                continue
+            vm_size = snap.config.get("vm_size") or snap.config.get("vmSize")
+            if not vm_size:
+                continue
+            savings = await self._cost_provider.estimate_vm_rightsizing_savings(
+                str(vm_size), snap.region,
+            )
+            if savings > 0:
+                snap.config["rightsizing_savings_monthly_usd"] = savings
 
     # ------------------------------------------------------------------
     # Resource Graph helpers
@@ -636,12 +653,17 @@ class NativeScanner:
                     else encryption_settings
                 )
 
+            vm_size = _coalesce(
+                _get_nested(r, "properties_hardwareProfile_vmSize"),
+                _get_nested(props, "hardwareProfile", "vmSize"),
+            )
             config: dict[str, Any] = {
                 "managedDisk": managed_disk,
                 "encryptionAtHost": encryption_enabled,
                 "encryptionSettings": encryption_settings,
                 "networkInterfaces": network_interfaces,
                 "osDiskIsManaged": managed_disk is not None,
+                "vmSize": vm_size,
             }
             snapshots.append(
                 ResourceSnapshot(
@@ -1231,108 +1253,29 @@ class NativeScanner:
     # Cost enrichment
     # ------------------------------------------------------------------
 
-    async def _run_cost_query_with_retry(
-        self,
-        loop: asyncio.AbstractEventLoop,
-        call: Any,
-        max_attempts: int = 5,
-        base_delay: float = 2.0,
-        max_delay: float = 60.0,
-    ) -> Any:
-        """Invoke the Cost Management query with exponential backoff on 429s.
-
-        Azure Cost Management enforces strict per-subscription rate limits.
-        When a 429 is returned, we honor the ``Retry-After`` header if
-        present, otherwise apply exponential backoff capped at ``max_delay``.
-        Non-throttling errors propagate immediately to the outer handler.
-        """
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                return await loop.run_in_executor(None, call)
-            except HttpResponseError as exc:
-                status = getattr(exc, "status_code", None)
-                if status != 429 or attempt >= max_attempts:
-                    raise
-                retry_after = base_delay * (2 ** (attempt - 1))
-                response = getattr(exc, "response", None)
-                headers = getattr(response, "headers", None) or {}
-                header_value = headers.get("Retry-After") or headers.get("retry-after")
-                if header_value:
-                    with contextlib.suppress(TypeError, ValueError):
-                        retry_after = float(header_value)
-                retry_after = min(retry_after, max_delay)
-                logger.warning(
-                    "Cost Management API returned 429 (attempt %d/%d); retrying in %.1fs",
-                    attempt, max_attempts, retry_after,
-                )
-                await asyncio.sleep(retry_after)
-
     async def _fetch_cost_data(
         self,
         resource_ids: list[str],
         *,
         window: Literal["last_full_month", "trailing_30d"] = "last_full_month",
     ) -> dict[str, float]:
-        """Call Azure Cost Management API to get monthly cost per resource.
+        """Return billed monthly cost per resource via the cost provider.
 
-        Returns a dict mapping resource_id to cost_usd.
-        On any API error returns an empty dict - cost data is enrichment only.
+        Thin delegation to :class:`AzureCostProvider`, which owns the Cost
+        Management query, retry/backoff, and graceful-degradation logic. Kept
+        as a method so existing callers and tests have a stable seam.
+
+        Args:
+            resource_ids: Azure resource IDs to price.
+            window: FinOps billing window (default: last full calendar month).
+
+        Returns:
+            Mapping of lowercased resource ID to monthly USD cost. Empty on any
+            failure -- cost data is enrichment only.
         """
-        if not resource_ids:
-            return {}
-
-        try:
-            loop = asyncio.get_running_loop()
-            assert self._credential is not None
-            assert self._credential is not None
-            client = CostManagementClient(self._credential)
-            scope = f"/subscriptions/{self._subscription_id}"
-
-            # FinOps-standard billing window (default: last full calendar
-            # month -- a closed billing period with no partial-month skew).
-            cost_window = CostWindow.resolve(window)
-            start = cost_window.start
-            end = cost_window.end
-
-            query_def = QueryDefinition(
-                type=ExportType.ACTUAL_COST,
-                timeframe=TimeframeType.CUSTOM,
-                time_period=QueryTimePeriod(from_property=start, to=end),
-                dataset=QueryDataset(
-                    granularity="None",
-                    aggregation={
-                        "totalCost": QueryAggregation(
-                            name="Cost", function="Sum",
-                        ),
-                    },
-                    grouping=[
-                        QueryGrouping(
-                            type="Dimension", name="ResourceId",
-                        ),
-                    ],
-                ),
-            )
-
-            response = await self._run_cost_query_with_retry(
-                loop, partial(client.query.usage, scope, query_def),
-            )
-
-            cost_map: dict[str, float] = {}
-            if response and response.rows:
-                for row in response.rows:
-                    if len(row) >= 2:
-                        rid = str(row[1]).lower()
-                        cost = float(row[0])
-                        cost_map[rid] = cost
-
-            logger.info("Fetched cost data for %d resources", len(cost_map))
-            return cost_map
-
-        except Exception:
-            logger.exception("Cost Management API call failed — continuing without cost data")
-            return {}
+        return await self._cost_provider.get_actual_cost(
+            resource_ids, window=window,
+        )
 
 
 # ---------------------------------------------------------------------------

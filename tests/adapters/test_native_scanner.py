@@ -538,7 +538,7 @@ class TestScanSucceedsWhenCostApiFails:
         # Test the real method with a failing Cost Management client
         with (
             patch(
-                "cloudguardiq.adapters.native_scanner.CostManagementClient",
+                "cloudguardiq.billing.azure_cost_provider.CostManagementClient",
                 side_effect=RuntimeError("boom"),
             ),
             patch.object(

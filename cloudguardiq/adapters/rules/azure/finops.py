@@ -243,7 +243,14 @@ class OversizedVMRule(PolicyRule):
         avg_cpu = snapshot.config.get("avg_cpu_7d", 100)
         avg_mem = snapshot.config.get("avg_memory_7d", 100)
         if avg_cpu < 20 and avg_mem < 20 and snapshot.cost_monthly > 0:
-            waste = round(snapshot.cost_monthly * 0.50, 2)
+            # Prefer the live rightsizing delta stamped by the cost provider
+            # (current SKU price minus the one-size-down SKU price). Fall back
+            # to a conservative 50% heuristic only when no live figure exists.
+            live_savings = snapshot.config.get("rightsizing_savings_monthly_usd")
+            if isinstance(live_savings, (int, float)) and live_savings > 0:
+                waste = round(float(live_savings), 2)
+            else:
+                waste = round(snapshot.cost_monthly * 0.50, 2)
             return FindingResult(
                 resource_snapshot=snapshot,
                 rule_id=self.rule_id,

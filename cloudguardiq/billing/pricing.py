@@ -62,10 +62,16 @@ class _PriceQuery(BaseModel):
     product_name: str | None = None
     meter_name: str | None = None
     sku_name: str | None = None
+    arm_sku_name: str | None = None
     price_type: str = "Consumption"
     # ``true`` if the meter is hourly and must be multiplied by 730 to get
     # a monthly price. Public IP, App Gateway, NAT gateway are all hourly.
     is_hourly: bool = True
+    # Substrings that must NOT appear in skuName / productName. Used to strip
+    # Spot, Low Priority, and Windows variants from a VM-size price lookup so
+    # the returned figure is the Linux on-demand list price.
+    exclude_skuname_contains: list[str] = []
+    exclude_productname_contains: list[str] = []
 
 
 _QUERIES: list[_PriceQuery] = [
@@ -77,7 +83,63 @@ _QUERIES: list[_PriceQuery] = [
         meter_name="Standard Static IP",
         is_hourly=True,
     ),
+    # Standard Load Balancer hourly base charge.
+    _PriceQuery(
+        sku="load_balancer_standard",
+        service_name="Load Balancer",
+        meter_name="Standard Included LB Rules and Outbound Rules",
+        is_hourly=True,
+    ),
+    # NAT Gateway hourly base charge.
+    _PriceQuery(
+        sku="nat_gateway",
+        service_name="NAT Gateway",
+        meter_name="Gateway",
+        is_hourly=True,
+    ),
+    # Application Gateway v2 (Standard_v2) fixed hourly gateway charge.
+    _PriceQuery(
+        sku="app_gateway_v2",
+        service_name="Application Gateway",
+        meter_name="Standard v2 Gateway",
+        is_hourly=True,
+    ),
 ]
+
+
+# Structural "next size down" map within a VM family. These are SKU *names*
+# (cloud topology metadata), NOT prices -- the dollar values are always
+# resolved live from the Retail Prices API. Used by the rightsizing
+# estimator to price the recommended smaller SKU. Family entry points are
+# intentionally absent so ``next_size_down`` returns ``None`` for them.
+_VM_NEXT_SIZE_DOWN: dict[str, str] = {
+    # Dsv3 general purpose
+    "Standard_D4s_v3": "Standard_D2s_v3",
+    "Standard_D8s_v3": "Standard_D4s_v3",
+    "Standard_D16s_v3": "Standard_D8s_v3",
+    "Standard_D32s_v3": "Standard_D16s_v3",
+    "Standard_D64s_v3": "Standard_D32s_v3",
+    # Dsv4 general purpose
+    "Standard_D4s_v4": "Standard_D2s_v4",
+    "Standard_D8s_v4": "Standard_D4s_v4",
+    "Standard_D16s_v4": "Standard_D8s_v4",
+    "Standard_D32s_v4": "Standard_D16s_v4",
+    # Dsv5 general purpose
+    "Standard_D4s_v5": "Standard_D2s_v5",
+    "Standard_D8s_v5": "Standard_D4s_v5",
+    "Standard_D16s_v5": "Standard_D8s_v5",
+    "Standard_D32s_v5": "Standard_D16s_v5",
+    # Esv3 memory optimised
+    "Standard_E4s_v3": "Standard_E2s_v3",
+    "Standard_E8s_v3": "Standard_E4s_v3",
+    "Standard_E16s_v3": "Standard_E8s_v3",
+    "Standard_E32s_v3": "Standard_E16s_v3",
+    # Fsv2 compute optimised
+    "Standard_F4s_v2": "Standard_F2s_v2",
+    "Standard_F8s_v2": "Standard_F4s_v2",
+    "Standard_F16s_v2": "Standard_F8s_v2",
+    "Standard_F32s_v2": "Standard_F16s_v2",
+}
 
 
 def _build_filter(q: _PriceQuery, region: str) -> str:
@@ -93,6 +155,12 @@ def _build_filter(q: _PriceQuery, region: str) -> str:
         parts.append(f"meterName eq '{q.meter_name}'")
     if q.sku_name:
         parts.append(f"skuName eq '{q.sku_name}'")
+    if q.arm_sku_name:
+        parts.append(f"armSkuName eq '{q.arm_sku_name}'")
+    for token in q.exclude_skuname_contains:
+        parts.append(f"contains(skuName, '{token}') eq false")
+    for token in q.exclude_productname_contains:
+        parts.append(f"contains(productName, '{token}') eq false")
     return " and ".join(parts)
 
 
@@ -147,6 +215,49 @@ class PricingService:
     def is_stale(self) -> bool:
         """Return True if the cache was refreshed more than the TTL ago."""
         return (time.time() - self._last_refresh_ts) > _CACHE_TTL_SECONDS
+
+    def next_size_down(self, vm_size: str) -> str | None:
+        """Return the recommended smaller VM SKU within the same family.
+
+        Returns ``None`` when no smaller SKU is registered (e.g. the size is
+        already a family entry point or is unknown). The value is a SKU
+        *name* only -- pricing is resolved live via :meth:`get_vm_size_price`.
+        """
+        return _VM_NEXT_SIZE_DOWN.get(vm_size)
+
+    async def get_vm_size_price(self, vm_size: str, region: str) -> float | None:
+        """Return the Linux on-demand list price (USD/month) for a VM size.
+
+        Queries the Azure Retail Prices API on demand (VM SKUs are too
+        numerous to preload) and caches the result by ``("vm_<size>",
+        region)``. Spot, Low Priority, and Windows variants are excluded so
+        the figure is the pay-as-you-go Linux list price. Returns ``None``
+        on a miss or any error so callers can degrade gracefully.
+        """
+        key = (f"vm_{vm_size}", (region or "").lower())
+        cached = self._cache.get(key)
+        if cached is not None and cached > 0:
+            return cached
+        query = _PriceQuery(
+            sku=key[0],
+            service_name="Virtual Machines",
+            arm_sku_name=vm_size,
+            is_hourly=True,
+            exclude_skuname_contains=["Spot", "Low Priority"],
+            exclude_productname_contains=["Windows"],
+        )
+        try:
+            async with self._session_factory() as session:
+                price = await self._fetch_one(session, query, region)
+        except Exception as exc:  # noqa: BLE001 -- pricing must never crash a scan
+            logger.warning(
+                "VM size price fetch failed for %s/%s: %s", vm_size, region, exc
+            )
+            return None
+        if price is not None and price > 0:
+            self._cache[key] = price
+            return price
+        return None
 
     async def warmup(self) -> None:
         """Hydrate from the Cosmos cache (best-effort, never raises).
