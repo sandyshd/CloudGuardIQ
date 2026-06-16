@@ -11,12 +11,18 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from cloudguardiq.adapters.pricing.live_prices import refresh_prices
-from cloudguardiq.billing.plans import UNLIMITED, get_plan
+from cloudguardiq.billing.plans import (
+    UNLIMITED,
+    PlanLimits,
+    get_plan,
+    is_unlimited,
+)
 from cloudguardiq.billing.quota import check_ai_quota
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.billing.usage import UsageRepository
-from cloudguardiq.core.enums import Severity
+from cloudguardiq.core.enums import Severity, SubscriptionTier
 from cloudguardiq.core.models import FindingResult
+from cloudguardiq.pipeline.resource_cap import cap_snapshots
 from cloudguardiq.policy.engine import dedupe_findings_by_id
 
 logger = logging.getLogger(__name__)
@@ -111,6 +117,27 @@ class ScanPipeline:
         if tenant_id:
             for snap in snapshots:
                 snap.tenant_id = tenant_id
+
+        # Step 1b: bound the inventory to the tenant's plan tier (defense
+        # in depth alongside the API middleware). Highest-value resources
+        # -- rule-covered and costly -- are retained when truncation is
+        # required so small tiers still scan what matters most.
+        plan = await self._resolve_plan(tenant_id)
+        cap = plan.max_resources_per_scan
+        if not is_unlimited(cap) and len(snapshots) > cap:
+            snapshots, dropped = cap_snapshots(
+                snapshots,
+                cap,
+                covered_types=self._covered_resource_types(),
+                tenant_id=tenant_id,
+                tier=plan.tier.value,
+            )
+            logger.warning(
+                "Scan %s truncated inventory for tenant=%s tier=%s: "
+                "kept %d of %d (cap=%d, dropped=%d)",
+                scan_id, tenant_id or "<unknown>", plan.tier.value,
+                len(snapshots), len(snapshots) + dropped, cap, dropped,
+            )
 
         # Step 2: Evaluate policies
         findings = self._policy_engine.evaluate(snapshots)
@@ -236,6 +263,43 @@ class ScanPipeline:
             result.duration_seconds,
         )
         return result
+
+    async def _resolve_plan(self, tenant_id: str) -> PlanLimits:
+        """Resolve the tenant's plan; defaults to FREE when unknown.
+
+        Reuses the billing-repo tier lookup that AI quota enforcement
+        relies on, so the resource cap and the AI cap share one tier
+        source. Best-effort: any billing failure falls back to FREE so a
+        metering hiccup never blocks or over-caps a scan.
+        """
+        tier = SubscriptionTier.FREE
+        if self._billing_repo is not None and tenant_id:
+            try:
+                record = await self._billing_repo.get(tenant_id)
+                if record is not None:
+                    tier = record.tier
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Tier lookup failed for tenant %s: %s -- "
+                    "defaulting to FREE",
+                    tenant_id, exc,
+                )
+        return get_plan(tier)
+
+    def _covered_resource_types(self) -> frozenset[str]:
+        """Return rule-covered resource types from the policy engine.
+
+        Defensive: engines that predate ``covered_resource_types`` (or
+        test doubles) yield an empty set so capping falls back to pure
+        cost ordering rather than failing.
+        """
+        getter = getattr(self._policy_engine, "covered_resource_types", None)
+        if not callable(getter):
+            return frozenset()
+        try:
+            return frozenset(str(t).lower() for t in getter())
+        except Exception:  # noqa: BLE001
+            return frozenset()
 
     async def _queue_findings(
         self, findings: list[FindingResult], tenant_id: str,

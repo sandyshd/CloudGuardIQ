@@ -394,6 +394,23 @@ class PolicyEngine:
                 matching.append(rule_obj)
         return matching
 
+    def covered_resource_types(self) -> frozenset[str]:
+        """Return resource types that have at least one native rule.
+
+        Rules with ``resource_types is None`` apply to every snapshot and
+        therefore do not constrain coverage -- they contribute nothing.
+        Types are returned lower-cased for case-insensitive membership
+        checks (e.g. by the inventory resource cap).
+        """
+        covered: set[str] = set()
+        for rule_obj in self._native_rules:
+            resource_types = getattr(rule_obj, "resource_types", None)
+            if not resource_types:
+                continue
+            for rtype in resource_types:
+                covered.add(str(rtype).lower())
+        return frozenset(covered)
+
     @property
     def rule_count(self) -> int:
         """Return the number of registered rules."""
