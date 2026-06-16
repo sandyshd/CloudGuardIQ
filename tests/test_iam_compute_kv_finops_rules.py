@@ -445,7 +445,11 @@ class TestFIN004HotTierBlobNotAccessed:
         result = HotTierBlobNotAccessedRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-004"
-        assert result.waste_monthly_usd == 40.0
+        # Heuristic rules report ESTIMATED savings (not DIRECT waste).
+        assert result.finops_method == "ESTIMATED"
+        assert result.finops_confidence == "MEDIUM"
+        assert result.estimated_impact_monthly_usd == 40.0
+        assert result.waste_monthly_usd == 0.0
 
     def test_pass_when_recently_accessed(self):
         snap = _finops_snap(
@@ -468,7 +472,11 @@ class TestFIN005OversizedVM:
         result = OversizedVMRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-005"
-        assert result.waste_monthly_usd == 100.0
+        # Heuristic rules report ESTIMATED savings (not DIRECT waste).
+        assert result.finops_method == "ESTIMATED"
+        assert result.finops_confidence == "MEDIUM"
+        assert result.estimated_impact_monthly_usd == 100.0
+        assert result.waste_monthly_usd == 0.0
 
     def test_pass_when_well_utilised(self):
         snap = _finops_snap(
@@ -492,7 +500,11 @@ class TestFIN006DevTestOutsideBusinessHours:
         result = DevTestOutsideBusinessHoursRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-006"
-        assert result.waste_monthly_usd == 65.0
+        # Heuristic rules report ESTIMATED savings (not DIRECT waste).
+        assert result.finops_method == "ESTIMATED"
+        assert result.finops_confidence == "MEDIUM"
+        assert result.estimated_impact_monthly_usd == 65.0
+        assert result.waste_monthly_usd == 0.0
 
     def test_pass_when_prod_resource(self):
         snap = _finops_snap(
@@ -516,7 +528,11 @@ class TestFIN007AppGatewayLowUtilisation:
         result = AppGatewayLowUtilisationRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-007"
-        assert result.waste_monthly_usd == 210.0
+        # Heuristic rules report ESTIMATED savings (not DIRECT waste).
+        assert result.finops_method == "ESTIMATED"
+        assert result.finops_confidence == "MEDIUM"
+        assert result.estimated_impact_monthly_usd == 210.0
+        assert result.waste_monthly_usd == 0.0
 
     def test_pass_when_well_utilised(self):
         snap = _finops_snap(
@@ -539,7 +555,11 @@ class TestFIN008AKSNoAutoscaler:
         result = AKSNoAutoscalerRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "FIN-008"
-        assert result.waste_monthly_usd == 150.0
+        # Heuristic rules report ESTIMATED savings (not DIRECT waste).
+        assert result.finops_method == "ESTIMATED"
+        assert result.finops_confidence == "MEDIUM"
+        assert result.estimated_impact_monthly_usd == 150.0
+        assert result.waste_monthly_usd == 0.0
 
     def test_pass_when_autoscaler_enabled(self):
         snap = _finops_snap(

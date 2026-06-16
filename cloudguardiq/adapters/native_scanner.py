@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import logging
 from functools import partial
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from azure.core.credentials import TokenCredential
 from azure.core.exceptions import HttpResponseError
@@ -106,6 +106,7 @@ from cloudguardiq.adapters.rules.azure.storage import (
     PublicBlobAccessRule,
     SharedKeyAuthRule,
 )
+from cloudguardiq.billing.cost_provider import CostWindow
 from cloudguardiq.core.enums import CloudProvider, DataTier
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
@@ -1269,7 +1270,10 @@ class NativeScanner:
                 await asyncio.sleep(retry_after)
 
     async def _fetch_cost_data(
-        self, resource_ids: list[str],
+        self,
+        resource_ids: list[str],
+        *,
+        window: Literal["last_full_month", "trailing_30d"] = "last_full_month",
     ) -> dict[str, float]:
         """Call Azure Cost Management API to get monthly cost per resource.
 
@@ -1286,11 +1290,11 @@ class NativeScanner:
             client = CostManagementClient(self._credential)
             scope = f"/subscriptions/{self._subscription_id}"
 
-            from datetime import datetime, timedelta, timezone
-
-            now = datetime.now(timezone.utc)
-            start = (now.replace(day=1) - timedelta(days=1)).replace(day=1)
-            end = now
+            # FinOps-standard billing window (default: last full calendar
+            # month -- a closed billing period with no partial-month skew).
+            cost_window = CostWindow.resolve(window)
+            start = cost_window.start
+            end = cost_window.end
 
             query_def = QueryDefinition(
                 type=ExportType.ACTUAL_COST,

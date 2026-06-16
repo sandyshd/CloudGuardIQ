@@ -222,7 +222,7 @@ class HotTierBlobNotAccessedRule(PolicyRule):
                     "access_tier": "Hot",
                     "cost_monthly": snapshot.cost_monthly,
                 },
-                waste_monthly_usd=waste,
+                estimated_impact_monthly_usd=waste,
                 compliance_frameworks=list(self.compliance_frameworks),
             )
         return None
@@ -260,7 +260,7 @@ class OversizedVMRule(PolicyRule):
                     "avg_memory_7d": avg_mem,
                     "cost_monthly": snapshot.cost_monthly,
                 },
-                waste_monthly_usd=waste,
+                estimated_impact_monthly_usd=waste,
                 compliance_frameworks=list(self.compliance_frameworks),
             )
         return None
@@ -298,7 +298,7 @@ class DevTestOutsideBusinessHoursRule(PolicyRule):
                     "auto_shutdown_enabled": False,
                     "cost_monthly": snapshot.cost_monthly,
                 },
-                waste_monthly_usd=waste,
+                estimated_impact_monthly_usd=waste,
                 compliance_frameworks=list(self.compliance_frameworks),
             )
         return None
@@ -334,7 +334,7 @@ class AppGatewayLowUtilisationRule(PolicyRule):
                     "capacity_utilisation_pct": util,
                     "cost_monthly": snapshot.cost_monthly,
                 },
-                waste_monthly_usd=waste,
+                estimated_impact_monthly_usd=waste,
                 compliance_frameworks=list(self.compliance_frameworks),
             )
         return None
@@ -368,7 +368,7 @@ class AKSNoAutoscalerRule(PolicyRule):
                     "autoscaler_enabled": snapshot.config.get("autoscaler_enabled"),
                     "cost_monthly": snapshot.cost_monthly,
                 },
-                waste_monthly_usd=waste,
+                estimated_impact_monthly_usd=waste,
                 compliance_frameworks=list(self.compliance_frameworks),
             )
         return None
