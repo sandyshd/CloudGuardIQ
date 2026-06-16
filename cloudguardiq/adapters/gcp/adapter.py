@@ -20,7 +20,7 @@ from cloudguardiq.adapters.base import AdapterBase, CapabilityFlags
 from cloudguardiq.adapters.gcp.gcp_policy_compliance_adapter import (
     GCPPolicyComplianceAdapter,
 )
-from cloudguardiq.adapters.pricing import gcp_persistent_disk_monthly_usd
+from cloudguardiq.billing.gcp_cost_provider import GcpCostProvider
 from cloudguardiq.core.enums import (
     CloudProvider,
     DataTier,
@@ -89,6 +89,10 @@ class GCPAdapter(AdapterBase):
         # Populated by scan() when Security Command Center is enabled;
         # merged into the pipeline's findings list alongside policy findings.
         self._scc_findings: list[FindingResult] = []
+        self._cost_provider = GcpCostProvider(
+            project_id=project_id,
+            credentials=credentials,
+        )
 
     # ------------------------------------------------------------------
     # Client helpers
@@ -318,9 +322,6 @@ class GCPAdapter(AdapterBase):
                             "cmek_encrypted": cmek,
                             "type": disk_type,
                         },
-                        cost_monthly=gcp_persistent_disk_monthly_usd(
-                            disk_type, disk_size
-                        ),
                     )
                 )
         return snaps
@@ -1229,6 +1230,68 @@ class GCPAdapter(AdapterBase):
             data_tier=DataTier.TIER2_ENRICHED,
         )
 
+    # ------------------------------------------------------------------
+    # Cost enrichment (live Cloud Billing Catalog + BigQuery export)
+    # ------------------------------------------------------------------
+
+    _FINOPS_COST_TYPES = (
+        "google.compute.Disk",
+        "google.compute.Instance",
+    )
+
+    def _list_price_sku(self, snap: ResourceSnapshot) -> str | None:
+        """Return the logical Catalog sku for a cost-bearing snapshot."""
+        if snap.resource_type == "google.compute.Disk":
+            disk_type = snap.config.get("type") or ""
+            size_gb = snap.config.get("size_gb") or 0
+            if not disk_type or not size_gb:
+                return None
+            return f"pd:{disk_type}:{int(size_gb)}"
+        if snap.resource_type == "google.compute.Instance":
+            machine_type = snap.config.get("machine_type") or ""
+            return f"gce:{machine_type}" if machine_type else None
+        return None
+
+    async def _enrich_costs(self, snapshots: list[ResourceSnapshot]) -> None:
+        """Stamp ``cost_monthly`` (and GCE rightsizing) from live GCP APIs.
+
+        Resolution order per resource:
+          1. BigQuery billing-export actual cost -> Tier-2 enrichment.
+          2. Cloud Billing Catalog list price (static fallback) -> Tier-1.
+
+        Best-effort: every lookup degrades gracefully so a billing/pricing
+        outage or missing export table can never break the scan.
+        """
+        targets = [s for s in snapshots if s.resource_type in self._FINOPS_COST_TYPES]
+        if not targets:
+            return
+
+        resource_ids = [s.resource_name for s in targets]
+        actual = await self._cost_provider.get_actual_cost(resource_ids)
+
+        for snap in targets:
+            rid = snap.resource_name.lower()
+            if rid in actual and actual[rid] > 0:
+                snap.cost_monthly = round(actual[rid], 2)
+                snap.data_tier = DataTier.TIER2_ENRICHED
+            else:
+                sku = self._list_price_sku(snap)
+                if sku is not None:
+                    price = await self._cost_provider.get_list_price(
+                        sku, snap.region, default=snap.cost_monthly,
+                    )
+                    snap.cost_monthly = round(float(price), 2)
+
+            # Live GCE rightsizing basis for downstream FinOps rules.
+            if snap.resource_type == "google.compute.Instance":
+                machine_type = snap.config.get("machine_type")
+                if machine_type:
+                    savings = await self._cost_provider.estimate_gce_rightsizing_savings(
+                        str(machine_type), snap.region,
+                    )
+                    if savings > 0:
+                        snap.config["rightsizing_savings_monthly_usd"] = savings
+
     async def scan(self) -> list[ResourceSnapshot]:
         """Scan the configured project and return all snapshots."""
         _require_google()
@@ -1265,6 +1328,11 @@ class GCPAdapter(AdapterBase):
             len(snapshots),
             len(self._policy_findings),
         )
+
+        # Live cost enrichment (BigQuery export actual, else Catalog list
+        # price). Best-effort: never raises so a billing outage cannot break
+        # the scan.
+        await self._enrich_costs(snapshots)
 
         # Security Command Center findings as first-class findings.
         # Best-effort; never raises (returns [] on any failure) so an SCC
