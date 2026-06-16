@@ -154,22 +154,31 @@ class ScanPipeline:
                 scan_id,
             )
 
-        # Step 2c: Merge Defender for Cloud findings (Tier 2/3). These cover
-        # resource types with no native rule. When a Defender assessment
-        # overlaps a native rule that already fired for the same resource we
-        # drop the Defender duplicate and keep the richer native finding.
-        defender_findings = getattr(self._adapter, "defender_findings", None)
-        if defender_findings:
-            kept = self._dedupe_defender_against_native(
-                findings, defender_findings,
+        # Step 2c: Merge cloud-native security-engine findings (Tier 2/3).
+        # Each cloud adapter exposes its own attribute: Azure Defender
+        # (defender_findings), AWS Security Hub (securityhub_findings), and
+        # GCP Security Command Center (scc_findings). These cover resource
+        # types with no native rule. When a cloud-native finding overlaps a
+        # native rule that already fired for the same resource we drop the
+        # duplicate and keep the richer native finding.
+        for source_attr in (
+            "defender_findings",
+            "securityhub_findings",
+            "scc_findings",
+        ):
+            cloud_findings = getattr(self._adapter, source_attr, None)
+            if not cloud_findings:
+                continue
+            kept = self._dedupe_cloud_native_against_native(
+                findings, cloud_findings,
             )
             findings.extend(kept)
             logger.info(
-                "Merged %d Defender finding(s) into scan %s "
-                "(%d dropped as native duplicates)",
+                "Merged %d %s into scan %s (%d dropped as native duplicates)",
                 len(kept),
+                source_attr,
                 scan_id,
-                len(defender_findings) - len(kept),
+                len(cloud_findings) - len(kept),
             )
 
         # Collapse finding_id collisions from the policy merge so the
@@ -283,25 +292,27 @@ class ScanPipeline:
         return result
 
     @staticmethod
-    def _dedupe_defender_against_native(
+    def _dedupe_cloud_native_against_native(
         native_findings: list[FindingResult],
-        defender_findings: list[FindingResult],
+        cloud_findings: list[FindingResult],
     ) -> list[FindingResult]:
-        """Drop Defender findings that duplicate a fired native rule.
+        """Drop cloud-native findings that duplicate a fired native rule.
 
-        A Defender finding is dropped only when its evidence declares it
-        overlaps a specific native rule (``native_rule_overlap``) AND that
-        rule actually fired for the same resource (``resource_key``).
-        Defender findings without a declared overlap -- the common case for
-        resource types lacking native rules -- are always kept.
+        Applies to Azure Defender, AWS Security Hub, and GCP Security
+        Command Center findings alike. A cloud-native finding is dropped
+        only when its evidence declares it overlaps a specific native rule
+        (``native_rule_overlap``) AND that rule actually fired for the same
+        resource (``resource_key``). Findings without a declared overlap --
+        the common case for resource types lacking native rules -- are
+        always kept.
 
         Args:
             native_findings: Findings already produced by the rule engine
                 and policy merge (the preferred source on overlap).
-            defender_findings: Candidate Defender findings to merge.
+            cloud_findings: Candidate cloud-native findings to merge.
 
         Returns:
-            The subset of ``defender_findings`` to keep.
+            The subset of ``cloud_findings`` to keep.
         """
         native_keys: set[tuple[str, str]] = set()
         for finding in native_findings:
@@ -311,7 +322,7 @@ class ScanPipeline:
             rkey = f"{snap.resource_group.lower()}/{snap.resource_name.lower()}"
             native_keys.add((rkey, finding.rule_id))
         kept: list[FindingResult] = []
-        for finding in defender_findings:
+        for finding in cloud_findings:
             overlap = str(finding.evidence.get("native_rule_overlap") or "")
             resource_key = str(finding.evidence.get("resource_key") or "")
             if overlap and (resource_key, overlap) in native_keys:

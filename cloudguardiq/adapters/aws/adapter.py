@@ -18,15 +18,47 @@ from typing import Any
 from cloudguardiq.adapters.aws.aws_policy_compliance_adapter import (
     AWSPolicyComplianceAdapter,
 )
-from cloudguardiq.adapters.base import AdapterBase
+from cloudguardiq.adapters.base import AdapterBase, CapabilityFlags
 from cloudguardiq.adapters.pricing import (
     aws_ebs_monthly_usd,
     aws_eip_unattached_monthly_usd,
 )
-from cloudguardiq.core.enums import CloudProvider, DataTier
+from cloudguardiq.core.enums import (
+    CloudProvider,
+    DataTier,
+    FindingType,
+    Severity,
+)
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
 logger = logging.getLogger(__name__)
+
+#: Maps an AWS Security Hub (ASFF) ``Severity.Label`` to our enum.
+_ASFF_SEVERITY_MAP: dict[str, Severity] = {
+    "CRITICAL": Severity.CRITICAL,
+    "HIGH": Severity.HIGH,
+    "MEDIUM": Severity.MEDIUM,
+    "LOW": Severity.LOW,
+    "INFORMATIONAL": Severity.INFORMATIONAL,
+}
+
+#: Substrings found in Security Hub ``AssociatedStandards`` ids / standards
+#: ARNs, mapped to the scorecard framework label we report.
+_STANDARD_FRAMEWORK_TOKENS: dict[str, str] = {
+    "cis": "CIS_AWS",
+    "nist-800-53": "NIST_800_53",
+    "nist": "NIST_800_53",
+    "pci-dss": "PCI_DSS",
+    "pci": "PCI_DSS",
+    "aws-foundational": "AWS_FSBP",
+}
+
+#: Maps a Security Hub finding title to the native rule_id it overlaps.
+#: When both fire for the same resource the pipeline prefers the native
+#: finding (richer remediation) and drops the Security Hub duplicate.
+#: Findings without an entry are always kept -- uncovered resource types
+#: are the whole point of this ingestion. Extend as overlaps are confirmed.
+SECURITYHUB_TO_NATIVE_RULE: dict[str, str] = {}
 
 
 def _require_boto3() -> Any:
@@ -71,6 +103,9 @@ class AWSAdapter(AdapterBase):
             session=session,
         )
         self._policy_findings: list[FindingResult] = []
+        # Populated by scan() when AWS Security Hub is enabled; merged into
+        # the pipeline's findings list alongside policy findings.
+        self._securityhub_findings: list[FindingResult] = []
 
     # ------------------------------------------------------------------
     # Session / client helpers
@@ -993,6 +1028,222 @@ class AWSAdapter(AdapterBase):
     # AdapterBase contract
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Security Hub ingestion (Tier 2/3 cloud-native findings)
+    # ------------------------------------------------------------------
+
+    def _securityhub_client(self) -> Any:
+        """Return a boto3 Security Hub client.
+
+        Isolated so tests can substitute a fake client without importing
+        boto3 or making network calls. All AWS SDK usage is confined to the
+        adapter layer.
+        """
+        return self._client("securityhub")
+
+    async def fetch_securityhub_findings(
+        self,
+        snapshots: list[ResourceSnapshot],
+        flags: CapabilityFlags | None = None,
+    ) -> list[FindingResult]:
+        """Ingest AWS Security Hub findings as first-class findings.
+
+        Maps every ACTIVE Security Hub finding to a :class:`FindingResult`
+        so resource types without a native rule still surface real security
+        findings. Correlates each finding to a scanned snapshot by the
+        resource name parsed from ``Resources[].Id`` (ARN); when no snapshot
+        matches (type not in inventory) the finding is still emitted against
+        a minimal snapshot built from the ARN.
+
+        Gating: when ``flags`` is provided and ``tier2_available`` is False,
+        returns ``[]`` without calling AWS. Otherwise it is best-effort --
+        a disabled hub or permission error simply yields ``[]``.
+
+        Args:
+            snapshots: The Tier 1 inventory used to correlate findings.
+            flags: Optional capability flags used only to short-circuit.
+
+        Returns:
+            Normalised, priority-scored Security Hub findings (never raw
+            payloads).
+        """
+        if flags is not None and not flags.tier2_available:
+            return []
+
+        lookup: dict[str, ResourceSnapshot] = {
+            s.resource_name.lower(): s for s in snapshots
+        }
+
+        def _collect_rows() -> list[dict[str, Any]]:
+            rows: list[dict[str, Any]] = []
+            client = self._securityhub_client()
+            paginator = client.get_paginator("get_findings")
+            page_kwargs: dict[str, Any] = {
+                "Filters": {
+                    "RecordState": [
+                        {"Value": "ACTIVE", "Comparison": "EQUALS"},
+                    ],
+                },
+            }
+            for page in paginator.paginate(**page_kwargs):
+                for finding in page.get("Findings") or []:
+                    if isinstance(finding, dict):
+                        rows.append(finding)
+            return rows
+
+        try:
+            rows = await asyncio.to_thread(_collect_rows)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "AWS Security Hub ingestion failed for %s -- returning no "
+                "Security Hub findings",
+                self.account_id,
+                exc_info=True,
+            )
+            return []
+
+        findings: list[FindingResult] = []
+        for row in rows:
+            finding = self._asff_finding_to_result(row, lookup)
+            if finding is not None:
+                findings.append(finding)
+        return findings
+
+    def _asff_finding_to_result(
+        self,
+        row: dict[str, Any],
+        lookup: dict[str, ResourceSnapshot],
+    ) -> FindingResult | None:
+        """Convert one ASFF finding to a FindingResult.
+
+        Returns ``None`` for findings whose ``RecordState`` is not ACTIVE or
+        which carry no resource ARN.
+        """
+        record_state = str(row.get("RecordState") or "ACTIVE")
+        if record_state.upper() != "ACTIVE":
+            return None
+
+        resources = row.get("Resources") or []
+        first = resources[0] if isinstance(resources, list) and resources else {}
+        arn = str(first.get("Id") or "") if isinstance(first, dict) else ""
+        if not arn:
+            return None
+        asff_type = (
+            str(first.get("Type") or "") if isinstance(first, dict) else ""
+        )
+
+        title = str(row.get("Title") or "AWS Security Hub finding")
+        description = str(row.get("Description") or title)
+        severity_label = str(
+            (row.get("Severity") or {}).get("Label") or "MEDIUM"
+        ).upper()
+        severity = _ASFF_SEVERITY_MAP.get(severity_label, Severity.MEDIUM)
+        frameworks = self._asff_frameworks(row)
+
+        rule_id = f"SECURITYHUB-{title}"
+        resource_name = self._arn_resource_name(arn)
+        snapshot = lookup.get(resource_name.lower()) if resource_name else None
+        if snapshot is not None:
+            snapshot.data_tier = DataTier.TIER2_ENRICHED
+            resource_id = snapshot.id
+        else:
+            snapshot = self._build_minimal_snapshot_from_arn(arn, asff_type)
+            resource_id = arn
+
+        resource_key = (
+            f"{snapshot.resource_group.lower()}/{snapshot.resource_name.lower()}"
+        )
+        evidence: dict[str, Any] = {
+            "finding_arn": str(row.get("Id") or ""),
+            "product_arn": str(row.get("ProductArn") or ""),
+            "arn": arn,
+            "severity": severity_label,
+            "record_state": record_state,
+            "resource_key": resource_key,
+            "native_rule_overlap": SECURITYHUB_TO_NATIVE_RULE.get(title, ""),
+        }
+
+        finding = FindingResult(
+            finding_id=AdapterBase.build_finding_id(rule_id, resource_id),
+            resource_snapshot=snapshot,
+            rule_id=rule_id,
+            rule_name=title,
+            severity=severity,
+            finding_type=FindingType.SECURITY,
+            description=description,
+            evidence=evidence,
+            compliance_frameworks=frameworks,
+        )
+        finding.compute_priority_score()
+        return finding
+
+    @staticmethod
+    def _asff_frameworks(row: dict[str, Any]) -> list[str]:
+        """Map ASFF compliance standards to scorecard framework labels."""
+        tokens: list[str] = []
+        compliance = row.get("Compliance")
+        if isinstance(compliance, dict):
+            for entry in compliance.get("AssociatedStandards") or []:
+                if isinstance(entry, dict):
+                    sid = entry.get("StandardsId")
+                    if isinstance(sid, str) and sid:
+                        tokens.append(sid)
+        product_fields = row.get("ProductFields")
+        if isinstance(product_fields, dict):
+            sarn = product_fields.get("StandardsArn") or product_fields.get(
+                "StandardsGuideArn"
+            )
+            if isinstance(sarn, str) and sarn:
+                tokens.append(sarn)
+        frameworks: list[str] = []
+        for token in tokens:
+            lowered = token.lower()
+            for needle, label in _STANDARD_FRAMEWORK_TOKENS.items():
+                if needle in lowered and label not in frameworks:
+                    frameworks.append(label)
+        return frameworks
+
+    @staticmethod
+    def _arn_resource_name(arn: str) -> str:
+        """Extract the trailing resource name from an AWS ARN."""
+        if not arn:
+            return ""
+        tail = arn.rstrip("/").split(":")[-1]
+        if "/" in tail:
+            tail = tail.split("/")[-1]
+        return tail
+
+    def _build_minimal_snapshot_from_arn(
+        self, arn: str, asff_type: str,
+    ) -> ResourceSnapshot:
+        """Build a minimal snapshot from an AWS ARN.
+
+        Used when a Security Hub finding targets a resource type absent from
+        the Tier 1 inventory, so the finding still carries resource context
+        downstream. ``config`` is left empty -- the full config is not needed
+        for security scoring.
+        """
+        parts = arn.split(":") if arn else []
+        service = parts[2] if len(parts) > 2 else ""
+        region = parts[3] if len(parts) > 3 else self.region
+        account = parts[4] if len(parts) > 4 else self.account_id
+        resource_type = asff_type or (
+            f"AWS::{service}" if service else "AWS::Unknown::Resource"
+        )
+        resource_name = self._arn_resource_name(arn) or arn
+        return ResourceSnapshot(
+            tenant_id="",
+            provider=CloudProvider.AWS,
+            subscription_id=account or self.account_id,
+            resource_group="aws-global",
+            resource_type=resource_type,
+            resource_name=resource_name,
+            region=region or self.region,
+            config={},
+            tags={},
+            data_tier=DataTier.TIER2_ENRICHED,
+        )
+
     async def scan(self) -> list[ResourceSnapshot]:
         """Scan the configured account/region and return all snapshots."""
 
@@ -1032,6 +1283,18 @@ class AWSAdapter(AdapterBase):
             len(snapshots),
             len(self._policy_findings),
         )
+
+        # Security Hub findings as first-class findings. Best-effort; never
+        # raises (returns [] on any failure) so a Security Hub outage or a
+        # disabled hub cannot break the scan.
+        self._securityhub_findings = await self.fetch_securityhub_findings(
+            snapshots,
+        )
+        logger.info(
+            "AWS Security Hub ingestion produced %d finding(s) for %s",
+            len(self._securityhub_findings),
+            self.account_id,
+        )
         return snapshots
 
     async def fetch_policy_findings(self) -> list[FindingResult]:
@@ -1043,6 +1306,18 @@ class AWSAdapter(AdapterBase):
     def policy_findings(self) -> list[FindingResult]:
         """Policy compliance findings from the most recent scan."""
         return self._policy_findings
+
+    @property
+    def securityhub_findings(self) -> list[FindingResult]:
+        """AWS Security Hub findings from the most recent ``scan()``.
+
+        The scan pipeline merges these into the rule-engine findings,
+        preferring a native finding when both describe the same (resource,
+        issue) while keeping Security Hub-only findings for resource types
+        that have no native rule. Empty until ``scan()`` has run (or when
+        Security Hub is not enabled on the account).
+        """
+        return self._securityhub_findings
 
     async def validate_connection(self) -> bool:
         """Return True when STS GetCallerIdentity succeeds."""
