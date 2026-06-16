@@ -7,8 +7,16 @@ import { toFriendlyMessage } from "../lib/errors";
  * Fetch the persisted resource snapshots for a subscription. Snapshots are
  * produced by the most recent scan, so this hook reflects the last scan's
  * inventory rather than a live cloud enumeration.
+ *
+ * Pass `enabled = false` to defer the request until the caller is ready (for
+ * example, while the subscription list is still loading) so the page does not
+ * fire a throwaway fetch with an unresolved subscription id.
  */
-export function useResources(subscriptionId?: string, limit = 1000) {
+export function useResources(
+  subscriptionId?: string,
+  limit = 1000,
+  enabled = true,
+) {
   const [resources, setResources] = useState<ResourceSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,8 +36,9 @@ export function useResources(subscriptionId?: string, limit = 1000) {
   }, [subscriptionId, limit]);
 
   useEffect(() => {
+    if (!enabled) return;
     refresh();
-  }, [refresh]);
+  }, [refresh, enabled]);
 
   return { resources, loading, error, refresh };
 }

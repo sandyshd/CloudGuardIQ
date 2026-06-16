@@ -189,6 +189,29 @@ resource "azurerm_cosmosdb_sql_container" "snapshots" {
   account_name        = azurerm_cosmosdb_account.cloudguardiq.name
   database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
   partition_key_paths = ["/provider"]
+
+  # The Resources page queries by subscription_id and sorts by cost_monthly
+  # descending. snapshots is partitioned by /provider, so that query fans out
+  # across partitions; a composite index lets Cosmos serve the filter + ORDER BY
+  # from the index instead of a distributed scan-and-sort. Applied online.
+  indexing_policy {
+    indexing_mode = "consistent"
+
+    included_path {
+      path = "/*"
+    }
+
+    composite_index {
+      index {
+        path  = "/subscription_id"
+        order = "Ascending"
+      }
+      index {
+        path  = "/cost_monthly"
+        order = "Descending"
+      }
+    }
+  }
 }
 
 resource "azurerm_cosmosdb_sql_container" "remediations" {

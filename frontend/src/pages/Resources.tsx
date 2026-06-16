@@ -49,7 +49,8 @@ function formatCost(value: number): string {
 
 export function Resources() {
   const [subscriptionFilter, setSubscriptionFilter] = useState<string | "ALL" | "">("");
-  const { subscriptions, selected: selectedSub } = useSubscriptions();
+  const { subscriptions, selected: selectedSub, loading: subsLoading } =
+    useSubscriptions();
 
   const effectiveSub =
     subscriptionFilter === "ALL"
@@ -58,7 +59,11 @@ export function Resources() {
         ? subscriptionFilter
         : selectedSub?.subscription_id;
 
-  const { resources, loading, error, refresh } = useResources(effectiveSub);
+  const { resources, loading, error, refresh } = useResources(
+    effectiveSub,
+    1000,
+    !subsLoading,
+  );
 
   const [typeFilter, setTypeFilter] = useState<string>(ALL);
   const [regionFilter, setRegionFilter] = useState<string>(ALL);
