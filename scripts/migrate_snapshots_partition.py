@@ -1,9 +1,10 @@
-"""One-shot migration: repartition snapshots by /subscription_id.
+"""One-shot migration: move snapshots_v2 data back into snapshots.
 
 Cosmos cannot change a container partition key in place, so this copies every
-document from the legacy ``snapshots`` container (partitioned by /provider)
-into ``snapshots_v2`` (partitioned by /subscription_id). The app reads/writes
-``snapshots_v2`` once ``cosmos_container_snapshots`` points at it.
+document from ``snapshots_v2`` into ``snapshots``.
+
+Use this when standardizing on the original container name ``snapshots`` while
+keeping the newer /subscription_id-partitioned document shape.
 
 Usage::
 
@@ -11,7 +12,7 @@ Usage::
 
 The script is idempotent: it upserts by document ``id`` into the destination,
 so re-running it simply overwrites the same rows. It never deletes from the
-source -- decommission the legacy container manually after verifying the
+source -- decommission the source container manually after verifying the
 destination. Auth uses ``DefaultAzureCredential`` (the same path the app uses).
 """
 
@@ -26,7 +27,7 @@ from cloudguardiq.core.database import CosmosRepository
 
 logger = logging.getLogger("cloudguardiq.migrate_snapshots")
 
-_SOURCE_CONTAINER = "snapshots"
+_SOURCE_CONTAINER = "snapshots_v2"
 
 
 async def _migrate(repo: CosmosRepository, dest_container: str) -> tuple[int, int]:
@@ -73,8 +74,8 @@ async def main() -> int:
     dest_container = settings.cosmos_container_snapshots
     if dest_container == _SOURCE_CONTAINER:
         logger.error(
-            "cosmos_container_snapshots still points at the legacy container "
-            "%r; set it to the /subscription_id container before migrating.",
+            "Destination equals source (%r). Set CLOUDGUARDIQ_COSMOS_CONTAINER_SNAPSHOTS "
+            "to the target container before migrating.",
             _SOURCE_CONTAINER,
         )
         return 2

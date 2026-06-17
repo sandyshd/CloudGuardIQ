@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     cosmos_endpoint: str = ""
     cosmos_database: str = "cloudguardiq"
     cosmos_container_findings: str = "findings"
-    cosmos_container_snapshots: str = "snapshots_v2"
+    cosmos_container_snapshots: str = "snapshots"
     cosmos_container_remediations: str = "remediations"
     cosmos_container_system: str = "system"
     cosmos_container_billing: str = "billing"

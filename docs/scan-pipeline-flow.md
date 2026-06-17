@@ -96,7 +96,7 @@ flowchart TD
     Cap -- "No" --> Persist
     Cap -- "Yes" --> Trunc["Keep highest-value resources:<br/>1) rule-covered first<br/>2) then highest monthly cost<br/>Drop the rest"]
     Trunc --> Persist
-    Persist["STEP 1c — Persist snapshots<br/>to snapshots_v2 (best-effort)"] --> Eval
+    Persist["STEP 1c — Persist snapshots<br/>to snapshots (best-effort)"] --> Eval
 
     Eval["STEP 2 — Evaluate native rules<br/>policy_engine.evaluate()"] --> Merge1["STEP 2b — Merge provider<br/>COMPLIANCE findings<br/>(Azure Policy / Security Hub<br/>standards / GCP SCC postures)"]
     Merge1 --> Merge2["STEP 2c — Merge cloud-native<br/>SECURITY findings<br/>(Defender / Security Hub / SCC)"]
@@ -257,7 +257,7 @@ flowchart TD
 | **Scan-frequency cooldown** | Trigger | Rejects premature scans (HTTP 429) | Enforces plan tiers; protects infra |
 | **Capability tier gate** | Discovery | Skips Tier 2/3 if unavailable | No hard dependency on paid security |
 | **Resource cap** | Post-discovery | Truncates to plan limit, value-ordered | Fair usage; small tiers still scan what matters |
-| **Snapshot persistence (best-effort)** | Post-discovery | Writes inventory to `snapshots_v2`; per-resource write failures are logged | Resources page + Overview cost charts stay inventory-driven without aborting scans |
+| **Snapshot persistence (best-effort)** | Post-discovery | Writes inventory to `snapshots`; per-resource write failures are logged | Resources page + Overview cost charts stay inventory-driven without aborting scans |
 | **Cross-cloud rule routing** | Evaluation | Rule sees only its cloud + type | Correctness & performance |
 | **Severity filter** | Evaluation | Optional minimum severity | Noise reduction when configured |
 | **Duplicate collapse (by ID)** | Merge | One finding per stable ID | Stable dashboard counts |
@@ -269,7 +269,7 @@ flowchart TD
 
 Dashboard/Resources binding note:
 - The **Resources page** and **Overview -> Cost by service** now bind to persisted
-  `snapshots_v2` inventory, not finding-embedded snapshots.
+  `snapshots` inventory, not finding-embedded snapshots.
 - This keeps cost/service visualizations accurate even when some findings lack
   `resource_snapshot` payloads.
 
