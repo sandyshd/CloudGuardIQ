@@ -77,7 +77,6 @@ from cloudguardiq.core.observability import (
 from cloudguardiq.onboarding.audit_event_repository import AuditEventRepository
 from cloudguardiq.onboarding.cloud_connection_repository import CloudConnectionRepository
 from cloudguardiq.onboarding.credential_ref_repository import CredentialRefRepository
-from cloudguardiq.pipeline.scan_pipeline import ScanResult
 from cloudguardiq.policy.engine import (
     PolicyEngine,
     PolicyRule,
@@ -950,14 +949,18 @@ async def trigger_scan(
 async def get_scan_status(
     scan_id: str,
     _user: TokenPayload = _auth,
-) -> ScanResult:
-    """Return the status of a scan by scan_id."""
+) -> dict[str, Any]:
+    """Return the status payload for a scan by scan_id."""
     repo = get_repo()
     if repo is not None:
         try:
             item = await repo.get_scan_result(scan_id)
             if item is not None:
-                return ScanResult.model_validate(item)
+                status_val = str(item.get("status") or "").lower()
+                if not status_val:
+                    duration = float(item.get("duration_seconds") or 0.0)
+                    item["status"] = "completed" if duration > 0 else "queued"
+                return item
         except Exception as exc:
             logger.warning("Failed to query scan status: %s", exc)
 

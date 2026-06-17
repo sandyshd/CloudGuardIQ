@@ -36,7 +36,7 @@ import { useComplianceScorecard } from "../hooks/useComplianceScorecard";
 import { usePostureScore } from "../hooks/usePostureScore";
 import { useSubscriptions } from "../hooks/useSubscriptions";
 import { useTimeRange } from "../contexts/TimeRangeContext";
-import { triggerScan } from "../api/scans";
+import { pollScanStatus, triggerScan } from "../api/scans";
 import { TIER2_VALUES, TIER3_VALUES } from "../types";
 import type { FindingResult, Severity, DataTier } from "../types";
 import { cn } from "../lib/utils";
@@ -117,12 +117,13 @@ export function Dashboard() {
   const { toast } = useToast();
   const { subscriptions, loading: subsLoading, selected: selectedSub, refresh: refreshSubscriptions } =
     useSubscriptions();
-  const { findings, loading, refresh, seed } = useFindings(selectedSub?.subscription_id);
+  const { findings, loading, refresh } = useFindings(selectedSub?.subscription_id);
   const { scorecard, loading: scorecardLoading } = useComplianceScorecard(selectedSub?.subscription_id);
   const { posture } = usePostureScore(selectedSub?.subscription_id);
   const { range } = useTimeRange();
   const [selectedFinding, setSelectedFinding] = useState<FindingResult | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [scanPhase, setScanPhase] = useState<"idle" | "queued" | "running">("idle");
   const [scanError, setScanError] = useState<string | null>(null);
   const [lastScanAtOverride, setLastScanAtOverride] = useState<string | null>(null);
   const scanInFlight = useRef(false);
@@ -143,15 +144,29 @@ export function Dashboard() {
     if (!subId || scanInFlight.current) return;
     scanInFlight.current = true;
     setScanning(true);
+    setScanPhase("queued");
     setScanError(null);
     try {
-      const result = await triggerScan({ subscription_id: subId, include_cost: true });
-      // Seed from the scan response directly. Cosmos indexes upserts
-      // asynchronously, so an immediate GET /findings can return [] for
-      // minutes after a scan; the scan response already carries the findings.
-      seed(result.findings ?? []);
-      setLastScanAtOverride(new Date().toISOString());
-      toast({ title: "Scan complete", description: "Findings refreshed." });
+      const queued = await triggerScan({ subscription_id: subId, include_cost: true });
+      toast({ title: "Scan queued", description: "Scan started in background." });
+      setScanPhase("running");
+
+      const status = await pollScanStatus(queued.scan_id);
+      const terminal = String(status.status || "").toLowerCase();
+      if (terminal === "failed") {
+        throw new Error("Background scan failed");
+      }
+
+      if (terminal === "completed" || Number(status.duration_seconds || 0) > 0) {
+        await refresh();
+        setLastScanAtOverride(new Date().toISOString());
+        toast({ title: "Scan complete", description: "Findings refreshed." });
+      } else {
+        toast({
+          title: "Scan still running",
+          description: "Scan is queued/running in background. Refresh in a moment.",
+        });
+      }
     } catch (err) {
       const msg = formatScanError(err);
       setScanError(msg);
@@ -161,6 +176,7 @@ export function Dashboard() {
     } finally {
       void refreshSubscriptions();
       scanInFlight.current = false;
+      setScanPhase("idle");
       setScanning(false);
     }
   };
@@ -337,7 +353,7 @@ export function Dashboard() {
               ) : (
                 <Scan className="mr-2 h-4 w-4" />
               )}
-              {scanning ? "Scanning..." : "Run scan"}
+              {scanning ? (scanPhase === "queued" ? "Queued..." : "Scanning...") : "Run scan"}
             </Button>
             <span className="text-xs text-[hsl(var(--muted-foreground))]">{lastScanLabel}</span>
           </div>

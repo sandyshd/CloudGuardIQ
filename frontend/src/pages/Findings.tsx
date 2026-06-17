@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useFindings } from "../hooks/useFindings";
 import { useSubscriptions } from "../hooks/useSubscriptions";
-import { triggerScan } from "../api/scans";
+import { pollScanStatus, triggerScan } from "../api/scans";
 import { extractScanLastEventAt, formatScanError, formatScanTimestamp } from "../lib/errors";
 import { FindingTable } from "../components/findings/FindingTable";
 import { FindingDetailPanel } from "../components/findings/FindingDetailPanel";
@@ -100,7 +100,7 @@ export function Findings() {
         ? subscriptionFilter
         : selectedSub?.subscription_id;
 
-  const { findings, loading, error, refresh, applyUpdate, seed } = useFindings(effectiveSub);
+  const { findings, loading, error, refresh, applyUpdate } = useFindings(effectiveSub);
   const [lastScanAtOverride, setLastScanAtOverride] = useState<string | null>(null);
   const currentSubscription = effectiveSub
     ? subscriptions.find((s) => s.subscription_id === effectiveSub) ?? null
@@ -118,6 +118,7 @@ export function Findings() {
   const [sourceFilter, setSourceFilter] = useState<FindingSource | "ALL">("ALL");
   const [search, setSearch] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [scanPhase, setScanPhase] = useState<"idle" | "queued" | "running">("idle");
   const [scanError, setScanError] = useState<string | null>(null);
   const scanInFlight = useRef(false);
 
@@ -156,17 +157,30 @@ export function Findings() {
     if (scanInFlight.current) return;
     scanInFlight.current = true;
     setScanning(true);
+    setScanPhase("queued");
     setScanError(null);
     try {
-      const result = await triggerScan({ subscription_id: subId, include_cost: true });
-      // Seed straight from the scan response. Cosmos indexes upserts
-      // asynchronously, so an immediate GET /findings (ORDER BY detected_at)
-      // can return [] for minutes after a scan, blanking the page until the
-      // index catches up. The scan response already holds the full findings
-      // array, so render it now; the periodic refresh reconciles later.
-      seed(result.findings ?? []);
-      setLastScanAtOverride(new Date().toISOString());
-      toast({ tone: "success", title: "Scan complete" });
+      const queued = await triggerScan({ subscription_id: subId, include_cost: true });
+      toast({ tone: "success", title: "Scan queued", description: "Scan started in background." });
+      setScanPhase("running");
+
+      const status = await pollScanStatus(queued.scan_id);
+      const terminal = String(status.status || "").toLowerCase();
+      if (terminal === "failed") {
+        throw new Error("Background scan failed");
+      }
+
+      if (terminal === "completed" || Number(status.duration_seconds || 0) > 0) {
+        await refresh();
+        setLastScanAtOverride(new Date().toISOString());
+        toast({ tone: "success", title: "Scan complete" });
+      } else {
+        toast({
+          tone: "success",
+          title: "Scan still running",
+          description: "Scan is queued/running in background. Refresh in a moment.",
+        });
+      }
     } catch (err) {
       const msg = formatScanError(err);
       setScanError(msg);
@@ -175,6 +189,7 @@ export function Findings() {
       toast({ tone: "error", title: "Scan failed", description: msg });
     } finally {
       void refreshSubscriptions();
+      setScanPhase("idle");
       setScanning(false);
       scanInFlight.current = false;
     }
@@ -254,7 +269,7 @@ export function Findings() {
                 disabled={scanning || subscriptions.length === 0}
               >
                 <Scan className={cn("h-4 w-4", scanning && "animate-pulse")} />
-                {scanning ? "Scanning..." : "Run scan"}
+                {scanning ? (scanPhase === "queued" ? "Queued..." : "Scanning...") : "Run scan"}
               </Button>
             </div>
             <span className="text-xs text-[hsl(var(--muted-foreground))]">{lastScanLabel}</span>
@@ -458,7 +473,7 @@ export function Findings() {
             icon={<Scan className="h-7 w-7" />}
             title="No findings yet"
             message="Run your first scan to discover security issues and cost waste."
-            primaryLabel={scanning ? "Scanning..." : "Run your first scan"}
+            primaryLabel={scanning ? (scanPhase === "queued" ? "Queued..." : "Scanning...") : "Run your first scan"}
             primaryOnClick={handleRunScan}
             primaryDisabled={scanning}
             secondary={
@@ -485,6 +500,7 @@ export function Findings() {
     </div>
   );
 }
+
 
 
 

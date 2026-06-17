@@ -1,21 +1,37 @@
 import { useState } from "react";
-import type { ScanResponse } from "../types";
-import { triggerScan } from "../api/scans";
-
+import type { ScanRunStatus, ScanStatusResponse } from "../types";
+import { pollScanStatus, triggerScan } from "../api/scans";
 import { toFriendlyMessage } from "../lib/errors";
+
+export type ScanPhase = "idle" | "queued" | "running" | "completed" | "failed";
+
 export function useScans() {
-  const [scanResult, setScanResult] = useState<ScanResponse | null>(null);
+  const [scanStatus, setScanStatus] = useState<ScanStatusResponse | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [phase, setPhase] = useState<ScanPhase>("idle");
   const [error, setError] = useState<string | null>(null);
 
   const scan = async (subscriptionId: string) => {
     setScanning(true);
     setError(null);
+    setPhase("queued");
     try {
-      const result = await triggerScan({ subscription_id: subscriptionId, include_cost: true });
-      setScanResult(result);
-      return result;
+      const queued = await triggerScan({
+        subscription_id: subscriptionId,
+        include_cost: true,
+      });
+      setPhase("running");
+      const finalStatus = await pollScanStatus(queued.scan_id);
+      setScanStatus(finalStatus);
+      const terminal = String(finalStatus.status || "").toLowerCase() as ScanRunStatus;
+      if (terminal === "failed") {
+        setPhase("failed");
+      } else {
+        setPhase("completed");
+      }
+      return finalStatus;
     } catch (err) {
+      setPhase("failed");
       setError(toFriendlyMessage(err, "Scan failed"));
       return null;
     } finally {
@@ -23,5 +39,5 @@ export function useScans() {
     }
   };
 
-  return { scanResult, scanning, error, scan };
+  return { scanStatus, scanning, phase, error, scan };
 }

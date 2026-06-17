@@ -79,6 +79,25 @@ export interface ScanRequest {
   include_cost: boolean;
 }
 
+export type ScanRunStatus = "queued" | "running" | "completed" | "failed";
+
+export interface ScanTriggerResponse {
+  scan_id: string;
+  status: ScanRunStatus | string;
+}
+
+export interface ScanStatusResponse {
+  scan_id: string;
+  subscription_id: string;
+  status: ScanRunStatus | string;
+  resources_scanned: number;
+  findings_count: number;
+  critical_count: number;
+  high_count: number;
+  total_waste_usd: number;
+  duration_seconds: number;
+}
+
 export interface ScanResponse {
   subscription_id: string;
   snapshots_count: number;
