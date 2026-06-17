@@ -453,6 +453,11 @@ resource "azurerm_servicebus_queue" "findings_queue" {
   namespace_id = azurerm_servicebus_namespace.cloudguardiq.id
 }
 
+resource "azurerm_servicebus_queue" "manual_scans_queue" {
+  name         = "manual-scans"
+  namespace_id = azurerm_servicebus_namespace.cloudguardiq.id
+}
+
 # ==========================================================================
 # Log Analytics & App Insights
 # ==========================================================================
