@@ -2,7 +2,7 @@
 
 Partition key mapping (must match Terraform container definitions):
   - findings:     /subscription_id
-  - snapshots:    /provider
+  - snapshots:    /subscription_id
   - remediations: /finding_id
   - system:       /type
 """
@@ -96,10 +96,11 @@ def _build_snapshots_query(
 ) -> tuple[str, list[dict[str, object]]]:
     """Return (query, params) for listing resource snapshots within a tenant.
 
-    Snapshots are partitioned by ``/provider``, so this is a cross-partition
-    query scoped by ``subscription_id`` (and ``tenant_id`` when provided for
-    Phase 1 isolation). Rows are ordered by ``cost_monthly`` descending so the
-    most expensive resources surface first on the Resources page.
+    Snapshots are partitioned by ``/subscription_id``, so the caller runs
+    this as a single-partition query (the ``subscription_id`` predicate is
+    kept for clarity and tenant scoping). Rows are ordered by ``cost_monthly``
+    descending so the most expensive resources surface first on the Resources
+    page.
     """
     params: list[dict[str, object]] = [
         {"name": "@limit", "value": limit},
@@ -305,7 +306,8 @@ class CosmosRepository:
         # Cosmos-safe document id for storage constraints.
         doc["resource_id"] = snapshot.id
         doc["id"] = _cosmos_safe_snapshot_id(snapshot.id)
-        # /provider is already in the model; ensure it is at root level
+        # /subscription_id is a required model field and is already at the doc
+        # root, so the partition key value is present on every write.
         await self._snapshots_container().upsert_item(doc)
         logger.info("Saved snapshot %s (tenant=%s)", snapshot.id, snapshot.tenant_id or "-")
         return snapshot.id
@@ -319,8 +321,8 @@ class CosmosRepository:
     ) -> list[ResourceSnapshot]:
         """Return resource snapshots for a subscription, costliest first.
 
-        Snapshots are partitioned by ``/provider``; this issues a
-        cross-partition query scoped by ``subscription_id`` (and
+        Snapshots are partitioned by ``/subscription_id``; this issues a
+        single-partition query scoped to that subscription (and
         ``tenant_id`` when provided for Phase 1 isolation). Invalid legacy
         rows are skipped rather than failing the whole response.
         """
@@ -331,7 +333,7 @@ class CosmosRepository:
         )
         results: list[ResourceSnapshot] = []
         async for item in self._snapshots_container().query_items(
-            query=query, parameters=params,
+            query=query, parameters=params, partition_key=subscription_id,
         ):
             try:
                 results.append(
@@ -965,9 +967,9 @@ class CosmosRepository:
         """Hard-delete every finding/snapshot/remediation for a subscription.
 
         Called by the daily purge timer once a soft-deleted subscription has
-        passed its retention window. Cross-partition for snapshots and
-        remediations (their PKs are not subscription_id), point-deletes for
-        findings (PK is /subscription_id).
+        passed its retention window. Findings and snapshots point-delete
+        within the /subscription_id partition; remediations cascade by
+        /finding_id.
 
         Returns a counter ``{"findings": N, "snapshots": N, "remediations": N}``
         for observability. Errors per item are logged and swallowed so a
@@ -1020,30 +1022,28 @@ class CosmosRepository:
                 # Most findings have no remediation card; treat as best-effort.
                 pass
 
-        # --- snapshots: cross-partition query, then delete per-snapshot.
+        # --- snapshots: single-partition query, then point-delete by id.
         try:
-            snap_query = (
-                "SELECT c.id, c.provider FROM c "
-                "WHERE c.subscription_id = @sub"
-            )
+            snap_query = "SELECT c.id FROM c WHERE c.subscription_id = @sub"
             snap_params: list[dict[str, Any]] = [
                 {"name": "@sub", "value": subscription_id},
             ]
             if tenant_id:
                 snap_query += " AND c.tenant_id = @tid"
                 snap_params.append({"name": "@tid", "value": tenant_id})
-            snap_targets: list[tuple[str, str]] = []
+            snap_ids: list[str] = []
             async for item in self._snapshots_container().query_items(
-                query=snap_query, parameters=snap_params,
+                query=snap_query,
+                parameters=snap_params,
+                partition_key=subscription_id,
             ):
                 sid = item.get("id")
-                provider = item.get("provider", "azure")
                 if isinstance(sid, str):
-                    snap_targets.append((sid, str(provider)))
-            for sid, provider in snap_targets:
+                    snap_ids.append(sid)
+            for sid in snap_ids:
                 try:
                     await self._snapshots_container().delete_item(
-                        item=sid, partition_key=provider,
+                        item=sid, partition_key=subscription_id,
                     )
                     counts["snapshots"] += 1
                 except Exception as exc:  # noqa: BLE001

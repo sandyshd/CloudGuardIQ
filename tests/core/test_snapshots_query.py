@@ -7,10 +7,45 @@ tenant-scoped and resilient to legacy rows.
 
 from __future__ import annotations
 
+from typing import Any
+from unittest.mock import patch
+
+from cloudguardiq.core.config import Settings
 from cloudguardiq.core.database import (
+    CosmosRepository,
     _build_snapshots_query,
     _normalise_snapshot_doc,
 )
+
+
+class _FakeContainer:
+    """Minimal async Cosmos container stub recording query_items calls."""
+
+    def __init__(self, items: list[dict[str, Any]]) -> None:
+        self._items = items
+        self.calls: list[dict[str, Any]] = []
+
+    def query_items(
+        self,
+        *,
+        query: str,
+        parameters: list[dict[str, Any]] | None = None,
+        partition_key: Any = None,
+    ) -> Any:
+        self.calls.append(
+            {
+                "query": query,
+                "parameters": parameters,
+                "partition_key": partition_key,
+            }
+        )
+        items = self._items
+
+        async def _gen() -> Any:
+            for item in items:
+                yield item
+
+        return _gen()
 
 
 def test_build_snapshots_query_filters_by_tenant_and_sub() -> None:
@@ -75,3 +110,17 @@ def test_normalise_snapshot_doc_null_guards_legacy_fields() -> None:
     assert out["region"] == ""
     assert out["config"] == {}
     assert out["tags"] == {}
+
+
+async def test_get_snapshots_scopes_to_subscription_partition() -> None:
+    """get_snapshots must run a single-partition query for the subscription.
+
+    snapshots is partitioned by /subscription_id, so the read path must pass
+    partition_key=subscription_id rather than fanning out cross-partition.
+    """
+    repo = CosmosRepository(Settings(cosmos_endpoint=""))
+    fake = _FakeContainer([])
+    with patch.object(repo, "_snapshots_container", return_value=fake):
+        await repo.get_snapshots("sub-1", tenant_id="tenant-A")
+    assert fake.calls, "query_items was never called"
+    assert fake.calls[0]["partition_key"] == "sub-1"

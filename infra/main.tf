@@ -183,17 +183,28 @@ resource "azurerm_cosmosdb_sql_container" "findings" {
   partition_key_paths = ["/subscription_id"]
 }
 
+# Legacy snapshots container partitioned by /provider. Retained only so the
+# one-shot migration script can copy historical rows into snapshots_v2; safe to
+# remove once the migration is verified complete.
 resource "azurerm_cosmosdb_sql_container" "snapshots" {
   name                = "snapshots"
   resource_group_name = azurerm_resource_group.cloudguardiq.name
   account_name        = azurerm_cosmosdb_account.cloudguardiq.name
   database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
   partition_key_paths = ["/provider"]
+}
 
-  # The Resources page queries by subscription_id and sorts by cost_monthly
-  # descending. snapshots is partitioned by /provider, so that query fans out
-  # across partitions; a composite index lets Cosmos serve the filter + ORDER BY
-  # from the index instead of a distributed scan-and-sort. Applied online.
+# Active snapshots container partitioned by /subscription_id. The Resources page
+# and purge both query by a single subscription, so this turns those into cheap
+# single-partition operations. The composite index serves the
+# filter + ORDER BY cost_monthly within the partition.
+resource "azurerm_cosmosdb_sql_container" "snapshots_v2" {
+  name                = "snapshots_v2"
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
+  partition_key_paths = ["/subscription_id"]
+
   indexing_policy {
     indexing_mode = "consistent"
 
