@@ -356,7 +356,7 @@ export function Dashboard() {
           icon={<Plug className="h-7 w-7" />}
           title="No subscriptions connected"
           message="Connect an Azure subscription to start scanning for security and cost findings."
-          primaryLabel="Connect subscription" primaryTo="/onboarding"
+          primaryLabel="Connect subscription" primaryTo="/settings"
         />
       </div>
     );
