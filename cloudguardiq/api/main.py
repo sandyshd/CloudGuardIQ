@@ -970,6 +970,23 @@ async def scan_subscription(
     user: TokenPayload = _auth,
 ) -> ScanResponse:
     """Scan an Azure subscription for security and cost findings."""
+    try:
+        return await asyncio.wait_for(
+            _scan_subscription_impl(request, user), timeout=180.0
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Scan operation timed out after 3 minutes; "
+            "too many resources or slow cloud APIs",
+        ) from exc
+
+
+async def _scan_subscription_impl(
+    request: ScanRequest,
+    user: TokenPayload,
+) -> ScanResponse:
+    """Implementation of scan_subscription with 180-second timeout."""
     await _validate_owned_subscription(user, request.subscription_id)
     await _enforce_scan_frequency(user, request.subscription_id)
     scan_id = str(uuid.uuid4())

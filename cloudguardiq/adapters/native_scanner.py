@@ -435,21 +435,46 @@ class NativeScanner:
         # canonical ARM resource id, while ``snap.id`` is a synthesized
         # cloud-agnostic key -- so we match on a reconstructed ARM id and fall
         # back to the synthesized id for any provider that returns it.
-        resource_ids = [_azure_arm_id(s) for s in snapshots]
-        cost_map = await self._fetch_cost_data(resource_ids)
-        for snap in snapshots:
-            cost = cost_map.get(_azure_arm_id(snap))
-            if cost is None:
-                cost = cost_map.get(snap.id)
-            if cost is not None:
-                snap.cost_monthly = cost
-                # Actual billed cost came from Cost Management -> promote the
-                # provenance tier (never downgrade a higher tier).
-                if snap.data_tier == DataTier.TIER1_NATIVE:
-                    snap.data_tier = DataTier.TIER2_ENRICHED
+        # Cost enrichment is wrapped in a 60-second timeout so a slow Azure
+        # Cost Management API does not block the entire scan (graceful degradation).
+        try:
+            resource_ids = [_azure_arm_id(s) for s in snapshots]
+            cost_map = await asyncio.wait_for(
+                self._fetch_cost_data(resource_ids), timeout=60.0
+            )
+            for snap in snapshots:
+                cost = cost_map.get(_azure_arm_id(snap))
+                if cost is None:
+                    cost = cost_map.get(snap.id)
+                if cost is not None:
+                    snap.cost_monthly = cost
+                    # Actual billed cost came from Cost Management -> promote the
+                    # provenance tier (never downgrade a higher tier).
+                    if snap.data_tier == DataTier.TIER1_NATIVE:
+                        snap.data_tier = DataTier.TIER2_ENRICHED
+        except TimeoutError:
+            logger.warning(
+                "Cost enrichment timed out after 60s; continuing scan without cost data"
+            )
+        except Exception as exc:
+            logger.warning(
+                "Cost enrichment failed: %s; continuing without cost data", exc
+            )
 
         # Live VM rightsizing estimate (price delta vs. one size down).
-        await self._enrich_rightsizing(snapshots)
+        # Also wrapped in a timeout so slow Retail Prices API calls do not block.
+        try:
+            await asyncio.wait_for(
+                self._enrich_rightsizing(snapshots), timeout=30.0
+            )
+        except TimeoutError:
+            logger.warning(
+                "Rightsizing enrichment timed out after 30s; some VMs will lack savings estimates"
+            )
+        except Exception as exc:
+            logger.warning(
+                "Rightsizing enrichment failed: %s; continuing without savings estimates", exc
+            )
 
         return snapshots
 
