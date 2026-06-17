@@ -914,24 +914,34 @@ async def trigger_scan(
 
     Enqueues a scan request and returns immediately with a scan_id.
     """
+    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
     from azure.servicebus.aio import ServiceBusClient
 
     from cloudguardiq.core.models import ManualScanJob
 
     await _validate_owned_subscription(user, request.subscription_id)
-    bind_context(subscription_id=request.subscription_id, provider="azure")
     await _enforce_scan_frequency(user, request.subscription_id)
 
     tenant_id = "" if get_settings().auth_disabled else get_tenant_id(user)
+    requested_by = str(getattr(user, "oid", "") or "")
     scan_id = str(uuid.uuid4())
+    queued_at = datetime.now(timezone.utc)
+    max_attempts = int(os.environ.get("MANUAL_SCAN_MAX_ATTEMPTS", "3"))
+
+    bind_context(
+        subscription_id=request.subscription_id,
+        scan_id=scan_id,
+        tenant_id=tenant_id,
+        provider="azure",
+    )
     logger.info(
-        "Scan triggered: %s for sub %s tenant %s",
+        "manual_scan_queued scan_id=%s subscription_id=%s tenant_id=%s requested_by=%s",
         scan_id,
         request.subscription_id,
         tenant_id,
+        requested_by,
     )
 
-    # Persist scan intent to Cosmos DB if available
     repo = get_repo()
     if repo is not None:
         try:
@@ -942,39 +952,92 @@ async def trigger_scan(
                 "subscription_id": request.subscription_id,
                 "tenant_id": tenant_id,
                 "status": "queued",
+                "queued_at": queued_at.isoformat(),
+                "started_at": None,
+                "completed_at": None,
                 "resources_scanned": 0,
                 "findings_count": 0,
                 "critical_count": 0,
                 "high_count": 0,
                 "total_waste_usd": 0.0,
                 "duration_seconds": 0.0,
+                "error": "",
+                "partial_enrichment": False,
+                "enrichment_note": "",
+                "retries_attempted": 0,
+                "max_attempts": max_attempts,
             })
         except Exception as exc:
-            logger.warning("Failed to persist scan request: %s", exc)
+            logger.warning("Failed to persist queued manual scan %s: %s", scan_id, exc)
 
-    # Publish job to Service Bus queue if available
     sb_fqns = os.environ.get("SERVICE_BUS_CONNECTION__FULLYQUALIFIEDNAMESPACE")
-    if sb_fqns:
-        try:
-            from azure.identity import DefaultAzureCredential
-            credential = DefaultAzureCredential()
-            async with ServiceBusClient(
-                fully_qualified_namespace=sb_fqns, credential=credential
-            ) as client, client.get_queue_sender(queue_name="manual-scans") as sender:
-                job = ManualScanJob(
-                    scan_id=scan_id,
-                    subscription_id=request.subscription_id,
-                    tenant_id=tenant_id,
-                    include_cost=request.include_cost,
-                )
-                msg = MessageBody(job.model_dump_json().encode("utf-8"))
-                msg.message_id = scan_id
-                await sender.send_messages(msg)
-                logger.info("Enqueued manual scan job %s", scan_id)
-        except Exception as exc:
-            logger.warning("Failed to enqueue manual scan job %s: %s", scan_id, exc)
-        finally:
-            await credential.close()
+    if not sb_fqns:
+        logger.warning(
+            "manual_scan_queue_unavailable scan_id=%s subscription_id=%s tenant_id=%s",
+            scan_id,
+            request.subscription_id,
+            tenant_id,
+        )
+        return {"scan_id": scan_id, "status": "queued"}
+
+    credential = AsyncDefaultAzureCredential()
+    try:
+        async with ServiceBusClient(
+            fully_qualified_namespace=sb_fqns,
+            credential=credential,
+        ) as client, client.get_queue_sender(queue_name="manual-scans") as sender:
+            job = ManualScanJob(
+                scan_id=scan_id,
+                subscription_id=request.subscription_id,
+                tenant_id=tenant_id,
+                requested_by=requested_by,
+                queued_at=queued_at,
+                include_cost=request.include_cost,
+                attempt_count=0,
+                max_attempts=max_attempts,
+            )
+            msg = MessageBody(job.model_dump_json().encode("utf-8"))
+            msg.message_id = scan_id
+            await sender.send_messages(msg)
+            logger.info(
+                "manual_scan_enqueued scan_id=%s subscription_id=%s tenant_id=%s",
+                scan_id,
+                request.subscription_id,
+                tenant_id,
+            )
+    except Exception as exc:
+        logger.error(
+            "manual_scan_enqueue_failed scan_id=%s subscription_id=%s tenant_id=%s error=%s",
+            scan_id,
+            request.subscription_id,
+            tenant_id,
+            exc,
+        )
+        if repo is not None:
+            try:
+                failed_at = datetime.now(timezone.utc)
+                await repo.save_scan_result({
+                    "id": scan_id,
+                    "type": "scan_result",
+                    "scan_id": scan_id,
+                    "subscription_id": request.subscription_id,
+                    "tenant_id": tenant_id,
+                    "status": "failed",
+                    "queued_at": queued_at.isoformat(),
+                    "started_at": None,
+                    "completed_at": failed_at.isoformat(),
+                    "duration_seconds": 0.0,
+                    "error": f"Failed to enqueue scan job: {exc}",
+                    "partial_enrichment": False,
+                    "enrichment_note": "",
+                    "retries_attempted": 0,
+                    "max_attempts": max_attempts,
+                })
+            except Exception as persist_exc:
+                logger.warning("Failed to persist enqueue failure for %s: %s", scan_id, persist_exc)
+        return {"scan_id": scan_id, "status": "failed"}
+    finally:
+        await credential.close()
 
     return {"scan_id": scan_id, "status": "queued"}
 
@@ -993,10 +1056,44 @@ async def get_scan_status(
                 status_val = str(item.get("status") or "").lower()
                 if not status_val:
                     duration = float(item.get("duration_seconds") or 0.0)
-                    item["status"] = "completed" if duration > 0 else "queued"
+                    status_val = "completed" if duration > 0 else "queued"
+                    item["status"] = status_val
+
+                for ts_key in ("queued_at", "started_at", "completed_at"):
+                    item.setdefault(ts_key, None)
+
+                if status_val in {"queued", "running"}:
+                    timeout_seconds = int(os.environ.get("MANUAL_SCAN_TIMEOUT_SECONDS", "900"))
+                    reference_raw = item.get("started_at") or item.get("queued_at")
+                    if isinstance(reference_raw, str) and reference_raw:
+                        try:
+                            started = datetime.fromisoformat(reference_raw.replace("Z", "+00:00"))
+                            elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                            if elapsed > timeout_seconds:
+                                item["status"] = "timed_out"
+                                item["completed_at"] = datetime.now(timezone.utc).isoformat()
+                                item["duration_seconds"] = round(float(elapsed), 3)
+                                item["error"] = (
+                                    item.get("error")
+                                    or "Scan timed out in background worker"
+                                )
+                                try:
+                                    await repo.save_scan_result(item)
+                                except Exception as persist_exc:
+                                    logger.warning(
+                                        "Failed to persist timed_out status for scan_id=%s: %s",
+                                        scan_id,
+                                        persist_exc,
+                                    )
+                        except ValueError:
+                            logger.warning(
+                                "Invalid timestamp in scan status for scan_id=%s",
+                                scan_id,
+                            )
+
                 return item
         except Exception as exc:
-            logger.warning("Failed to query scan status: %s", exc)
+            logger.warning("Failed to query scan status for scan_id=%s: %s", scan_id, exc)
 
     raise HTTPException(status_code=404, detail="Scan not found")
 

@@ -3,7 +3,7 @@ import type { ScanRunStatus, ScanStatusResponse } from "../types";
 import { pollScanStatus, triggerScan } from "../api/scans";
 import { toFriendlyMessage } from "../lib/errors";
 
-export type ScanPhase = "idle" | "queued" | "running" | "completed" | "failed";
+export type ScanPhase = "idle" | "queued" | "running" | "completed" | "failed" | "timed_out";
 
 export function useScans() {
   const [scanStatus, setScanStatus] = useState<ScanStatusResponse | null>(null);

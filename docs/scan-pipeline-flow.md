@@ -313,3 +313,38 @@ flowchart LR
 - **Plan tiers scale cleanly** on resources, scan frequency, and AI usage.
 - **Trustworthy by design** — graceful degradation, stable counts, and a guard
   that never wrongly clears a customer's dashboard.
+
+
+## 9. Manual Scan Observability (Phase 3)
+
+Manual scan lifecycle is standardized as:
+`queued -> running -> completed | failed | timed_out`
+
+Each scan status document now includes:
+- `queued_at`
+- `started_at`
+- `completed_at`
+- `duration_seconds`
+- `partial_enrichment` and `enrichment_note` when cost enrichment is best-effort delayed
+
+Logs include correlated dimensions (`scan_id`, `subscription_id`, `tenant_id`) so a
+single App Insights query can reconstruct the full path from trigger to worker completion.
+
+Suggested KQL for dev triage:
+
+```kusto
+traces
+| where customDimensions.scan_id == "<scan-id>"
+| project timestamp, severityLevel, message,
+          scan_id = tostring(customDimensions.scan_id),
+          subscription_id = tostring(customDimensions.subscription_id),
+          tenant_id = tostring(customDimensions.tenant_id)
+| order by timestamp asc
+```
+
+```kusto
+traces
+| where message has "manual_scan_"
+| summarize count() by message, bin(timestamp, 15m)
+| order by timestamp desc
+```

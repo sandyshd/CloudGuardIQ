@@ -412,114 +412,6 @@ async def ai_worker_trigger(msg: func.ServiceBusMessage) -> None:
     body = msg.get_body().decode("utf-8")
     logger.info("AI worker received message: %s", msg.message_id)
 
-
-@app.service_bus_queue_trigger(
-    arg_name="msg",
-    queue_name="manual-scans",
-    connection="SERVICE_BUS_CONNECTION",
-)
-async def manual_scan_worker(msg: func.ServiceBusMessage) -> None:
-    """Service Bus triggered worker for manual scan jobs."""
-    import json
-    import time
-    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
-    from cloudguardiq.core.models import ManualScanJob
-    
-    body = msg.get_body().decode("utf-8")
-    logger.info("Manual scan worker received message: %s", msg.message_id)
-    
-    scan_id = None
-    db = None
-    credential = None
-    start_time = time.perf_counter()
-    
-    try:
-        job_data = json.loads(body)
-        job = ManualScanJob(**job_data)
-        scan_id = job.scan_id
-        
-        # Initialize database connection
-        settings = get_settings()
-        db = CosmosRepository(settings)
-        await db.connect()
-        
-        # Update status to running
-        await db.save_scan_result({
-            "id": scan_id,
-            "type": "scan_result",
-            "scan_id": scan_id,
-            "subscription_id": job.subscription_id,
-            "tenant_id": job.tenant_id,
-            "status": "running",
-            "resources_scanned": 0,
-            "findings_count": 0,
-            "critical_count": 0,
-            "high_count": 0,
-            "total_waste_usd": 0.0,
-            "duration_seconds": 0.0,
-        })
-        
-        # Build and run pipeline
-        credential = AsyncDefaultAzureCredential()
-        pipeline = await _build_scan_pipeline(
-            job.subscription_id,
-            db,
-            credential,
-            customer_tenant_id=job.tenant_id or None,
-            provider="AZURE",
-        )
-        
-        result = await pipeline.run(job.subscription_id, tenant_id=job.tenant_id)
-        duration = time.perf_counter() - start_time
-        
-        # Persist completed status with counts
-        await db.save_scan_result({
-            "id": scan_id,
-            "type": "scan_result",
-            "scan_id": scan_id,
-            "subscription_id": job.subscription_id,
-            "tenant_id": job.tenant_id,
-            "status": "completed",
-            "resources_scanned": result.resources_scanned,
-            "findings_count": result.findings_count,
-            "critical_count": result.critical_count,
-            "high_count": result.high_count,
-            "total_waste_usd": result.total_waste_usd,
-            "duration_seconds": round(duration, 2),
-        })
-        
-        logger.info(
-            "Manual scan %s completed: %d resources, %d findings, duration %.1fs",
-            scan_id,
-            result.resources_scanned,
-            result.findings_count,
-            duration,
-        )
-        
-    except Exception as exc:
-        logger.error("Manual scan worker error for %s: %s", scan_id, exc)
-        
-        # Persist failed status with error
-        if scan_id and db is not None:
-            try:
-                duration = time.perf_counter() - start_time
-                await db.save_scan_result({
-                    "id": scan_id,
-                    "type": "scan_result",
-                    "scan_id": scan_id,
-                    "status": "failed",
-                    "error": str(exc),
-                    "duration_seconds": round(duration, 2),
-                })
-            except Exception as inner_exc:
-                logger.error("Failed to persist failed status for %s: %s", scan_id, inner_exc)
-    
-    finally:
-        if db is not None:
-            await db.close()
-        if credential is not None:
-            await credential.close()
-
     worker = None
     db = None
     credential = None
@@ -539,6 +431,315 @@ async def manual_scan_worker(msg: func.ServiceBusMessage) -> None:
             )
     except Exception as exc:  # noqa: BLE001
         logger.error("AI worker error: %s", exc)
+    finally:
+        if db is not None:
+            await db.close()
+        if credential is not None:
+            await credential.close()
+
+
+def _is_terminal_status(status: str) -> bool:
+    """Return True when *status* is a terminal scan lifecycle state."""
+    return status in {"completed", "failed", "timed_out"}
+
+
+def _is_transient_scan_error(exc: Exception) -> bool:
+    """Best-effort classifier for retryable manual scan worker failures."""
+    transient_markers = (
+        "timeout",
+        "timed out",
+        "temporarily",
+        "temporarily unavailable",
+        "connection reset",
+        "connection aborted",
+        "too many requests",
+        "throttle",
+        "429",
+        "503",
+        "504",
+    )
+    message = str(exc).lower()
+    return any(marker in message for marker in transient_markers)
+
+
+@app.service_bus_queue_trigger(
+    arg_name="msg",
+    queue_name="manual-scans",
+    connection="SERVICE_BUS_CONNECTION",
+)
+async def manual_scan_worker(msg: func.ServiceBusMessage) -> None:
+    """Service Bus triggered worker for manual scan jobs."""
+    import asyncio
+    from datetime import datetime, timezone
+
+    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
+
+    from cloudguardiq.core.config import get_settings
+    from cloudguardiq.core.database import CosmosRepository
+    from cloudguardiq.core.models import ManualScanJob
+    from cloudguardiq.core.observability import bind_context
+
+    timeout_seconds = int(os.environ.get("MANUAL_SCAN_TIMEOUT_SECONDS", "900"))
+    body = msg.get_body().decode("utf-8")
+    db = None
+    credential = None
+    start_mono = asyncio.get_running_loop().time()
+    job: ManualScanJob | None = None
+
+    try:
+        job = ManualScanJob.model_validate_json(body)
+        bind_context(
+            scan_id=job.scan_id,
+            tenant_id=job.tenant_id,
+            subscription_id=job.subscription_id,
+            provider="azure",
+        )
+        logger.info(
+            "manual_scan_worker_received scan_id=%s subscription_id=%s "
+            "tenant_id=%s attempt=%d max_attempts=%d",
+            job.scan_id,
+            job.subscription_id,
+            job.tenant_id,
+            job.attempt_count,
+            job.max_attempts,
+        )
+
+        settings = get_settings()
+        db = CosmosRepository(settings)
+        await db.connect()
+
+        existing = await db.get_scan_result(job.scan_id)
+        if existing is not None:
+            existing_status = str(existing.get("status") or "").lower()
+            if _is_terminal_status(existing_status):
+                logger.info(
+                    "manual_scan_duplicate_terminal_skip scan_id=%s status=%s",
+                    job.scan_id,
+                    existing_status,
+                )
+                return
+
+        started_at = datetime.now(timezone.utc)
+        await db.save_scan_result({
+            "id": job.scan_id,
+            "type": "scan_result",
+            "scan_id": job.scan_id,
+            "subscription_id": job.subscription_id,
+            "tenant_id": job.tenant_id,
+            "status": "running",
+            "queued_at": job.queued_at.isoformat(),
+            "started_at": started_at.isoformat(),
+            "completed_at": None,
+            "resources_scanned": 0,
+            "findings_count": 0,
+            "critical_count": 0,
+            "high_count": 0,
+            "total_waste_usd": 0.0,
+            "duration_seconds": 0.0,
+            "error": "",
+            "partial_enrichment": False,
+            "enrichment_note": "",
+            "retries_attempted": job.attempt_count,
+            "max_attempts": job.max_attempts,
+        })
+
+        credential = AsyncDefaultAzureCredential()
+        pipeline = await _build_scan_pipeline(
+            job.subscription_id,
+            db,
+            credential,
+            customer_tenant_id=job.tenant_id,
+            provider="AZURE",
+        )
+
+        final_result = None
+        retries_attempted = job.attempt_count
+        for attempt in range(job.attempt_count, job.max_attempts):
+            retries_attempted = attempt
+            try:
+                final_result = await asyncio.wait_for(
+                    pipeline.run(job.subscription_id, tenant_id=job.tenant_id),
+                    timeout=timeout_seconds,
+                )
+                break
+            except TimeoutError as exc:
+                logger.error(
+                    "manual_scan_timeout scan_id=%s subscription_id=%s "
+                    "tenant_id=%s timeout_seconds=%d",
+                    job.scan_id,
+                    job.subscription_id,
+                    job.tenant_id,
+                    timeout_seconds,
+                )
+                completed_at = datetime.now(timezone.utc)
+                duration = round(completed_at.timestamp() - started_at.timestamp(), 3)
+                await db.save_scan_result({
+                    "id": job.scan_id,
+                    "type": "scan_result",
+                    "scan_id": job.scan_id,
+                    "subscription_id": job.subscription_id,
+                    "tenant_id": job.tenant_id,
+                    "status": "timed_out",
+                    "queued_at": job.queued_at.isoformat(),
+                    "started_at": started_at.isoformat(),
+                    "completed_at": completed_at.isoformat(),
+                    "resources_scanned": 0,
+                    "findings_count": 0,
+                    "critical_count": 0,
+                    "high_count": 0,
+                    "total_waste_usd": 0.0,
+                    "duration_seconds": duration,
+                    "error": str(exc),
+                    "partial_enrichment": False,
+                    "enrichment_note": "",
+                    "retries_attempted": retries_attempted,
+                    "max_attempts": job.max_attempts,
+                })
+                return
+            except Exception as exc:  # noqa: BLE001
+                is_transient = _is_transient_scan_error(exc)
+                has_next_attempt = attempt < (job.max_attempts - 1)
+                if is_transient and has_next_attempt:
+                    backoff_seconds = min(8, 2**attempt)
+                    logger.warning(
+                        "manual_scan_retrying scan_id=%s subscription_id=%s "
+                        "tenant_id=%s attempt=%d backoff_seconds=%d error=%s",
+                        job.scan_id,
+                        job.subscription_id,
+                        job.tenant_id,
+                        attempt + 1,
+                        backoff_seconds,
+                        exc,
+                    )
+                    await asyncio.sleep(backoff_seconds)
+                    continue
+
+                completed_at = datetime.now(timezone.utc)
+                duration = round(completed_at.timestamp() - started_at.timestamp(), 3)
+                await db.save_scan_result({
+                    "id": job.scan_id,
+                    "type": "scan_result",
+                    "scan_id": job.scan_id,
+                    "subscription_id": job.subscription_id,
+                    "tenant_id": job.tenant_id,
+                    "status": "failed",
+                    "queued_at": job.queued_at.isoformat(),
+                    "started_at": started_at.isoformat(),
+                    "completed_at": completed_at.isoformat(),
+                    "resources_scanned": 0,
+                    "findings_count": 0,
+                    "critical_count": 0,
+                    "high_count": 0,
+                    "total_waste_usd": 0.0,
+                    "duration_seconds": duration,
+                    "error": str(exc),
+                    "partial_enrichment": False,
+                    "enrichment_note": "",
+                    "retries_attempted": retries_attempted,
+                    "max_attempts": job.max_attempts,
+                })
+                logger.error(
+                    "manual_scan_failed scan_id=%s subscription_id=%s "
+                    "tenant_id=%s attempt=%d error=%s",
+                    job.scan_id,
+                    job.subscription_id,
+                    job.tenant_id,
+                    attempt + 1,
+                    exc,
+                )
+                return
+
+        if final_result is None:
+            completed_at = datetime.now(timezone.utc)
+            duration = round(completed_at.timestamp() - started_at.timestamp(), 3)
+            await db.save_scan_result({
+                "id": job.scan_id,
+                "type": "scan_result",
+                "scan_id": job.scan_id,
+                "subscription_id": job.subscription_id,
+                "tenant_id": job.tenant_id,
+                "status": "failed",
+                "queued_at": job.queued_at.isoformat(),
+                "started_at": started_at.isoformat(),
+                "completed_at": completed_at.isoformat(),
+                "resources_scanned": 0,
+                "findings_count": 0,
+                "critical_count": 0,
+                "high_count": 0,
+                "total_waste_usd": 0.0,
+                "duration_seconds": duration,
+                "error": "Manual scan failed with no terminal result",
+                "partial_enrichment": False,
+                "enrichment_note": "",
+                "retries_attempted": retries_attempted,
+                "max_attempts": job.max_attempts,
+            })
+            return
+
+        completed_at = datetime.now(timezone.utc)
+        elapsed = asyncio.get_running_loop().time() - start_mono
+        partial_enrichment = (
+            bool(job.include_cost)
+            and final_result.findings_count > 0
+            and float(final_result.total_waste_usd) <= 0
+        )
+        enrichment_note = (
+            "Cost enrichment may be delayed due to provider/API timeouts; "
+            "security findings are complete."
+            if partial_enrichment
+            else ""
+        )
+
+        latest = await db.get_scan_result(job.scan_id)
+        latest_status = str((latest or {}).get("status") or "").lower()
+        if _is_terminal_status(latest_status):
+            logger.info(
+                "manual_scan_terminal_already_written scan_id=%s status=%s",
+                job.scan_id,
+                latest_status,
+            )
+            return
+
+        await db.save_scan_result({
+            "id": job.scan_id,
+            "type": "scan_result",
+            "scan_id": job.scan_id,
+            "subscription_id": job.subscription_id,
+            "tenant_id": job.tenant_id,
+            "status": "completed",
+            "queued_at": job.queued_at.isoformat(),
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "resources_scanned": final_result.resources_scanned,
+            "findings_count": final_result.findings_count,
+            "critical_count": final_result.critical_count,
+            "high_count": final_result.high_count,
+            "total_waste_usd": final_result.total_waste_usd,
+            "duration_seconds": round(elapsed, 3),
+            "error": "",
+            "partial_enrichment": partial_enrichment,
+            "enrichment_note": enrichment_note,
+            "retries_attempted": retries_attempted,
+            "max_attempts": job.max_attempts,
+        })
+        logger.info(
+            "manual_scan_completed scan_id=%s subscription_id=%s tenant_id=%s "
+            "resources=%d findings=%d partial_enrichment=%s",
+            job.scan_id,
+            job.subscription_id,
+            job.tenant_id,
+            final_result.resources_scanned,
+            final_result.findings_count,
+            partial_enrichment,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "manual_scan_worker_unhandled_error scan_id=%s message_id=%s error=%s",
+            job.scan_id if job else "<unknown>",
+            msg.message_id,
+            exc,
+        )
+        raise
     finally:
         if db is not None:
             await db.close()

@@ -118,7 +118,7 @@ export function Findings() {
   const [sourceFilter, setSourceFilter] = useState<FindingSource | "ALL">("ALL");
   const [search, setSearch] = useState("");
   const [scanning, setScanning] = useState(false);
-  const [scanPhase, setScanPhase] = useState<"idle" | "queued" | "running">("idle");
+  const [scanPhase, setScanPhase] = useState<"idle" | "queued" | "running" | "completed" | "failed" | "timed_out">("idle");
   const [scanError, setScanError] = useState<string | null>(null);
   const scanInFlight = useRef(false);
 
@@ -161,19 +161,53 @@ export function Findings() {
     setScanError(null);
     try {
       const queued = await triggerScan({ subscription_id: subId, include_cost: true });
-      toast({ tone: "success", title: "Scan queued", description: "Scan started in background." });
+      const triggerStatus = String(queued.status || "").toLowerCase();
+      if (triggerStatus === "failed") {
+        setScanPhase("failed");
+        setScanError("Scan could not be queued. Please retry.");
+        toast({ tone: "error", title: "Scan failed to queue", description: "Please retry." });
+        return;
+      }
+
+      toast({
+        tone: "success",
+        title: "Scan queued",
+        description: "Scan is running in the background. Progress updates automatically.",
+      });
       setScanPhase("running");
 
       const status = await pollScanStatus(queued.scan_id);
       const terminal = String(status.status || "").toLowerCase();
+
+      if (terminal === "timed_out") {
+        setScanPhase("timed_out");
+        const timeoutMsg = status.error || "Scan exceeded timeout. Retry to continue.";
+        setScanError(timeoutMsg);
+        toast({ tone: "error", title: "Scan timed out", description: timeoutMsg });
+        return;
+      }
+
       if (terminal === "failed") {
-        throw new Error("Background scan failed");
+        setScanPhase("failed");
+        const failedMsg = status.error || "Background scan failed";
+        setScanError(failedMsg);
+        toast({ tone: "error", title: "Scan failed", description: failedMsg });
+        return;
       }
 
       if (terminal === "completed" || Number(status.duration_seconds || 0) > 0) {
+        setScanPhase("completed");
         await refresh();
-        setLastScanAtOverride(new Date().toISOString());
-        toast({ tone: "success", title: "Scan complete" });
+        setLastScanAtOverride(status.completed_at ?? new Date().toISOString());
+        if (status.partial_enrichment) {
+          toast({
+            tone: "success",
+            title: "Scan complete (partial enrichment)",
+            description: status.enrichment_note || "Cost enrichment may be delayed; security findings are complete.",
+          });
+        } else {
+          toast({ tone: "success", title: "Scan complete" });
+        }
       } else {
         toast({
           tone: "success",
@@ -183,13 +217,13 @@ export function Findings() {
       }
     } catch (err) {
       const msg = formatScanError(err);
+      setScanPhase("failed");
       setScanError(msg);
       const fallbackLastScanAt = extractScanLastEventAt(err);
       if (fallbackLastScanAt) setLastScanAtOverride(fallbackLastScanAt);
       toast({ tone: "error", title: "Scan failed", description: msg });
     } finally {
       void refreshSubscriptions();
-      setScanPhase("idle");
       setScanning(false);
       scanInFlight.current = false;
     }
@@ -269,7 +303,7 @@ export function Findings() {
                 disabled={scanning || subscriptions.length === 0}
               >
                 <Scan className={cn("h-4 w-4", scanning && "animate-pulse")} />
-                {scanning ? (scanPhase === "queued" ? "Queued..." : "Scanning...") : "Run scan"}
+                {scanning ? (scanPhase === "queued" ? "Queued..." : "Scanning resources...") : (scanPhase === "failed" || scanPhase === "timed_out" ? "Retry scan" : "Run scan")}
               </Button>
             </div>
             <span className="text-xs text-[hsl(var(--muted-foreground))]">{lastScanLabel}</span>

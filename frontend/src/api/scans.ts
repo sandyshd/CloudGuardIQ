@@ -17,7 +17,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export function isTerminalScanStatus(status: string): boolean {
-  return status === "completed" || status === "failed";
+  return status === "completed" || status === "failed" || status === "timed_out";
 }
 
 export async function triggerScan(request: ScanRequest): Promise<ScanTriggerResponse> {

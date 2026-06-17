@@ -123,7 +123,7 @@ export function Dashboard() {
   const { range } = useTimeRange();
   const [selectedFinding, setSelectedFinding] = useState<FindingResult | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [scanPhase, setScanPhase] = useState<"idle" | "queued" | "running">("idle");
+  const [scanPhase, setScanPhase] = useState<"idle" | "queued" | "running" | "completed" | "failed" | "timed_out">("idle");
   const [scanError, setScanError] = useState<string | null>(null);
   const [lastScanAtOverride, setLastScanAtOverride] = useState<string | null>(null);
   const scanInFlight = useRef(false);
@@ -148,27 +148,60 @@ export function Dashboard() {
     setScanError(null);
     try {
       const queued = await triggerScan({ subscription_id: subId, include_cost: true });
-      toast({ title: "Scan queued", description: "Scan started in background." });
+      const triggerStatus = String(queued.status || "").toLowerCase();
+      if (triggerStatus === "failed") {
+        setScanPhase("failed");
+        setScanError("Scan could not be queued. Please retry.");
+        toast({ title: "Scan failed to queue", description: "Please retry.", tone: "error" });
+        return;
+      }
+
+      toast({
+        title: "Scan queued",
+        description: "Scan is now running in the background. Progress is updated automatically.",
+      });
       setScanPhase("running");
 
       const status = await pollScanStatus(queued.scan_id);
       const terminal = String(status.status || "").toLowerCase();
+
+      if (terminal === "timed_out") {
+        setScanPhase("timed_out");
+        const timeoutMsg = status.error || "Scan exceeded the background timeout. Retry to continue.";
+        setScanError(timeoutMsg);
+        toast({ title: "Scan timed out", description: timeoutMsg, tone: "error" });
+        return;
+      }
+
       if (terminal === "failed") {
-        throw new Error("Background scan failed");
+        setScanPhase("failed");
+        const failedMsg = status.error || "Background scan failed.";
+        setScanError(failedMsg);
+        toast({ title: "Scan failed", description: failedMsg, tone: "error" });
+        return;
       }
 
       if (terminal === "completed" || Number(status.duration_seconds || 0) > 0) {
+        setScanPhase("completed");
         await refresh();
-        setLastScanAtOverride(new Date().toISOString());
-        toast({ title: "Scan complete", description: "Findings refreshed." });
+        setLastScanAtOverride(status.completed_at ?? new Date().toISOString());
+        if (status.partial_enrichment) {
+          toast({
+            title: "Scan complete (partial enrichment)",
+            description: status.enrichment_note || "Cost enrichment may be delayed; security findings are complete.",
+          });
+        } else {
+          toast({ title: "Scan complete", description: "Findings refreshed." });
+        }
       } else {
         toast({
           title: "Scan still running",
-          description: "Scan is queued/running in background. Refresh in a moment.",
+          description: "Scan remains queued/running in background. Refresh in a moment.",
         });
       }
     } catch (err) {
       const msg = formatScanError(err);
+      setScanPhase("failed");
       setScanError(msg);
       const fallbackLastScanAt = extractScanLastEventAt(err);
       if (fallbackLastScanAt) setLastScanAtOverride(fallbackLastScanAt);
@@ -176,7 +209,6 @@ export function Dashboard() {
     } finally {
       void refreshSubscriptions();
       scanInFlight.current = false;
-      setScanPhase("idle");
       setScanning(false);
     }
   };
@@ -353,7 +385,7 @@ export function Dashboard() {
               ) : (
                 <Scan className="mr-2 h-4 w-4" />
               )}
-              {scanning ? (scanPhase === "queued" ? "Queued..." : "Scanning...") : "Run scan"}
+              {scanning ? (scanPhase === "queued" ? "Queued..." : "Scanning resources...") : (scanPhase === "failed" || scanPhase === "timed_out" ? "Retry scan" : "Run scan")}
             </Button>
             <span className="text-xs text-[hsl(var(--muted-foreground))]">{lastScanLabel}</span>
           </div>

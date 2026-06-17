@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -36,23 +36,35 @@ def _looks_like_default_uuid(value: str) -> bool:
 
 
 
+ScanLifecycleStatus = Literal["queued", "running", "completed", "failed", "timed_out"]
+
+
 class ManualScanJob(BaseModel):
-    """Message contract for manual scan job in Service Bus queue."""
+    """Message contract for a manual scan job in Service Bus."""
 
-    scan_id: str = Field(..., description="Unique scan identifier")
-    subscription_id: str = Field(..., description="Cloud subscription to scan")
-    tenant_id: str = Field(default="", description="Tenant ownership")
-    include_cost: bool = Field(default=True, description="Enrich with cost data")
-
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "scan_id": "550e8400-e29b-41d4-a716-446655440000",
                 "subscription_id": "sub-123",
                 "tenant_id": "tenant-456",
+                "requested_by": "user-abc",
+                "queued_at": "2026-06-17T12:00:00Z",
                 "include_cost": True,
+                "attempt_count": 0,
+                "max_attempts": 3,
             }
         }
+    )
+
+    scan_id: str = Field(..., description="Unique scan identifier")
+    subscription_id: str = Field(..., description="Cloud subscription to scan")
+    tenant_id: str = Field(default="", description="Tenant ownership")
+    requested_by: str = Field(default="", description="User object ID that requested the scan")
+    queued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    include_cost: bool = Field(default=True, description="Enrich with cost data")
+    attempt_count: int = Field(default=0, ge=0, description="Worker retry attempt number")
+    max_attempts: int = Field(default=3, ge=1, le=10, description="Maximum worker attempts")
 
 
 class ResourceSnapshot(BaseModel):

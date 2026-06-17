@@ -79,7 +79,7 @@ export interface ScanRequest {
   include_cost: boolean;
 }
 
-export type ScanRunStatus = "queued" | "running" | "completed" | "failed";
+export type ScanRunStatus = "queued" | "running" | "completed" | "failed" | "timed_out";
 
 export interface ScanTriggerResponse {
   scan_id: string;
@@ -96,6 +96,14 @@ export interface ScanStatusResponse {
   high_count: number;
   total_waste_usd: number;
   duration_seconds: number;
+  queued_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error?: string;
+  partial_enrichment?: boolean;
+  enrichment_note?: string;
+  retries_attempted?: number;
+  max_attempts?: number;
 }
 
 export interface ScanResponse {
