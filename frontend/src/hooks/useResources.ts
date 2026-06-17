@@ -36,7 +36,13 @@ export function useResources(
   }, [subscriptionId, limit]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      // Nothing to fetch yet (e.g. no subscription selected). Clear the initial
+      // loading flag so dependent pages can fall through to their empty state
+      // instead of being stuck on a skeleton forever.
+      setLoading(false);
+      return;
+    }
     refresh();
   }, [refresh, enabled]);
 
