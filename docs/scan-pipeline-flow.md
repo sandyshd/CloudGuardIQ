@@ -47,12 +47,16 @@ gracefully — if it is unavailable or fails, the scan still completes.
 ## 2. What Triggers a Scan & How the Billing Plan Gates It
 
 A scan starts either **on-demand** (user clicks "Scan") or on an **automatic
-timer**. How *often* a customer is allowed to scan is set by their plan tier.
+timer**. On-demand runs target the **selected subscription only**; the timer
+trigger fans out across **all enabled subscriptions**. How *often* a customer is
+allowed to scan is set by their plan tier.
 
 ```mermaid
 flowchart TD
-    T1["On-demand<br/>POST /scan/trigger"] --> Gate
-    T2["Automatic timer<br/>(scheduled)"] --> Gate
+    T1["On-demand<br/>POST /scan/trigger"] --> MQ["Queue manual-scan job<br/>(selected subscription)"]
+    MQ --> Gate
+    T2["Automatic timer<br/>(scheduled)"] --> Fan["Enumerate all enabled<br/>subscriptions"]
+    Fan --> Gate
 
     Gate{"Scan-frequency<br/>cooldown elapsed<br/>for this plan?"}
     Gate -- "No (too soon)" --> Deny["HTTP 429<br/>+ Retry-After countdown"]
@@ -89,9 +93,10 @@ flowchart TD
     Scan --> Stamp["STEP 1a — Stamp tenant ID<br/>on every resource"]
     Stamp --> Cap{"STEP 1b — Inventory<br/>over plan cap?"}
 
-    Cap -- "No" --> Eval
+    Cap -- "No" --> Persist
     Cap -- "Yes" --> Trunc["Keep highest-value resources:<br/>1) rule-covered first<br/>2) then highest monthly cost<br/>Drop the rest"]
-    Trunc --> Eval
+    Trunc --> Persist
+    Persist["STEP 1c — Persist snapshots<br/>to snapshots_v2 (best-effort)"] --> Eval
 
     Eval["STEP 2 — Evaluate native rules<br/>policy_engine.evaluate()"] --> Merge1["STEP 2b — Merge provider<br/>COMPLIANCE findings<br/>(Azure Policy / Security Hub<br/>standards / GCP SCC postures)"]
     Merge1 --> Merge2["STEP 2c — Merge cloud-native<br/>SECURITY findings<br/>(Defender / Security Hub / SCC)"]
@@ -252,6 +257,7 @@ flowchart TD
 | **Scan-frequency cooldown** | Trigger | Rejects premature scans (HTTP 429) | Enforces plan tiers; protects infra |
 | **Capability tier gate** | Discovery | Skips Tier 2/3 if unavailable | No hard dependency on paid security |
 | **Resource cap** | Post-discovery | Truncates to plan limit, value-ordered | Fair usage; small tiers still scan what matters |
+| **Snapshot persistence (best-effort)** | Post-discovery | Writes inventory to `snapshots_v2`; per-resource write failures are logged | Resources page + Overview cost charts stay inventory-driven without aborting scans |
 | **Cross-cloud rule routing** | Evaluation | Rule sees only its cloud + type | Correctness & performance |
 | **Severity filter** | Evaluation | Optional minimum severity | Noise reduction when configured |
 | **Duplicate collapse (by ID)** | Merge | One finding per stable ID | Stable dashboard counts |
@@ -260,6 +266,12 @@ flowchart TD
 | **Auto-resolve guard** | Save | No resolve sweep on 0-resource scan | A failed scan must not blank the dashboard |
 
 ---
+
+Dashboard/Resources binding note:
+- The **Resources page** and **Overview -> Cost by service** now bind to persisted
+  `snapshots_v2` inventory, not finding-embedded snapshots.
+- This keeps cost/service visualizations accurate even when some findings lack
+  `resource_snapshot` payloads.
 
 ## 7. How Findings Are Prioritized
 
@@ -319,6 +331,11 @@ flowchart LR
 
 Manual scan lifecycle is standardized as:
 `queued -> running -> completed | failed | timed_out`
+
+Manual queue fallback:
+- If Service Bus queue wiring is unavailable, `/scan/trigger` still returns `queued`
+  (legacy-compatible) and the status endpoint eventually normalizes long-running
+  `queued`/`running` states to `timed_out` for deterministic UI behavior.
 
 Each scan status document now includes:
 - `queued_at`
