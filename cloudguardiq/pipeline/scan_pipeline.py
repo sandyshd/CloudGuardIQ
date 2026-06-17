@@ -139,6 +139,33 @@ class ScanPipeline:
                 len(snapshots), len(snapshots) + dropped, cap, dropped,
             )
 
+        # Step 1c: Persist snapshots to Cosmos DB (powers the Resources page).
+        # Best-effort: a single snapshot failure must not abort the scan.
+        if self._db is not None and snapshots:
+            logger.info(
+                "Scan %s: saving %d resource snapshots to Cosmos DB",
+                scan_id,
+                len(snapshots),
+            )
+            saved_snaps = 0
+            for snap in snapshots:
+                try:
+                    await self._db.save_snapshot(snap)
+                    saved_snaps += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to save snapshot %s for scan %s: %s",
+                        snap.id,
+                        scan_id,
+                        exc,
+                    )
+            logger.info(
+                "Scan %s: persisted %d/%d snapshots",
+                scan_id,
+                saved_snaps,
+                len(snapshots),
+            )
+
         # Step 2: Evaluate policies
         findings = self._policy_engine.evaluate(snapshots)
 
