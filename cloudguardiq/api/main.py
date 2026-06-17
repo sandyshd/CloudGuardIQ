@@ -78,10 +78,10 @@ from cloudguardiq.core.observability import (
 from cloudguardiq.onboarding.audit_event_repository import AuditEventRepository
 from cloudguardiq.onboarding.cloud_connection_repository import CloudConnectionRepository
 from cloudguardiq.onboarding.credential_ref_repository import CredentialRefRepository
+from cloudguardiq.pipeline.scan_pipeline import ScanPipeline
 from cloudguardiq.policy.engine import (
     PolicyEngine,
     PolicyRule,
-    dedupe_findings_by_id,
 )
 from cloudguardiq.posture.score import (
     PostureScore,
@@ -733,111 +733,6 @@ async def _enforce_scan_frequency(
     )
 
 
-async def _persist_scan_results(
-    repo: CosmosRepository,
-    scan_id: str,
-    subscription_id: str,
-    snapshots: list[ResourceSnapshot],
-    findings: list[FindingResult],
-    duration: float,
-) -> None:
-    """Persist snapshots, findings, and scan summary to Cosmos DB."""
-    # Save snapshots
-    for snap in snapshots:
-        try:
-            await repo.save_snapshot(snap)
-        except Exception as exc:
-            logger.warning("Failed to save snapshot %s: %s", snap.id, exc)
-
-    # Save findings (lifecycle-aware: stable id + state preservation)
-    seen_ids: set[str] = set()
-    tenant_for_scan = ""
-    for finding in findings:
-        try:
-            await repo.save_finding(finding, scan_id=scan_id)
-            seen_ids.add(finding.finding_id)
-            if finding.rule_id.startswith("AZPOL-"):
-                logger.info(
-                    "Persisted Azure Policy finding %s (%s) for subscription %s",
-                    finding.finding_id,
-                    finding.rule_id,
-                    subscription_id,
-                )
-            if not tenant_for_scan and finding.tenant_id:
-                tenant_for_scan = finding.tenant_id
-        except Exception as exc:
-            logger.warning(
-                "Failed to save finding %s: %s",
-                finding.finding_id, exc,
-            )
-
-    # Auto-resolve OPEN findings that were not re-detected this scan -- the
-    # underlying issue was either fixed or the resource is gone. Best-effort:
-    # a Cosmos hiccup here must not fail the scan. The previous OPEN rows
-    # stay OPEN if this call fails; the next successful scan will retry.
-    #
-    # CRITICAL: only sweep when the scan actually enumerated resources. A
-    # scan that returns 0 snapshots is degraded (e.g. the adapter could not
-    # authenticate or lacked Reader on the subscription), not authoritative
-    # proof that every prior finding was remediated. Running the sweep on an
-    # empty scan would wrongly flip every OPEN finding to RESOLVED and blank
-    # the dashboard -- the bug reported after re-running "Run Scan".
-    if snapshots:
-        existing_resource_ids: set[str] = set()
-        for snap in snapshots:
-            for value in (snap.id, snap.resource_id, snap.resource_name):
-                if value:
-                    existing_resource_ids.add(value)
-        try:
-            await repo.mark_unseen_findings_resolved(
-                subscription_id, seen_ids, scan_id,
-                tenant_id=tenant_for_scan or None,
-                existing_resource_ids=existing_resource_ids,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Auto-resolve sweep failed for scan %s: %s", scan_id, exc,
-            )
-    else:
-        logger.warning(
-            "Scan %s enumerated 0 resources -- skipping auto-resolve sweep "
-            "to preserve existing findings (degraded scan).",
-            scan_id,
-        )
-
-    # Save scan summary
-    critical = sum(
-        1 for f in findings if f.severity == Severity.CRITICAL
-    )
-    high = sum(1 for f in findings if f.severity == Severity.HIGH)
-    total_waste = sum(f.waste_monthly_usd for f in findings)
-    try:
-        await repo.save_scan_result({
-            "id": scan_id,
-            "type": "scan_result",
-            "scan_id": scan_id,
-            "subscription_id": subscription_id,
-            "status": "completed",
-            "resources_scanned": len(snapshots),
-            "findings_count": len(findings),
-            "critical_count": critical,
-            "high_count": high,
-            "total_waste_usd": total_waste,
-            "duration_seconds": round(duration, 2),
-        })
-    except Exception as exc:
-        logger.warning("Failed to save scan result: %s", exc)
-
-    logger.info(
-        "Persisted scan %s: %d snapshots, %d findings",
-        scan_id, len(snapshots), len(findings),
-    )
-
-
-
-# ------------------------------------------------------------------
-# Routes
-# ------------------------------------------------------------------
 @app.get("/health")
 async def health() -> dict[str, str]:
     """Health check endpoint."""
@@ -1120,7 +1015,15 @@ async def _scan_subscription_impl(
     request: ScanRequest,
     user: TokenPayload,
 ) -> ScanResponse:
-    """Implementation of scan_subscription with 180-second timeout."""
+    """Implementation of scan_subscription with 180-second timeout.
+
+    Delegates the actual scan to the shared ``ScanPipeline`` -- the same
+    orchestrator used by the timer (``scan_trigger``) and the manual worker
+    (``manual_scan_worker``). Keeping this interactive endpoint on the
+    pipeline means scan logic (tiered enrichment, policy/Defender merge,
+    dedup, persistence, and the auto-resolve sweep) lives in exactly one
+    place instead of being re-implemented here.
+    """
     await _validate_owned_subscription(user, request.subscription_id)
     await _enforce_scan_frequency(user, request.subscription_id)
     scan_id = str(uuid.uuid4())
@@ -1132,97 +1035,67 @@ async def _scan_subscription_impl(
         scan_id=scan_id,
         provider="azure",
     )
-    start = time.perf_counter()
 
+    settings_obj = get_settings()
+    tenant_id_for_scan = (
+        "" if settings_obj.auth_disabled else get_tenant_id(user)
+    )
+
+    repo = get_repo()
     try:
         from azure.identity import DefaultAzureCredential
         credential = DefaultAzureCredential()
     except Exception:
         credential = None
-    repo = get_repo()
+
     adapter = AzureAdapter(
         credential=credential,
         subscription_id=request.subscription_id,
         db=repo,
     ) if credential and repo else None
+
+    # Degraded path: without credentials or a database there is nothing to
+    # scan. Record a completed (empty) result so the UI reflects the attempt
+    # and return -- never run the pipeline against a missing adapter.
+    if adapter is None or repo is None:
+        if repo is not None:
+            try:
+                await repo.save_scan_result({
+                    "id": scan_id,
+                    "type": "scan_result",
+                    "scan_id": scan_id,
+                    "subscription_id": request.subscription_id,
+                    "status": "completed",
+                    "resources_scanned": 0,
+                    "findings_count": 0,
+                    "critical_count": 0,
+                    "high_count": 0,
+                    "total_waste_usd": 0.0,
+                    "duration_seconds": 0.0,
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to save scan result: %s", exc)
+        return ScanResponse(
+            subscription_id=request.subscription_id,
+            snapshots_count=0,
+            findings_count=0,
+            findings=[],
+        )
+
+    # Real scan: delegate to the shared pipeline. tenant_id flows through so
+    # snapshots and findings are stamped for tenant isolation end-to-end.
     scanner = _build_scanner()
     engine = _build_policy_engine(scanner)
-
-    if adapter is not None:
-        try:
-            snapshots = await adapter.list_resources(
-                request.subscription_id,
-            )
-        except Exception as exc:
-            logger.error('Failed to list resources: %%s', exc)
-            raise HTTPException(
-                status_code=502,
-                detail='Failed to list Azure resources',
-            ) from exc
-        snapshots = await adapter.enrich_with_defender(snapshots)
-    else:
-        snapshots = []
-    findings: list[FindingResult] = engine.evaluate(snapshots)
-
-    # Merge Azure Policy regulatory-compliance findings (Tier 1, free) the
-    # adapter emits directly, bypassing the rule registry. The interactive
-    # /scan endpoint builds snapshots via list_resources(), so -- unlike the
-    # timer-driven ScanPipeline -- it must trigger Policy ingestion explicitly.
-    # Without this, AZPOL- findings never reach the dashboard even when a
-    # regulatory initiative (e.g. CIS Azure) is assigned.
-    if adapter is not None:
-        try:
-            policy_findings = await adapter.fetch_policy_findings()
-            if policy_findings:
-                findings.extend(policy_findings)
-                logger.info(
-                    "Merged %s Azure Policy compliance finding(s) into scan %s",
-                    len(policy_findings), scan_id,
-                )
-        except Exception as exc:
-            logger.warning(
-                "Azure Policy compliance ingestion failed for %s: %s",
-                request.subscription_id, exc,
-            )
-
-    # Collapse any finding_id collisions introduced by merging the Azure
-    # Policy findings into the rule-engine output. Cosmos upserts on
-    # finding_id, so without this the response count (seeded into the
-    # dashboard) exceeds the rows actually persisted, and the count shrinks
-    # on reload.
-    findings = dedupe_findings_by_id(findings)
-
-    # Stamp tenant ownership on every snapshot and finding before
-    # persistence. Without this, rows are written with tenant_id="" and
-    # the tenant-isolated GET /findings query returns nothing -- the
-    # exact bug reported on 2026-04-29 where /scan reported 130 findings
-    # but the dashboard re-queried with an empty result.
-    settings_obj = get_settings()
-    tenant_id_for_scan = (
-        "" if settings_obj.auth_disabled else get_tenant_id(user)
+    pipeline = ScanPipeline(
+        adapter=adapter,
+        policy_engine=engine,
+        ai_engine=None,
+        db=repo,
+        auto_generate_ai=False,
     )
-    for snap in snapshots:
-        if not snap.tenant_id:
-            snap.tenant_id = tenant_id_for_scan
-    for f in findings:
-        if not f.tenant_id:
-            f.tenant_id = tenant_id_for_scan
-        if (
-            f.resource_snapshot is not None
-            and not f.resource_snapshot.tenant_id
-        ):
-            f.resource_snapshot.tenant_id = tenant_id_for_scan
-
-    # Compute priority scores
-    for f in findings:
-        f.compute_priority_score()
-
-    # Persist to Cosmos DB
-    if repo is not None:
-        await _persist_scan_results(
-            repo, scan_id, request.subscription_id,
-            snapshots, findings, time.perf_counter() - start,
-        )
+    result = await pipeline.run(
+        request.subscription_id, tenant_id=tenant_id_for_scan,
+    )
 
     # Stamp last_scan_at on the subscription record so the UI shows the real
     # last-scan time from the database on every page load -- not just right
@@ -1241,9 +1114,9 @@ async def _scan_subscription_impl(
 
     return ScanResponse(
         subscription_id=request.subscription_id,
-        snapshots_count=len(snapshots),
-        findings_count=len(findings),
-        findings=findings,
+        snapshots_count=result.resources_scanned,
+        findings_count=result.findings_count,
+        findings=pipeline.last_findings,
     )
 
 

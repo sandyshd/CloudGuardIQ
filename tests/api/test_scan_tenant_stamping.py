@@ -64,8 +64,11 @@ async def test_scan_stamps_tenant_id_on_persisted_findings(
     )
 
     mock_adapter = AsyncMock()
-    mock_adapter.list_resources = AsyncMock(return_value=[snap])
-    mock_adapter.enrich_with_defender = AsyncMock(return_value=[snap])
+    mock_adapter.scan = AsyncMock(return_value=[snap])
+    mock_adapter.policy_findings = []
+    mock_adapter.defender_findings = []
+    mock_adapter.securityhub_findings = []
+    mock_adapter.scc_findings = []
 
     # Bypass tenant ownership validation -- the handler calls a private
     # helper which we don't need to stand up against a real Cosmos DB.
@@ -74,6 +77,10 @@ async def test_scan_stamps_tenant_id_on_persisted_findings(
 
     with (
         patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+        patch(
+            "cloudguardiq.pipeline.scan_pipeline.refresh_prices",
+            new=AsyncMock(),
+        ),
         patch(
             "cloudguardiq.api.main._validate_owned_subscription",
             new=_allow_owned,

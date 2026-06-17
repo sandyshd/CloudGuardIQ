@@ -85,11 +85,18 @@ class TestScanPersistence:
             },
         )
         mock_adapter = AsyncMock()
-        mock_adapter.list_resources = AsyncMock(return_value=[snap])
-        mock_adapter.enrich_with_defender = AsyncMock(return_value=[snap])
+        mock_adapter.scan = AsyncMock(return_value=[snap])
+        mock_adapter.policy_findings = []
+        mock_adapter.defender_findings = []
+        mock_adapter.securityhub_findings = []
+        mock_adapter.scc_findings = []
 
         with (
             patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch(
+                "cloudguardiq.pipeline.scan_pipeline.refresh_prices",
+                new=AsyncMock(),
+            ),
             patch(
                 "azure.identity.DefaultAzureCredential",
                 return_value=MagicMock(),
@@ -157,12 +164,18 @@ class TestDegradedScanPreservesFindings:
         mock_repo.mark_unseen_findings_resolved = AsyncMock(return_value=0)
 
         mock_adapter = AsyncMock()
-        mock_adapter.list_resources = AsyncMock(return_value=[])
-        mock_adapter.enrich_with_defender = AsyncMock(return_value=[])
-        mock_adapter.fetch_policy_findings = AsyncMock(return_value=[])
+        mock_adapter.scan = AsyncMock(return_value=[])
+        mock_adapter.policy_findings = []
+        mock_adapter.defender_findings = []
+        mock_adapter.securityhub_findings = []
+        mock_adapter.scc_findings = []
 
         with (
             patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch(
+                "cloudguardiq.pipeline.scan_pipeline.refresh_prices",
+                new=AsyncMock(),
+            ),
             patch(
                 "azure.identity.DefaultAzureCredential",
                 return_value=MagicMock(),
@@ -260,12 +273,18 @@ class TestScanMergesPolicyFindings:
         )
 
         mock_adapter = MagicMock()
-        mock_adapter.list_resources = AsyncMock(return_value=[])
-        mock_adapter.enrich_with_defender = AsyncMock(return_value=[])
-        mock_adapter.fetch_policy_findings = AsyncMock(return_value=[azpol])
+        mock_adapter.scan = AsyncMock(return_value=[])
+        mock_adapter.policy_findings = [azpol]
+        mock_adapter.defender_findings = []
+        mock_adapter.securityhub_findings = []
+        mock_adapter.scc_findings = []
 
         with (
             patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch(
+                "cloudguardiq.pipeline.scan_pipeline.refresh_prices",
+                new=AsyncMock(),
+            ),
             patch("cloudguardiq.api.main.AzureAdapter", return_value=mock_adapter),
             patch("azure.identity.DefaultAzureCredential", return_value=MagicMock()),
         ):
@@ -280,7 +299,6 @@ class TestScanMergesPolicyFindings:
         data = response.json()
         assert data["findings_count"] == 1
         assert data["findings"][0]["rule_id"] == "AZPOL-DenyHttpStorage"
-        mock_adapter.fetch_policy_findings.assert_awaited_once()
 
 
     @pytest.mark.asyncio
@@ -315,12 +333,18 @@ class TestScanMergesPolicyFindings:
         )
 
         mock_adapter = MagicMock()
-        mock_adapter.list_resources = AsyncMock(return_value=[])
-        mock_adapter.enrich_with_defender = AsyncMock(return_value=[])
-        mock_adapter.fetch_policy_findings = AsyncMock(return_value=[azpol])
+        mock_adapter.scan = AsyncMock(return_value=[])
+        mock_adapter.policy_findings = [azpol]
+        mock_adapter.defender_findings = []
+        mock_adapter.securityhub_findings = []
+        mock_adapter.scc_findings = []
 
         with (
             patch("cloudguardiq.api.main.get_repo", return_value=mock_repo),
+            patch(
+                "cloudguardiq.pipeline.scan_pipeline.refresh_prices",
+                new=AsyncMock(),
+            ),
             patch("cloudguardiq.api.main.AzureAdapter", return_value=mock_adapter),
             patch("azure.identity.DefaultAzureCredential", return_value=MagicMock()),
             caplog.at_level(logging.INFO),
@@ -333,8 +357,9 @@ class TestScanMergesPolicyFindings:
                 )
 
         assert response.status_code == 200
-        assert "Persisted Azure Policy finding" in caplog.text
-        assert "AZPOL-DenyHttpStorage" in caplog.text
+        # The shared pipeline merges Azure Policy findings into the scan and
+        # logs the merge; it no longer logs a per-finding persistence line.
+        assert "Azure Policy compliance finding" in caplog.text
 
 
 

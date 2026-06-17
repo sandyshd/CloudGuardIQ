@@ -84,6 +84,10 @@ class ScanPipeline:
         self._billing_repo = billing_repo
         self._usage_repo = usage_repo
         self._auto_generate_ai = auto_generate_ai
+        # Findings from the most recent run(); lets synchronous callers
+        # (e.g. POST /scan) return the full list while the timer/worker
+        # paths ignore it. Reset at the start of every run().
+        self.last_findings: list[FindingResult] = []
 
     async def run(self, subscription_id: str, tenant_id: str = "") -> ScanResult:
         """Execute the full scan pipeline.
@@ -219,6 +223,9 @@ class ScanPipeline:
         for finding in findings:
             if finding.priority_score == 0.0:
                 finding.compute_priority_score()
+
+        # Expose the deduped, fully-scored findings for synchronous callers.
+        self.last_findings = findings
 
         # Step 3: Send findings to Service Bus queue, capped by tenant\'s
         # remaining AI quota. Findings are persisted in full (Step 4) -- the
