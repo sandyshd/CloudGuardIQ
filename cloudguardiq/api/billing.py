@@ -9,9 +9,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 
 from cloudguardiq.api.auth import TokenPayload, verify_token
-from cloudguardiq.billing.plans import PlanLimits, all_plans
+from cloudguardiq.billing.plans import PlanLimits, all_plans, default_tier
 from cloudguardiq.billing.repository import BillingCustomer, BillingRepository
 from cloudguardiq.billing.stripe_service import StripeService, StripeServiceError
+from cloudguardiq.core.config import get_settings
 from cloudguardiq.core.enums import SubscriptionTier
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,12 @@ class CheckoutResponse(BaseModel):
 
 class ChangeTierRequest(BaseModel):
     """Body for ``POST /billing/downgrade``."""
+
+    tier: SubscriptionTier
+
+
+class SelectTierRequest(BaseModel):
+    """Body for ``POST /billing/select`` (direct plan change)."""
 
     tier: SubscriptionTier
 
@@ -106,6 +113,16 @@ def _tenant_id(user: TokenPayload) -> str:
     return user.tid or user.sub or "anonymous"
 
 
+def _stripe_enabled() -> bool:
+    """Return True when Stripe checkout is the source of truth."""
+    return bool(get_settings().billing_stripe_enabled)
+
+
+def _default_tier() -> SubscriptionTier:
+    """Default tier for tenants without a billing record."""
+    return default_tier(get_settings())
+
+
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 _auth = Depends(verify_token)
@@ -130,7 +147,7 @@ async def get_status(
     repo = _get_repository()
     record = await repo.get(_tenant_id(user))
     if record is None:
-        return BillingStatusResponse(tier=SubscriptionTier.FREE)
+        return BillingStatusResponse(tier=_default_tier())
     return BillingStatusResponse(
         tier=record.tier,
         stripe_customer_id=record.stripe_customer_id,
@@ -174,6 +191,47 @@ async def create_checkout(
     record.stripe_customer_id = customer_id
     await repo.upsert(record)
     return CheckoutResponse(url=url)
+
+
+@router.post("/select", response_model=BillingStatusResponse)
+async def select_tier(
+    body: SelectTierRequest,
+    user: TokenPayload = _auth,
+) -> BillingStatusResponse:
+    """Set the caller tenant to any tier directly (Stripe-free mode).
+
+    Available only while Stripe is disabled. Lets users freely upgrade or
+    downgrade between plans without a payment round-trip. When Stripe is
+    enabled, upgrades MUST go through ``POST /billing/checkout`` instead.
+    """
+    if _stripe_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Direct plan selection is disabled. Use /billing/checkout "
+                "to upgrade or /billing/downgrade to downgrade."
+            ),
+        )
+    repo = _get_repository()
+    tenant_id = _tenant_id(user)
+    record = await repo.get(tenant_id) or BillingCustomer(tenant_id=tenant_id)
+
+    record.tier = body.tier
+    if body.tier == SubscriptionTier.FREE:
+        record.stripe_subscription_id = ""
+    await repo.upsert(record)
+
+    if callable(_invalidate_cache):
+        try:
+            _invalidate_cache(record.tenant_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Cache invalidate failed: %s", exc)
+
+    return BillingStatusResponse(
+        tier=record.tier,
+        stripe_customer_id=record.stripe_customer_id,
+        stripe_subscription_id=record.stripe_subscription_id,
+    )
 
 
 @router.post("/downgrade", response_model=BillingStatusResponse)

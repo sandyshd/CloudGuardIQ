@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     stripe_success_url: str = "http://localhost:3000/settings?billing=success"
     stripe_cancel_url: str = "http://localhost:3000/settings?billing=cancel"
 
+    # Billing mode. When Stripe is disabled (default for now), the billing
+    # service is bypassed: tenants default to ``billing_default_tier`` and can
+    # freely switch to any plan from Settings without a Stripe checkout.
+    billing_stripe_enabled: bool = False
+    billing_default_tier: str = "ENTERPRISE"
+
     # Tier limits (free tier)
     free_max_subscriptions: int = 1
     pro_max_subscriptions: int = 10

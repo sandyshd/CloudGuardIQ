@@ -18,6 +18,15 @@ export async function createCheckout(tier: BillingTier): Promise<string> {
   return data.url;
 }
 
+/**
+ * Directly switch to any plan without a Stripe checkout.
+ * Used while billing is in Stripe-free mode (backend POST /billing/select).
+ */
+export async function selectTier(tier: BillingTier): Promise<BillingStatus> {
+  const { data } = await apiClient.post<BillingStatus>("/billing/select", { tier });
+  return data;
+}
+
 export async function downgradeTier(tier: BillingTier): Promise<BillingStatus> {
   const { data } = await apiClient.post<BillingStatus>("/billing/downgrade", { tier });
   return data;

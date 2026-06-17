@@ -27,7 +27,7 @@ from cloudguardiq.auth.graph_principal_resolver import (
     PrincipalNotFoundError,
     resolve_customer_principal_id,
 )
-from cloudguardiq.billing.plans import get_plan
+from cloudguardiq.billing.plans import default_tier, get_plan
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.core.config import Settings
 from cloudguardiq.core.enums import SubscriptionTier
@@ -436,7 +436,7 @@ async def add_subscription(
         )
 
     record = await billing.get(owning_tenant_id)
-    tier = record.tier if record else SubscriptionTier.FREE
+    tier = record.tier if record else default_tier(settings)
     cap = _cap_for_tier(settings, tier)
 
     # Verify CloudGuardIQ has Reader access on this subscription before

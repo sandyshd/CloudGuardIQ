@@ -26,7 +26,10 @@ def _wire(tier: SubscriptionTier | None = None) -> None:
     lifespan hook re-configures the module with the real Cosmos bootstrap
     repos and would otherwise clobber the in-memory wiring.
     """
-    settings = Settings()
+    # Enable Stripe-billing mode so tenants without a record default to
+    # FREE and the per-tier caps are enforced (otherwise the Stripe-free
+    # default is ENTERPRISE = unlimited).
+    settings = Settings(billing_stripe_enabled=True)
     subs_repo = SubscriptionsRepository(settings, cosmos_db=None)
     billing_repo = BillingRepository(settings, cosmos_db=None)
     if tier is not None:

@@ -42,7 +42,7 @@ def _build_app(
 
 @pytest.mark.asyncio
 async def test_free_tier_blocks_oversized_scan() -> None:
-    settings = Settings()
+    settings = Settings(billing_stripe_enabled=True)
     repo = BillingRepository(settings)
     app = _build_app(repo, settings)
     transport = ASGITransport(app=app)
@@ -65,7 +65,7 @@ async def test_free_tier_blocks_oversized_scan() -> None:
 
 @pytest.mark.asyncio
 async def test_free_tier_allows_small_scan() -> None:
-    settings = Settings()
+    settings = Settings(billing_stripe_enabled=True)
     repo = BillingRepository(settings)
     app = _build_app(repo, settings)
     transport = ASGITransport(app=app)

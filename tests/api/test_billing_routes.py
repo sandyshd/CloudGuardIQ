@@ -28,14 +28,67 @@ def fresh_repo() -> BillingRepository:
 
 
 @pytest.mark.asyncio
-async def test_status_defaults_to_free(
-    client: AsyncClient, fresh_repo: BillingRepository,
+async def test_status_defaults_to_free_when_stripe_enabled(
+    client: AsyncClient,
+    fresh_repo: BillingRepository,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # With Stripe billing enabled, tenants without a record start on FREE.
+    monkeypatch.setattr(get_settings(), "billing_stripe_enabled", True)
     stripe = StripeService(get_settings())
     billing_module.configure(repository=fresh_repo, stripe_service=stripe)
     resp = await client.get("/billing/status")
     assert resp.status_code == 200
     assert resp.json()["tier"] == SubscriptionTier.FREE.value
+
+
+@pytest.mark.asyncio
+async def test_status_defaults_to_enterprise_when_stripe_disabled(
+    client: AsyncClient,
+    fresh_repo: BillingRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Stripe-free mode: tenants without a record default to ENTERPRISE so the
+    # product runs without a paywall.
+    monkeypatch.setattr(get_settings(), "billing_stripe_enabled", False)
+    monkeypatch.setattr(get_settings(), "billing_default_tier", "ENTERPRISE")
+    stripe = StripeService(get_settings())
+    billing_module.configure(repository=fresh_repo, stripe_service=stripe)
+    resp = await client.get("/billing/status")
+    assert resp.status_code == 200
+    assert resp.json()["tier"] == SubscriptionTier.ENTERPRISE.value
+
+
+@pytest.mark.asyncio
+async def test_select_tier_sets_any_plan_in_stripe_free_mode(
+    client: AsyncClient,
+    fresh_repo: BillingRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Direct plan selection is allowed only while Stripe is disabled.
+    monkeypatch.setattr(get_settings(), "billing_stripe_enabled", False)
+    stripe = StripeService(get_settings())
+    billing_module.configure(repository=fresh_repo, stripe_service=stripe)
+    resp = await client.post(
+        "/billing/select", json={"tier": SubscriptionTier.PRO.value},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["tier"] == SubscriptionTier.PRO.value
+
+
+@pytest.mark.asyncio
+async def test_select_tier_rejected_when_stripe_enabled(
+    client: AsyncClient,
+    fresh_repo: BillingRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "billing_stripe_enabled", True)
+    stripe = StripeService(get_settings())
+    billing_module.configure(repository=fresh_repo, stripe_service=stripe)
+    resp = await client.post(
+        "/billing/select", json={"tier": SubscriptionTier.PRO.value},
+    )
+    assert resp.status_code == 400
 
 
 @pytest.mark.asyncio

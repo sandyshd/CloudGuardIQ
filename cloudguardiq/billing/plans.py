@@ -13,9 +13,14 @@ free capability uplift, never a paywall.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, Field
 
 from cloudguardiq.core.enums import SubscriptionTier
+
+if TYPE_CHECKING:
+    from cloudguardiq.core.config import Settings
 
 UNLIMITED: int = -1
 
@@ -134,3 +139,20 @@ def all_plans() -> list[PlanLimits]:
 def is_unlimited(value: int) -> bool:
     """Return True when *value* represents an unlimited quota."""
     return value == UNLIMITED
+
+
+def default_tier(settings: Settings) -> SubscriptionTier:
+    """Return the tier assigned to tenants without a billing record.
+
+    While Stripe billing is disabled the product runs without a paywall, so
+    tenants default to ``settings.billing_default_tier`` (Enterprise) and can
+    switch plans freely. When Stripe is enabled the default reverts to FREE
+    so the paid tiers stay gated behind checkout.
+    """
+    if getattr(settings, "billing_stripe_enabled", False):
+        return SubscriptionTier.FREE
+    raw = getattr(settings, "billing_default_tier", SubscriptionTier.ENTERPRISE.value)
+    try:
+        return SubscriptionTier(raw)
+    except ValueError:
+        return SubscriptionTier.ENTERPRISE

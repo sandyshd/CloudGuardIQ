@@ -19,7 +19,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from cloudguardiq.billing.plans import UNLIMITED, get_plan
+from cloudguardiq.billing.plans import UNLIMITED, default_tier, get_plan
 from cloudguardiq.billing.repository import BillingRepository
 from cloudguardiq.core.config import Settings
 from cloudguardiq.core.enums import SubscriptionTier
@@ -93,7 +93,7 @@ class TierEnforcementMiddleware(BaseHTTPMiddleware):
         if cached is not None and now - cached[1] < _CACHE_TTL_SECONDS:
             return cached[0]
         record = await self._repo.get(tenant_id)
-        tier = record.tier if record else SubscriptionTier.FREE
+        tier = record.tier if record else default_tier(self._settings)
         self._cache[tenant_id] = (tier, now)
         return tier
 

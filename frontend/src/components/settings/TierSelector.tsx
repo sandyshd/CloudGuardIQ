@@ -7,9 +7,8 @@ import { Check, Sparkles } from "lucide-react";
 import {
   type BillingStatus,
   type BillingTier,
-  createCheckout,
-  downgradeTier,
   getBillingStatus,
+  selectTier,
 } from "../../api/billing";
 import { cn } from "../../lib/utils";
 
@@ -94,23 +93,13 @@ export function TierSelector() {
 
   const current = status?.tier ?? "FREE";
 
-  const handleUpgrade = async (tier: BillingTier) => {
+  // Billing runs in Stripe-free mode: switching to any plan (up or down) is a
+  // direct write, no checkout redirect.
+  const handleSelect = async (tier: BillingTier) => {
     setError(null);
     setBusyTier(tier);
     try {
-      const url = await createCheckout(tier);
-      window.location.href = url;
-    } catch (err) {
-      setError(toFriendlyError(err, "Unable to start checkout. Please try again."));
-      setBusyTier(null);
-    }
-  };
-
-  const handleDowngrade = async (tier: BillingTier) => {
-    setError(null);
-    setBusyTier(tier);
-    try {
-      const updated = await downgradeTier(tier);
+      const updated = await selectTier(tier);
       setStatus(updated);
     } catch (err) {
       setError(toFriendlyError(err, "Unable to change plan. Please try again."));
@@ -191,18 +180,18 @@ export function TierSelector() {
                   ) : isUpgrade ? (
                     <Button
                       className="w-full"
-                      onClick={() => handleUpgrade(plan.tier)}
+                      onClick={() => handleSelect(plan.tier)}
                       disabled={busyTier !== null}
                     >
-                      {busyTier === plan.tier ? "Redirecting…" : "Upgrade"}
+                      {busyTier === plan.tier ? "Switching…" : "Upgrade"}
                     </Button>
                   ) : (
                     <Button
                       className="w-full"
-                      onClick={() => handleDowngrade(plan.tier)}
+                      onClick={() => handleSelect(plan.tier)}
                       disabled={busyTier !== null}
                     >
-                      {busyTier === plan.tier ? "Updating…" : "Downgrade"}
+                      {busyTier === plan.tier ? "Switching…" : "Downgrade"}
                     </Button>
                   )}
                 </div>
