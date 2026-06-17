@@ -35,6 +35,7 @@ import { useFindings } from "../hooks/useFindings";
 import { useComplianceScorecard } from "../hooks/useComplianceScorecard";
 import { usePostureScore } from "../hooks/usePostureScore";
 import { useSubscriptions } from "../hooks/useSubscriptions";
+import { useResources } from "../hooks/useResources";
 import { useTimeRange } from "../contexts/TimeRangeContext";
 import { pollScanStatus, triggerScan } from "../api/scans";
 import { TIER2_VALUES, TIER3_VALUES } from "../types";
@@ -118,6 +119,11 @@ export function Dashboard() {
   const { subscriptions, loading: subsLoading, selected: selectedSub, refresh: refreshSubscriptions } =
     useSubscriptions();
   const { findings, loading, refresh } = useFindings(selectedSub?.subscription_id);
+  const { resources, loading: resourcesLoading, refresh: refreshResources } = useResources(
+    selectedSub?.subscription_id,
+    1000,
+    !subsLoading && Boolean(selectedSub?.subscription_id),
+  );
   const { scorecard, loading: scorecardLoading } = useComplianceScorecard(selectedSub?.subscription_id);
   const { posture } = usePostureScore(selectedSub?.subscription_id);
   const { range } = useTimeRange();
@@ -128,7 +134,7 @@ export function Dashboard() {
   const [lastScanAtOverride, setLastScanAtOverride] = useState<string | null>(null);
   const scanInFlight = useRef(false);
 
-  const isLoading = loading || subsLoading;
+  const isLoading = loading || subsLoading || resourcesLoading;
   const selectedSubId = selectedSub?.subscription_id;
   const selectedFromList = selectedSubId
     ? subscriptions.find((s) => s.subscription_id === selectedSubId) ?? null
@@ -183,7 +189,7 @@ export function Dashboard() {
 
       if (terminal === "completed" || Number(status.duration_seconds || 0) > 0) {
         setScanPhase("completed");
-        await refresh();
+        await Promise.all([refresh(), refreshResources()]);
         setLastScanAtOverride(status.completed_at ?? new Date().toISOString());
         if (status.partial_enrichment) {
           toast({
@@ -229,12 +235,7 @@ export function Dashboard() {
     };
     open.forEach((f) => (sevCounts[f.severity] += 1));
 
-    // Resources de-duped from finding snapshots.
-    const resourceById = new Map<string, NonNullable<FindingResult["resource_snapshot"]>>();
-    findings.forEach((f) => {
-      if (f.resource_snapshot) resourceById.set(f.resource_snapshot.id, f.resource_snapshot);
-    });
-    const resources = Array.from(resourceById.values());
+    // Resources are sourced from persisted snapshots for the selected subscription.
     const monthlySpend = resources.reduce((s, r) => s + (r.cost_monthly ?? 0), 0);
 
     // MTD vs forecast: assume cost_monthly is full-month projection.
@@ -324,7 +325,7 @@ export function Dashboard() {
       gcpActive,
       recent,
     };
-  }, [findings]);
+  }, [findings, resources]);
 
   //  Render 
   if (isLoading) {
