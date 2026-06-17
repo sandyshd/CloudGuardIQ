@@ -412,6 +412,114 @@ async def ai_worker_trigger(msg: func.ServiceBusMessage) -> None:
     body = msg.get_body().decode("utf-8")
     logger.info("AI worker received message: %s", msg.message_id)
 
+
+@app.service_bus_queue_trigger(
+    arg_name="msg",
+    queue_name="manual-scans",
+    connection="SERVICE_BUS_CONNECTION",
+)
+async def manual_scan_worker(msg: func.ServiceBusMessage) -> None:
+    """Service Bus triggered worker for manual scan jobs."""
+    import json
+    import time
+    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
+    from cloudguardiq.core.models import ManualScanJob
+    
+    body = msg.get_body().decode("utf-8")
+    logger.info("Manual scan worker received message: %s", msg.message_id)
+    
+    scan_id = None
+    db = None
+    credential = None
+    start_time = time.perf_counter()
+    
+    try:
+        job_data = json.loads(body)
+        job = ManualScanJob(**job_data)
+        scan_id = job.scan_id
+        
+        # Initialize database connection
+        settings = get_settings()
+        db = CosmosRepository(settings)
+        await db.connect()
+        
+        # Update status to running
+        await db.save_scan_result({
+            "id": scan_id,
+            "type": "scan_result",
+            "scan_id": scan_id,
+            "subscription_id": job.subscription_id,
+            "tenant_id": job.tenant_id,
+            "status": "running",
+            "resources_scanned": 0,
+            "findings_count": 0,
+            "critical_count": 0,
+            "high_count": 0,
+            "total_waste_usd": 0.0,
+            "duration_seconds": 0.0,
+        })
+        
+        # Build and run pipeline
+        credential = AsyncDefaultAzureCredential()
+        pipeline = await _build_scan_pipeline(
+            job.subscription_id,
+            db,
+            credential,
+            customer_tenant_id=job.tenant_id or None,
+            provider="AZURE",
+        )
+        
+        result = await pipeline.run(job.subscription_id, tenant_id=job.tenant_id)
+        duration = time.perf_counter() - start_time
+        
+        # Persist completed status with counts
+        await db.save_scan_result({
+            "id": scan_id,
+            "type": "scan_result",
+            "scan_id": scan_id,
+            "subscription_id": job.subscription_id,
+            "tenant_id": job.tenant_id,
+            "status": "completed",
+            "resources_scanned": result.resources_scanned,
+            "findings_count": result.findings_count,
+            "critical_count": result.critical_count,
+            "high_count": result.high_count,
+            "total_waste_usd": result.total_waste_usd,
+            "duration_seconds": round(duration, 2),
+        })
+        
+        logger.info(
+            "Manual scan %s completed: %d resources, %d findings, duration %.1fs",
+            scan_id,
+            result.resources_scanned,
+            result.findings_count,
+            duration,
+        )
+        
+    except Exception as exc:
+        logger.error("Manual scan worker error for %s: %s", scan_id, exc)
+        
+        # Persist failed status with error
+        if scan_id and db is not None:
+            try:
+                duration = time.perf_counter() - start_time
+                await db.save_scan_result({
+                    "id": scan_id,
+                    "type": "scan_result",
+                    "scan_id": scan_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "duration_seconds": round(duration, 2),
+                })
+            except Exception as inner_exc:
+                logger.error("Failed to persist failed status for %s: %s", scan_id, inner_exc)
+    
+    finally:
+        if db is not None:
+            await db.close()
+        if credential is not None:
+            await credential.close()
+
     worker = None
     db = None
     credential = None

@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from azure.servicebus import ServiceBusMessage as MessageBody
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
@@ -913,15 +914,23 @@ async def trigger_scan(
 
     Enqueues a scan request and returns immediately with a scan_id.
     """
+    from azure.servicebus.aio import ServiceBusClient
+
+    from cloudguardiq.core.models import ManualScanJob
+
     await _validate_owned_subscription(user, request.subscription_id)
     bind_context(subscription_id=request.subscription_id, provider="azure")
     await _enforce_scan_frequency(user, request.subscription_id)
+
+    tenant_id = "" if get_settings().auth_disabled else get_tenant_id(user)
     scan_id = str(uuid.uuid4())
     logger.info(
-        "Scan triggered: %s for sub %s",
+        "Scan triggered: %s for sub %s tenant %s",
         scan_id,
         request.subscription_id,
+        tenant_id,
     )
+
     # Persist scan intent to Cosmos DB if available
     repo = get_repo()
     if repo is not None:
@@ -931,6 +940,7 @@ async def trigger_scan(
                 "type": "scan_result",
                 "scan_id": scan_id,
                 "subscription_id": request.subscription_id,
+                "tenant_id": tenant_id,
                 "status": "queued",
                 "resources_scanned": 0,
                 "findings_count": 0,
@@ -941,6 +951,30 @@ async def trigger_scan(
             })
         except Exception as exc:
             logger.warning("Failed to persist scan request: %s", exc)
+
+    # Publish job to Service Bus queue if available
+    sb_fqns = os.environ.get("SERVICE_BUS_CONNECTION__FULLYQUALIFIEDNAMESPACE")
+    if sb_fqns:
+        try:
+            from azure.identity import DefaultAzureCredential
+            credential = DefaultAzureCredential()
+            async with ServiceBusClient(
+                fully_qualified_namespace=sb_fqns, credential=credential
+            ) as client, client.get_queue_sender(queue_name="manual-scans") as sender:
+                job = ManualScanJob(
+                    scan_id=scan_id,
+                    subscription_id=request.subscription_id,
+                    tenant_id=tenant_id,
+                    include_cost=request.include_cost,
+                )
+                msg = MessageBody(job.model_dump_json().encode("utf-8"))
+                msg.message_id = scan_id
+                await sender.send_messages(msg)
+                logger.info("Enqueued manual scan job %s", scan_id)
+        except Exception as exc:
+            logger.warning("Failed to enqueue manual scan job %s: %s", scan_id, exc)
+        finally:
+            await credential.close()
 
     return {"scan_id": scan_id, "status": "queued"}
 

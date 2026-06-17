@@ -34,6 +34,27 @@ def _looks_like_default_uuid(value: str) -> bool:
         return False
 
 
+
+
+class ManualScanJob(BaseModel):
+    """Message contract for manual scan job in Service Bus queue."""
+
+    scan_id: str = Field(..., description="Unique scan identifier")
+    subscription_id: str = Field(..., description="Cloud subscription to scan")
+    tenant_id: str = Field(default="", description="Tenant ownership")
+    include_cost: bool = Field(default=True, description="Enrich with cost data")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "scan_id": "550e8400-e29b-41d4-a716-446655440000",
+                "subscription_id": "sub-123",
+                "tenant_id": "tenant-456",
+                "include_cost": True,
+            }
+        }
+
+
 class ResourceSnapshot(BaseModel):
     """Canonical representation of a cloud resource at a point in time."""
 
