@@ -1,10 +1,10 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
-  "contentVersion": "1.1.0.0",
+  "contentVersion": "1.2.0.0",
   "metadata": {
     "_generator": {
       "name": "cloudguardiq",
-      "comment": "Grants CloudGuardIQ read access (Reader role) at subscription scope and, optionally, assigns one or more built-in regulatory compliance initiatives (audit-only) so CloudGuardIQ can ingest Microsoft's per-control compliance evaluation. Initiative assignment is opt-in: leave policySetDefinitionIds empty to deploy Reader only."
+      "comment": "Grants CloudGuardIQ read access (Reader role) at subscription scope and, optionally, assigns one or more built-in regulatory compliance initiatives (audit-only) so CloudGuardIQ can ingest Microsoft's per-control compliance evaluation. Initiative assignment is opt-in: leave policySetDefinitionIds empty to deploy Reader only. Initiative assignments are created with a system-assigned managed identity and a location because built-in regulatory initiatives contain Modify/DeployIfNotExists policies, which Azure requires an identity for (error ResourceIdentityRequired) even in audit-only enforcement."
     }
   },
   "parameters": {
@@ -30,7 +30,7 @@
     }
   },
   "variables": {
-    "roleAssignmentName": "[guid(deployment().name, parameters('cloudGuardIQPrincipalId'), parameters('roleDefinitionId'))]",
+    "roleAssignmentName": "[guid(subscription().id, parameters('cloudGuardIQPrincipalId'), parameters('roleDefinitionId'))]",
     "roleDefinition": "[concat('/providers/Microsoft.Authorization/roleDefinitions/', parameters('roleDefinitionId'))]"
   },
   "resources": [
@@ -49,6 +49,10 @@
       "type": "Microsoft.Authorization/policyAssignments",
       "apiVersion": "2024-04-01",
       "name": "[guid('cloudguardiq-initiative', subscription().subscriptionId, parameters('policySetDefinitionIds')[copyIndex()])]",
+      "location": "[deployment().location]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
       "copy": {
         "name": "policyInitiativeLoop",
         "count": "[length(parameters('policySetDefinitionIds'))]"
