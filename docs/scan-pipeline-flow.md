@@ -46,15 +46,20 @@ gracefully — if it is unavailable or fails, the scan still completes.
 
 ## 2. What Triggers a Scan & How the Billing Plan Gates It
 
-A scan starts from one of **three entry points** — and all of them run the
-*exact same* `ScanPipeline.run()` orchestrator (see Section 3). There is no
-longer a separate, hand-rolled scan path:
+A scan reaches the engine through **two active entry points** — and both run
+the *exact same* `ScanPipeline.run()` orchestrator (see Section 3):
 
-| Entry point | Trigger | Scope | Returns |
-|-------------|---------|-------|---------|
-| `POST /scan` | User clicks "Scan" (synchronous) | Selected subscription | Findings **inline** in the HTTP response (180 s timeout) |
-| `POST /scan/trigger` | User clicks "Scan" (async, queued) | Selected subscription | `queued` job id; worker runs the pipeline |
-| Timer (`scan_trigger`) | Scheduled, automatic | **All enabled** subscriptions | Nothing (background) |
+| # | Entry point | Trigger | Scope |
+|---|-------------|---------|-------|
+| 1 | **On-demand** — `POST /scan/trigger` → `manual-scans` queue → `manual_scan_worker` | User clicks "Scan" in the UI (async, queued) | Selected subscription |
+| 2 | **Automatic** — timer `scan_trigger` | Scheduled (every 5 min) | **All enabled** subscriptions |
+
+> **Note — a third code path exists but is not wired to the UI.** The
+> synchronous `POST /scan` endpoint (`_scan_subscription_impl`) also runs the
+> same `ScanPipeline.run()` and returns findings **inline** in the HTTP
+> response (180 s timeout). The frontend does **not** call it — the "Scan"
+> button uses the async `/scan/trigger` path above — so treat `POST /scan` as a
+> programmatic/legacy endpoint, not a user-facing trigger.
 
 Because every caller delegates to the one pipeline, any change to scan logic —
 tiered enrichment, policy/Defender merge, dedup, persistence, the auto-resolve
@@ -64,7 +69,7 @@ tier.
 
 ```mermaid
 flowchart TD
-    T1["On-demand<br/>POST /scan (sync, inline)<br/>POST /scan/trigger (async)"] --> MQ["Selected subscription"]
+    T1["On-demand (UI)<br/>POST /scan/trigger"] --> MQ["Queue manual-scan job<br/>(selected subscription)<br/>→ manual_scan_worker"]
     MQ --> Gate
     T2["Automatic timer<br/>(scheduled)"] --> Fan["Enumerate all enabled<br/>subscriptions"]
     Fan --> Gate
@@ -95,9 +100,10 @@ flowchart TD
 ## 3. The Full Scan Pipeline (detailed)
 
 This is the authoritative end-to-end flow inside `ScanPipeline.run()`. It is
-the **single** implementation shared by all three entry points above — the
-synchronous `POST /scan` endpoint (which returns `pipeline.last_findings`
-inline), the async `manual_scan_worker`, and the timer `scan_trigger`.
+the **single** implementation shared by both active entry points above — the
+async `manual_scan_worker` and the timer `scan_trigger` — as well as the
+secondary synchronous `POST /scan` endpoint (which returns
+`pipeline.last_findings` inline).
 
 ```mermaid
 flowchart TD
