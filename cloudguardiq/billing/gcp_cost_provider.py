@@ -35,7 +35,8 @@ from typing import Any
 
 from cloudguardiq.adapters.pricing.catalog import gcp_persistent_disk_monthly_usd
 from cloudguardiq.billing.cost_provider import HOURS_PER_MONTH, CostProvider, CostWindow
-from cloudguardiq.core.enums import DataTier
+from cloudguardiq.core.enums import CloudProvider, DataTier
+from cloudguardiq.core.models import FocusCostRecord
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,96 @@ class GcpCostProvider(CostProvider):
         cost_map = await loop.run_in_executor(None, _run)
         logger.info("Fetched GCP cost data for %d resources", len(cost_map))
         return cost_map
+
+    # -- FOCUS cost and usage ----------------------------------------------
+
+    async def _fetch_cost_and_usage(
+        self, window: CostWindow
+    ) -> list[FocusCostRecord]:
+        """Query the BigQuery billing export and map rows to FOCUS records.
+
+        Aggregates ``SUM(cost)`` and ``SUM(usage.amount)`` grouped by service,
+        SKU, project, region and resource name over the billing window. The
+        fully-qualified export table id is operator configuration (never
+        hardcoded); when unset the lookup short-circuits to ``[]``.
+        """
+        if not self._billing_export_table:
+            logger.info(
+                "No GCP billing export table configured (%s) -- skipping "
+                "cost-and-usage lookup",
+                _BILLING_EXPORT_TABLE_ENV,
+            )
+            return []
+
+        loop = asyncio.get_running_loop()
+        start = window.start.strftime("%Y-%m-%d")
+        end = window.end.strftime("%Y-%m-%d")
+        # Table id is operator config (not user input); dates are internal.
+        sql = (
+            "SELECT service.description AS service_name, "
+            "sku.id AS sku_id, "
+            "project.id AS project_id, "
+            "location.region AS region, "
+            "resource.name AS resource_name, "
+            "ANY_VALUE(currency) AS currency, "
+            "ANY_VALUE(billing_account_id) AS billing_account_id, "
+            "SUM(cost) AS cost, "
+            "SUM(usage.amount) AS usage_amount, "
+            "ANY_VALUE(usage.unit) AS usage_unit "
+            f"FROM `{self._billing_export_table}` "
+            f"WHERE usage_start_time >= TIMESTAMP('{start}') "
+            f"AND usage_start_time <= TIMESTAMP('{end} 23:59:59') "
+            "GROUP BY service_name, sku_id, project_id, region, resource_name"
+        )
+
+        def _run() -> list[FocusCostRecord]:
+            client = self._get_bigquery()
+            job = client.query(sql)
+            return self._rows_to_focus(job.result(), window)
+
+        records = await loop.run_in_executor(None, _run)
+        logger.info("Mapped %d GCP FOCUS cost records", len(records))
+        return records
+
+    def _rows_to_focus(
+        self, rows: Any, window: CostWindow
+    ) -> list[FocusCostRecord]:
+        """Map BigQuery billing export rows into FOCUS records."""
+        period = window.start.strftime("%Y-%m")
+
+        def _get(row: Any, key: str, default: Any = "") -> Any:
+            try:
+                value = row[key]
+            except (KeyError, TypeError, IndexError):
+                return default
+            return value if value is not None else default
+
+        records: list[FocusCostRecord] = []
+        for row in rows:
+            cost = float(_get(row, "cost", 0.0) or 0.0)
+            project_id = str(_get(row, "project_id", "") or "")
+            records.append(
+                FocusCostRecord(
+                    billing_period=period,
+                    charge_period_start=window.start,
+                    charge_period_end=window.end,
+                    billed_cost=cost,
+                    effective_cost=cost,
+                    list_cost=cost,
+                    billing_currency=str(_get(row, "currency", "USD") or "USD"),
+                    provider=CloudProvider.GCP,
+                    billing_account_id=str(_get(row, "billing_account_id", "") or ""),
+                    sub_account_id=project_id,
+                    service_name=str(_get(row, "service_name", "") or ""),
+                    sku_id=str(_get(row, "sku_id", "") or ""),
+                    resource_id=str(_get(row, "resource_name", "") or "").lower(),
+                    region=str(_get(row, "region", "") or ""),
+                    usage_quantity=float(_get(row, "usage_amount", 0.0) or 0.0),
+                    usage_unit=str(_get(row, "usage_unit", "") or ""),
+                    data_tier=self.actual_cost_tier,
+                )
+            )
+        return records
 
     # -- list price ---------------------------------------------------------
 

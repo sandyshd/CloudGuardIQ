@@ -362,6 +362,78 @@ class RemediationCard(BaseModel):
             self.terraform_fix = self.terraform_code
 
 
+class FocusCostRecord(BaseModel):
+    """A single normalized cost/usage record in FinOps FOCUS shape.
+
+    FOCUS (FinOps Open Cost & Usage Specification) is the vendor-neutral
+    billing schema. Every cloud cost provider maps its native billing rows
+    (Azure Cost Management, AWS Cost Explorer, GCP BigQuery billing export)
+    into this one model so all downstream FinOps -- allocation, anomaly
+    detection, forecasting -- is cloud-agnostic.
+
+    Field names follow the FOCUS column conventions (snake_cased). Monetary
+    fields are in ``billing_currency`` (USD by default).
+    """
+
+    model_config = ConfigDict(frozen=False)
+
+    # Tenant scoping (Phase 1 isolation; also the Cosmos partition key).
+    tenant_id: str = ""
+
+    # Period / charge window.
+    billing_period: str = ""  # e.g. "2026-05" (year-month)
+    charge_period_start: datetime
+    charge_period_end: datetime
+    charge_category: str = "Usage"  # Usage | Purchase | Tax | Credit | Adjustment
+
+    # Cost amounts (FOCUS: BilledCost, EffectiveCost, ListCost).
+    billed_cost: float = 0.0
+    effective_cost: float = 0.0
+    list_cost: float = 0.0
+    billing_currency: str = "USD"
+
+    # Account hierarchy.
+    provider: CloudProvider = CloudProvider.AZURE
+    billing_account_id: str = ""
+    sub_account_id: str = ""  # Azure subscription / AWS account / GCP project
+
+    # Service + resource dimensions.
+    service_category: str = ""
+    service_name: str = ""
+    resource_id: str = ""
+    resource_type: str = ""
+    region: str = ""
+    sku_id: str = ""
+
+    # Usage.
+    usage_quantity: float = 0.0
+    usage_unit: str = ""
+
+    # Allocation + commitments.
+    tags: dict[str, str] = Field(default_factory=dict)
+    commitment_discount_id: str = ""
+
+    # Provenance tier (consistent with ResourceSnapshot / FindingResult).
+    data_tier: DataTier = DataTier.TIER2_FREE_CSPM
+
+    def dedup_key(self) -> str:
+        """Return a deterministic key for idempotent persistence.
+
+        Keyed on (tenant_id, sub_account_id, resource_id, charge_period_start,
+        sku_id) so re-ingesting the same billing period upserts in place
+        instead of creating duplicate rows.
+        """
+        parts = [
+            self.tenant_id,
+            self.sub_account_id,
+            self.resource_id,
+            self.charge_period_start.isoformat(),
+            self.sku_id,
+        ]
+        raw = "|".join(p.lower() for p in parts)
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+
 class ScanRequest(BaseModel):
     """API request to trigger a subscription scan."""
 

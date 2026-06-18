@@ -245,6 +245,16 @@ resource "azurerm_cosmosdb_sql_container" "subscriptions" {
   partition_key_paths = ["/tenant_id"]
 }
 
+resource "azurerm_cosmosdb_sql_container" "focus_costs" {
+  # Phase 1 FinOps: FOCUS-normalized billing rows ingested from Azure, AWS
+  # and GCP. One document per (tenant, sub-account, resource, period, sku).
+  name                = "focus_costs"
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
+  partition_key_paths = ["/tenant_id"]
+}
+
 resource "azurerm_cosmosdb_sql_container" "tenant_consents" {
   # Phase 3.3: one document per customer Entra tenant whose admin
   # has granted consent to the multi-tenant CloudGuardIQ app.

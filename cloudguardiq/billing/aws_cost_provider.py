@@ -38,7 +38,8 @@ from cloudguardiq.adapters.pricing.catalog import (
     aws_eip_unattached_monthly_usd,
 )
 from cloudguardiq.billing.cost_provider import HOURS_PER_MONTH, CostProvider, CostWindow
-from cloudguardiq.core.enums import DataTier
+from cloudguardiq.core.enums import CloudProvider, DataTier
+from cloudguardiq.core.models import FocusCostRecord
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,16 @@ _EC2_NEXT_SIZE_DOWN: dict[str, str] = {
 # Price List ``pricing`` endpoints only exist in these regions; we pin to the
 # first one for every lookup regardless of the scanned region.
 _PRICING_API_REGION = "us-east-1"
+
+
+def _metric_amount(metrics: dict[str, Any], name: str) -> float:
+    """Return a Cost Explorer metric ``Amount`` as a float (0.0 if absent)."""
+    return float((metrics.get(name, {}) or {}).get("Amount", "0") or 0.0)
+
+
+def _metric_unit(metrics: dict[str, Any], name: str) -> str:
+    """Return a Cost Explorer metric ``Unit`` as a string ('' if absent)."""
+    return str((metrics.get(name, {}) or {}).get("Unit", "") or "")
 
 
 class AwsCostProvider(CostProvider):
@@ -177,6 +188,74 @@ class AwsCostProvider(CostProvider):
                 cost_map[rid.lower()] = cost_map.get(rid.lower(), 0.0) + float(amount)
         logger.info("Fetched AWS cost data for %d resources", len(cost_map))
         return cost_map
+
+    # -- FOCUS cost and usage ----------------------------------------------
+
+    async def _fetch_cost_and_usage(
+        self, window: CostWindow
+    ) -> list[FocusCostRecord]:
+        """Query Cost Explorer grouped by service + usage type -> FOCUS.
+
+        Uses the ``AmortizedCost`` (FOCUS EffectiveCost), ``UnblendedCost``
+        (BilledCost) and ``UsageQuantity`` metrics, grouped by ``SERVICE`` and
+        ``USAGE_TYPE``. Resource-level rows require resource granularity on the
+        payer account; this service/usage-type view always works and is the
+        standard FOCUS allocation grain.
+        """
+        loop = asyncio.get_running_loop()
+        ce = self._get_ce()
+        start = window.start.strftime("%Y-%m-%d")
+        end = (window.end.date() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        def _call() -> dict[str, Any]:
+            result: dict[str, Any] = ce.get_cost_and_usage(
+                TimePeriod={"Start": start, "End": end},
+                Granularity="MONTHLY",
+                Metrics=["AmortizedCost", "UnblendedCost", "UsageQuantity"],
+                GroupBy=[
+                    {"Type": "DIMENSION", "Key": "SERVICE"},
+                    {"Type": "DIMENSION", "Key": "USAGE_TYPE"},
+                ],
+            )
+            return result
+
+        response = await loop.run_in_executor(None, _call)
+        return self._ce_response_to_focus(response, window)
+
+    def _ce_response_to_focus(
+        self, response: dict[str, Any], window: CostWindow
+    ) -> list[FocusCostRecord]:
+        """Map a Cost Explorer get_cost_and_usage response into FOCUS rows."""
+        period = window.start.strftime("%Y-%m")
+        records: list[FocusCostRecord] = []
+        for result_period in response.get("ResultsByTime", []) or []:
+            for group in result_period.get("Groups", []) or []:
+                keys = group.get("Keys") or []
+                service = str(keys[0]) if len(keys) > 0 else ""
+                usage_type = str(keys[1]) if len(keys) > 1 else ""
+                metrics = group.get("Metrics", {}) or {}
+                records.append(
+                    FocusCostRecord(
+                        billing_period=period,
+                        charge_period_start=window.start,
+                        charge_period_end=window.end,
+                        billed_cost=_metric_amount(metrics, "UnblendedCost"),
+                        effective_cost=_metric_amount(metrics, "AmortizedCost"),
+                        list_cost=_metric_amount(metrics, "UnblendedCost"),
+                        billing_currency=_metric_unit(metrics, "AmortizedCost") or "USD",
+                        provider=CloudProvider.AWS,
+                        billing_account_id=self.account_id,
+                        sub_account_id=self.account_id,
+                        service_name=service,
+                        sku_id=usage_type,
+                        usage_quantity=_metric_amount(metrics, "UsageQuantity"),
+                        usage_unit=_metric_unit(metrics, "UsageQuantity"),
+                        region=self.region,
+                        data_tier=self.actual_cost_tier,
+                    )
+                )
+        logger.info("Mapped %d AWS FOCUS cost records", len(records))
+        return records
 
     # -- list price ---------------------------------------------------------
 

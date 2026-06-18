@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     cosmos_container_cloud_connections: str = "cloud_connections"
     cosmos_container_credential_refs: str = "credential_refs"
     cosmos_container_audit_events: str = "audit_events"
+    cosmos_container_focus_costs: str = "focus_costs"
 
     # Azure OpenAI
     azure_openai_endpoint: str = ""

@@ -34,6 +34,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from cloudguardiq.core.enums import DataTier
+from cloudguardiq.core.models import FocusCostRecord
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,18 @@ class CostProvider(abc.ABC):
         :meth:`get_list_price`.
         """
 
+    @abc.abstractmethod
+    async def _fetch_cost_and_usage(
+        self, window: CostWindow
+    ) -> list[FocusCostRecord]:
+        """Return FOCUS-normalized cost/usage rows for *window*.
+
+        Implementations query the provider's billing API (Azure Cost
+        Management, AWS Cost Explorer, GCP BigQuery export) and map each row
+        to a :class:`~cloudguardiq.core.models.FocusCostRecord`. Any exception
+        raised here is caught by :meth:`get_cost_and_usage`.
+        """
+
     # -- public API --------------------------------------------------------
 
     async def get_actual_cost(
@@ -207,6 +220,33 @@ class CostProvider(abc.ABC):
         return float(price)
 
 
+    async def get_cost_and_usage(
+        self,
+        *,
+        window: CostWindowName = "last_full_month",
+    ) -> list[FocusCostRecord]:
+        """Return FOCUS-normalized cost/usage rows (best-effort).
+
+        Args:
+            window: Billing window to aggregate over.
+
+        Returns:
+            A list of :class:`~cloudguardiq.core.models.FocusCostRecord`.
+            Empty list on any error -- billing ingestion is enrichment only
+            and must never crash a scan or pipeline run.
+        """
+        resolved = CostWindow.resolve(window)
+        try:
+            return await self._fetch_cost_and_usage(resolved)
+        except Exception:  # noqa: BLE001 -- ingestion must never crash callers
+            logger.warning(
+                "%s cost-and-usage ingestion failed -- returning no FOCUS rows",
+                type(self).__name__,
+                exc_info=True,
+            )
+            return []
+
+
 class NullCostProvider(CostProvider):
     """Safe default that reports no cost data.
 
@@ -223,4 +263,10 @@ class NullCostProvider(CostProvider):
     async def _fetch_list_price(self, sku: str, region: str) -> float | None:
         """Return no list price."""
         return None
+
+    async def _fetch_cost_and_usage(
+        self, window: CostWindow
+    ) -> list[FocusCostRecord]:
+        """Return no FOCUS cost rows."""
+        return []
 

@@ -43,6 +43,8 @@ from azure.mgmt.costmanagement.models import (
 
 from cloudguardiq.billing.cost_provider import CostProvider, CostWindow
 from cloudguardiq.billing.pricing import PricingService, get_pricing_service
+from cloudguardiq.core.enums import CloudProvider
+from cloudguardiq.core.models import FocusCostRecord
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +155,100 @@ class AzureCostProvider(CostProvider):
                     attempt, max_attempts, retry_after,
                 )
                 await asyncio.sleep(retry_after)
+
+    # -- FOCUS cost and usage ----------------------------------------------
+
+    async def _fetch_cost_and_usage(
+        self, window: CostWindow
+    ) -> list[FocusCostRecord]:
+        """Query Cost Management and map rows to FOCUS records.
+
+        Groups actual cost by ResourceId, ServiceName, ResourceType and
+        ResourceLocation so each row carries enough dimensions to populate a
+        :class:`FocusCostRecord`. Rows are mapped by *column name* (robust to
+        column ordering) with a positional fallback.
+        """
+        if self._credential is None:
+            logger.info("No Azure credential -- skipping cost-and-usage lookup")
+            return []
+
+        loop = asyncio.get_running_loop()
+        factory = self._client_factory or CostManagementClient
+        client = factory(self._credential)
+        scope = f"/subscriptions/{self._subscription_id}"
+
+        query_def = QueryDefinition(
+            type=ExportType.ACTUAL_COST,
+            timeframe=TimeframeType.CUSTOM,
+            time_period=QueryTimePeriod(from_property=window.start, to=window.end),
+            dataset=QueryDataset(
+                granularity="None",
+                aggregation={
+                    "totalCost": QueryAggregation(name="Cost", function="Sum"),
+                },
+                grouping=[
+                    QueryGrouping(type="Dimension", name="ResourceId"),
+                    QueryGrouping(type="Dimension", name="ServiceName"),
+                    QueryGrouping(type="Dimension", name="ResourceType"),
+                    QueryGrouping(type="Dimension", name="ResourceLocation"),
+                ],
+            ),
+        )
+
+        response = await self._run_cost_query_with_retry(
+            loop, partial(client.query.usage, scope, query_def),
+        )
+        return self._rows_to_focus(response, window)
+
+    def _rows_to_focus(
+        self, response: Any, window: CostWindow
+    ) -> list[FocusCostRecord]:
+        """Map a Cost Management query response into FOCUS records."""
+        rows = getattr(response, "rows", None) or []
+        columns = getattr(response, "columns", None) or []
+        names = [getattr(c, "name", "") for c in columns]
+
+        def idx(name: str) -> int:
+            return names.index(name) if name in names else -1
+
+        i_cost = idx("Cost") if "Cost" in names else idx("PreTaxCost")
+        i_rid = idx("ResourceId")
+        i_svc = idx("ServiceName")
+        i_rtype = idx("ResourceType")
+        i_loc = idx("ResourceLocation")
+        i_cur = idx("Currency")
+
+        period = window.start.strftime("%Y-%m")
+        records: list[FocusCostRecord] = []
+        for row in rows:
+            # Positional fallback matches the grouping order declared above.
+            cost = float(row[i_cost]) if i_cost >= 0 else float(row[0])
+            rid = str(row[i_rid]) if i_rid >= 0 else (str(row[1]) if len(row) > 1 else "")
+            service = str(row[i_svc]) if i_svc >= 0 and row[i_svc] is not None else ""
+            rtype = str(row[i_rtype]) if i_rtype >= 0 and row[i_rtype] is not None else ""
+            region = str(row[i_loc]) if i_loc >= 0 and row[i_loc] is not None else ""
+            currency = str(row[i_cur]) if i_cur >= 0 and row[i_cur] is not None else "USD"
+            records.append(
+                FocusCostRecord(
+                    billing_period=period,
+                    charge_period_start=window.start,
+                    charge_period_end=window.end,
+                    billed_cost=cost,
+                    effective_cost=cost,
+                    list_cost=cost,
+                    billing_currency=currency,
+                    provider=CloudProvider.AZURE,
+                    billing_account_id=self._subscription_id,
+                    sub_account_id=self._subscription_id,
+                    service_name=service,
+                    resource_id=rid.lower(),
+                    resource_type=rtype,
+                    region=region,
+                    data_tier=self.actual_cost_tier,
+                )
+            )
+        logger.info("Mapped %d Azure FOCUS cost records", len(records))
+        return records
 
     # -- list price ---------------------------------------------------------
 

@@ -14,6 +14,7 @@ from cloudguardiq.billing.cost_provider import (
     NullCostProvider,
 )
 from cloudguardiq.core.enums import DataTier
+from cloudguardiq.core.models import FocusCostRecord
 
 
 class TestCostWindow:
@@ -70,6 +71,9 @@ class _RaisingProvider(CostProvider):
     async def _fetch_list_price(self, sku: str, region: str) -> float | None:
         raise RuntimeError("pricing API exploded")
 
+    async def _fetch_cost_and_usage(self, window: CostWindow) -> list[FocusCostRecord]:
+        raise RuntimeError("cost-and-usage API exploded")
+
 
 class _StubProvider(CostProvider):
     """Provider returning canned data for the happy path."""
@@ -81,6 +85,25 @@ class _StubProvider(CostProvider):
 
     async def _fetch_list_price(self, sku: str, region: str) -> float | None:
         return 3.65
+
+    async def _fetch_cost_and_usage(self, window: CostWindow) -> list[FocusCostRecord]:
+        from datetime import datetime, timezone
+
+        from cloudguardiq.core.enums import CloudProvider
+
+        return [
+            FocusCostRecord(
+                tenant_id="t",
+                billing_period=window.start.strftime("%Y-%m"),
+                charge_period_start=datetime(2026, 5, 1, tzinfo=timezone.utc),
+                charge_period_end=datetime(2026, 5, 31, tzinfo=timezone.utc),
+                provider=CloudProvider.AZURE,
+                sub_account_id="sub-1",
+                resource_id="/subs/abc",
+                sku_id="sku-1",
+                billed_cost=12.5,
+            )
+        ]
 
 
 @pytest.mark.asyncio
@@ -97,6 +120,16 @@ class TestCostProviderContract:
     async def test_get_actual_cost_degrades_to_empty_on_error(self) -> None:
         prov = _RaisingProvider()
         assert await prov.get_actual_cost(["a"]) == {}
+
+    async def test_get_cost_and_usage_returns_focus_records(self) -> None:
+        prov = _StubProvider()
+        out = await prov.get_cost_and_usage()
+        assert len(out) == 1
+        assert out[0].billed_cost == 12.5
+
+    async def test_get_cost_and_usage_degrades_to_empty_on_error(self) -> None:
+        prov = _RaisingProvider()
+        assert await prov.get_cost_and_usage() == []
 
     async def test_get_list_price_returns_value(self) -> None:
         prov = _StubProvider()

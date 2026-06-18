@@ -20,7 +20,12 @@ from pydantic import ValidationError
 
 from cloudguardiq.adapters.base import CapabilityFlags
 from cloudguardiq.core.config import Settings
-from cloudguardiq.core.models import FindingResult, RemediationCard, ResourceSnapshot
+from cloudguardiq.core.models import (
+    FindingResult,
+    FocusCostRecord,
+    RemediationCard,
+    ResourceSnapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +119,43 @@ def _build_snapshots_query(
         "SELECT TOP @limit * FROM c WHERE "
         + " AND ".join(clauses)
         + " ORDER BY c.cost_monthly DESC"
+    )
+    return query, params
+
+
+def _build_focus_query(
+    tenant_id: str,
+    subscription_id: str,
+    from_period: str | None = None,
+    to_period: str | None = None,
+    limit: int = 10000,
+) -> tuple[str, list[dict[str, object]]]:
+    """Return (query, params) for listing FOCUS cost records within a tenant.
+
+    FOCUS rows are partitioned by ``/tenant_id`` so this runs as a
+    single-partition query. ``subscription_id`` filters on the FOCUS
+    ``sub_account_id`` column (Azure subscription / AWS account / GCP
+    project). ``from_period`` / ``to_period`` are ``"YYYY-MM"`` strings;
+    lexicographic comparison is correct for that format.
+    """
+    params: list[dict[str, object]] = [
+        {"name": "@limit", "value": limit},
+        {"name": "@sub_id", "value": subscription_id},
+        {"name": "@tenant_id", "value": tenant_id},
+    ]
+    clauses: list[str] = ["c.sub_account_id = @sub_id"]
+    if tenant_id:
+        clauses.insert(0, "c.tenant_id = @tenant_id")
+    if from_period:
+        params.append({"name": "@from_period", "value": from_period})
+        clauses.append("c.billing_period >= @from_period")
+    if to_period:
+        params.append({"name": "@to_period", "value": to_period})
+        clauses.append("c.billing_period <= @to_period")
+    query = (
+        "SELECT TOP @limit * FROM c WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY c.charge_period_start DESC"
     )
     return query, params
 
@@ -293,6 +335,13 @@ class CosmosRepository:
         assert self._db is not None
         return self._db.get_container_client(self._settings.cosmos_container_system)
 
+    def _focus_costs_container(self) -> ContainerProxy:
+        """Return the FOCUS cost records container proxy."""
+        assert self._db is not None
+        return self._db.get_container_client(
+            self._settings.cosmos_container_focus_costs
+        )
+
     # ------------------------------------------------------------------
     # Snapshot operations  (partition key: /provider)
     # ------------------------------------------------------------------
@@ -345,6 +394,68 @@ class CosmosRepository:
                     "Skipping invalid snapshot row %s in %s: %s",
                     snap_key,
                     subscription_id,
+                    exc.errors()[0].get("msg", str(exc)),
+                )
+        return results
+
+    # ------------------------------------------------------------------
+    # FOCUS cost record operations  (partition key: /tenant_id)
+    # ------------------------------------------------------------------
+
+    async def upsert_focus_records(
+        self, records: list[FocusCostRecord]
+    ) -> int:
+        """Idempotently persist FOCUS cost records. Returns the count written.
+
+        Each document id is the record's deterministic ``dedup_key`` -- keyed
+        on (tenant_id, sub_account_id, resource_id, charge_period_start,
+        sku_id) -- so re-ingesting the same billing period upserts in place
+        instead of creating duplicates. The partition key ``/tenant_id`` is
+        written at the document root.
+        """
+        container = self._focus_costs_container()
+        written = 0
+        for record in records:
+            doc = record.model_dump(mode="json")
+            doc["id"] = record.dedup_key()
+            doc["tenant_id"] = record.tenant_id
+            await container.upsert_item(doc)
+            written += 1
+        logger.info("Upserted %d FOCUS cost records", written)
+        return written
+
+    async def get_focus_records(
+        self,
+        subscription_id: str,
+        tenant_id: str,
+        from_period: str | None = None,
+        to_period: str | None = None,
+        limit: int = 10000,
+    ) -> list[FocusCostRecord]:
+        """Return FOCUS cost records for a sub-account within a tenant.
+
+        FOCUS rows are partitioned by ``/tenant_id``; this issues a
+        single-partition query scoped to that tenant and ``sub_account_id``.
+        ``from_period`` / ``to_period`` are ``"YYYY-MM"`` bounds. Invalid
+        legacy rows are skipped rather than failing the whole response.
+        """
+        query, params = _build_focus_query(
+            tenant_id=tenant_id,
+            subscription_id=subscription_id,
+            from_period=from_period,
+            to_period=to_period,
+            limit=limit,
+        )
+        results: list[FocusCostRecord] = []
+        async for item in self._focus_costs_container().query_items(
+            query=query, parameters=params, partition_key=tenant_id,
+        ):
+            try:
+                results.append(FocusCostRecord.model_validate(item))
+            except ValidationError as exc:
+                logger.warning(
+                    "Skipping invalid FOCUS row %s: %s",
+                    str(item.get("id", "unknown")),
                     exc.errors()[0].get("msg", str(exc)),
                 )
         return results
