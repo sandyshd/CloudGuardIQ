@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cloudguardiq.adapters.rules.base import PolicyRule
+from cloudguardiq.billing.metrics_provider import is_observation_sufficient
 from cloudguardiq.core.enums import FindingCategory, FindingType, Severity
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
@@ -320,7 +321,11 @@ class IdleVMRule(PolicyRule):
     def evaluate(self, snapshot: ResourceSnapshot) -> FindingResult | None:
         """Return a finding if VM CPU is <5% over 7 days."""
         avg_cpu = snapshot.config.get("avg_cpu_7d", 100)
-        if avg_cpu < 5 and snapshot.cost_monthly > 0:
+        if (
+            avg_cpu < 5
+            and snapshot.cost_monthly > 0
+            and is_observation_sufficient(snapshot.config)
+        ):
             return FindingResult(
                 resource_snapshot=snapshot,
                 rule_id=self.rule_id,

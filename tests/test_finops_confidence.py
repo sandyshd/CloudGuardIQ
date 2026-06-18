@@ -66,7 +66,7 @@ class TestHeuristicRulesAreEstimatedMedium:
     def test_oversized_vm_is_estimated_medium(self):
         snap = _snap(
             "Microsoft.Compute/virtualMachines",
-            config={"avg_cpu_7d": 5.0, "avg_memory_7d": 8.0},
+            config={"avg_cpu_7d": 5.0, "avg_memory_7d": 8.0, "metric_sample_count": 240, "metric_observation_days": 14},
             cost_monthly=200.0,
         )
         finding = OversizedVMRule().evaluate(snap)
@@ -132,7 +132,7 @@ class TestHeuristicRulesAreEstimatedMedium:
     def test_effective_impact_uses_estimate(self):
         snap = _snap(
             "Microsoft.Compute/virtualMachines",
-            config={"avg_cpu_7d": 5.0, "avg_memory_7d": 8.0},
+            config={"avg_cpu_7d": 5.0, "avg_memory_7d": 8.0, "metric_sample_count": 240, "metric_observation_days": 14},
             cost_monthly=200.0,
         )
         finding = OversizedVMRule().evaluate(snap)

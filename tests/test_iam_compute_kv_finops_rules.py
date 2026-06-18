@@ -291,7 +291,7 @@ class TestVM006MissingCostTags:
 
 class TestVM007IdleVM:
     def test_fail_when_idle(self):
-        snap = _vm_snap({"avg_cpu_7d": 2.0}, cost_monthly=150.0)
+        snap = _vm_snap({"avg_cpu_7d": 2.0, "metric_sample_count": 240, "metric_observation_days": 14}, cost_monthly=150.0)
         result = IdleVMRule().evaluate(snap)
         assert result is not None
         assert result.rule_id == "VM-007"
@@ -466,7 +466,7 @@ class TestFIN005OversizedVM:
         snap = _finops_snap(
             resource_type="Microsoft.Compute/virtualMachines",
             resource_name="vm-big",
-            config={"avg_cpu_7d": 5.0, "avg_memory_7d": 8.0},
+            config={"avg_cpu_7d": 5.0, "avg_memory_7d": 8.0, "metric_sample_count": 240, "metric_observation_days": 14},
             cost_monthly=200.0
         )
         result = OversizedVMRule().evaluate(snap)

@@ -95,6 +95,7 @@ from cloudguardiq.adapters.rules.azure.storage import (
     SharedKeyAuthRule,
 )
 from cloudguardiq.billing.azure_cost_provider import AzureCostProvider
+from cloudguardiq.billing.azure_metrics_provider import AzureMetricsProvider
 from cloudguardiq.core.enums import CloudProvider, DataTier
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
 
@@ -333,6 +334,7 @@ class NativeScanner:
         self._rg_client = ResourceGraphClient(credential) if credential else None
         self._rules = list(RULE_REGISTRY)
         self._cost_provider = AzureCostProvider(credential, subscription_id)
+        self._metrics_provider = AzureMetricsProvider(credential, subscription_id)
 
     def register(self, rule: ScannerRule) -> None:
         """Register a scanner rule (legacy API)."""
@@ -476,6 +478,23 @@ class NativeScanner:
                 "Rightsizing enrichment failed: %s; continuing without savings estimates", exc
             )
 
+        # Live VM utilization (P95 CPU over a 14-day window). Stamps the
+        # metric keys the idle/rightsizing FinOps rules read. Bounded by a
+        # timeout and best-effort: on failure VMs keep no metric keys and
+        # those rules simply stay dormant.
+        try:
+            await asyncio.wait_for(
+                self._enrich_utilization(snapshots), timeout=30.0
+            )
+        except TimeoutError:
+            logger.warning(
+                "Utilization enrichment timed out after 30s; some VMs will lack metrics"
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Utilization enrichment failed: %s; continuing without metrics", exc
+            )
+
         return snapshots
 
     async def _enrich_rightsizing(self, snapshots: list[ResourceSnapshot]) -> None:
@@ -498,6 +517,39 @@ class NativeScanner:
             )
             if savings > 0:
                 snap.config["rightsizing_savings_monthly_usd"] = savings
+
+    async def _enrich_utilization(self, snapshots: list[ResourceSnapshot]) -> None:
+        """Stamp P95 utilization metrics into VM snapshot config.
+
+        Batch-fetches utilization for every virtual machine and writes
+        ``avg_cpu_7d`` (P95 CPU), ``avg_memory_7d`` (P95 memory, when the
+        provider exposes it), plus ``metric_sample_count`` /
+        ``metric_observation_days`` for the rules' observation guard. VMs
+        without returned metrics are left untouched so the idle/rightsizing
+        rules stay dormant rather than firing on no data.
+        """
+        vm_snaps = [
+            s for s in snapshots
+            if s.resource_type == "Microsoft.Compute/virtualMachines"
+        ]
+        if not vm_snaps:
+            return
+        id_pairs = [(snap, _azure_arm_id(snap)) for snap in vm_snaps]
+        util_map = await self._metrics_provider.get_utilization(
+            [arm_id for _snap, arm_id in id_pairs], window_days=14
+        )
+        for snap, arm_id in id_pairs:
+            util = util_map.get(arm_id)
+            if util is None:
+                continue
+            if util.p95_cpu is not None:
+                snap.config["avg_cpu_7d"] = round(util.p95_cpu, 2)
+            if util.p95_mem is not None:
+                snap.config["avg_memory_7d"] = round(util.p95_mem, 2)
+            snap.config["metric_sample_count"] = util.sample_count
+            snap.config["metric_observation_days"] = util.observation_days
+            if snap.data_tier == DataTier.TIER1_NATIVE:
+                snap.data_tier = DataTier.TIER2_ENRICHED
 
     # ------------------------------------------------------------------
     # Resource Graph helpers
@@ -578,6 +630,10 @@ class NativeScanner:
                 "infrastructure_encryption_enabled":  _coalesce(
                     _get_nested(r, "properties_encryption_requireInfrastructureEncryption"),
                     _get_nested(props, "encryption", "requireInfrastructureEncryption"),
+                ),
+                "access_tier":  _coalesce(
+                    _get_nested(r, "properties_accessTier"),
+                    _get_nested(props, "accessTier"),
                 ),
             }
             snapshots.append(

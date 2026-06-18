@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cloudguardiq.adapters.rules.base import PolicyRule
+from cloudguardiq.billing.metrics_provider import is_observation_sufficient
 from cloudguardiq.billing.pricing import get_pricing_service
 from cloudguardiq.core.enums import FindingCategory, FindingType, Severity
 from cloudguardiq.core.models import FindingResult, ResourceSnapshot
@@ -242,15 +243,22 @@ class OversizedVMRule(PolicyRule):
         """Return a finding if VM CPU and memory are both <20% for 7 days."""
         avg_cpu = snapshot.config.get("avg_cpu_7d", 100)
         avg_mem = snapshot.config.get("avg_memory_7d", 100)
-        if avg_cpu < 20 and avg_mem < 20 and snapshot.cost_monthly > 0:
+        if (
+            avg_cpu < 20
+            and avg_mem < 20
+            and snapshot.cost_monthly > 0
+            and is_observation_sufficient(snapshot.config)
+        ):
             # Prefer the live rightsizing delta stamped by the cost provider
             # (current SKU price minus the one-size-down SKU price). Fall back
             # to a conservative 50% heuristic only when no live figure exists.
             live_savings = snapshot.config.get("rightsizing_savings_monthly_usd")
             if isinstance(live_savings, (int, float)) and live_savings > 0:
                 waste = round(float(live_savings), 2)
+                confidence = "HIGH"
             else:
                 waste = round(snapshot.cost_monthly * 0.50, 2)
+                confidence = "MEDIUM"
             return FindingResult(
                 resource_snapshot=snapshot,
                 rule_id=self.rule_id,
@@ -268,6 +276,7 @@ class OversizedVMRule(PolicyRule):
                     "cost_monthly": snapshot.cost_monthly,
                 },
                 estimated_impact_monthly_usd=waste,
+                finops_confidence=confidence,
                 compliance_frameworks=list(self.compliance_frameworks),
             )
         return None
