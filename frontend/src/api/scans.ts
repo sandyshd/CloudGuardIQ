@@ -45,7 +45,13 @@ export async function pollScanStatus(
   options?: { pollIntervalMs?: number; maxAttempts?: number },
 ): Promise<ScanStatusResponse> {
   const pollIntervalMs = options?.pollIntervalMs ?? 3000;
-  const maxAttempts = options?.maxAttempts ?? 40;
+  // The manual_scan_worker can run for a while on large subscriptions
+  // (hundreds of resources + tiered enrichment commonly take 2+ minutes).
+  // The poll window must comfortably exceed the worker's own timeout
+  // (MANUAL_SCAN_TIMEOUT_SECONDS, default 900s) so the UI always lands on a
+  // terminal status (completed/failed/timed_out) instead of giving up while
+  // the scan is still "running". 320 x 3s = 960s > 900s server-side timeout.
+  const maxAttempts = options?.maxAttempts ?? 320;
   let last = await getScanStatus(scanId);
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
