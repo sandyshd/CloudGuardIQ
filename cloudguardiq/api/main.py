@@ -75,6 +75,11 @@ from cloudguardiq.core.observability import (
     bind_context,
     install_context_filter,
 )
+from cloudguardiq.finops.commitments import (
+    CommitmentCoverageSummary,
+    compute_coverage,
+)
+from cloudguardiq.finops.forecasting import SpendForecast, forecast_spend
 from cloudguardiq.onboarding.audit_event_repository import AuditEventRepository
 from cloudguardiq.onboarding.cloud_connection_repository import CloudConnectionRepository
 from cloudguardiq.onboarding.credential_ref_repository import CredentialRefRepository
@@ -1169,6 +1174,79 @@ async def list_findings(
         return []
     demo = _demo_findings()
     return sorted(demo, key=lambda f: f.priority_score, reverse=True)[:limit]
+
+
+@app.get("/finops/coverage", response_model=CommitmentCoverageSummary)
+async def get_commitment_coverage(
+    subscription_id: str = Query(default=""),
+    from_period: str | None = Query(default=None),
+    to_period: str | None = Query(default=None),
+    user: TokenPayload = _auth,
+) -> CommitmentCoverageSummary:
+    """Return commitment coverage + utilization for a subscription.
+
+    Scoped by ``subscription_id`` + tenant like ``/findings``. Returns a
+    zeroed summary when no subscription is selected, the repository is
+    unavailable, or the FOCUS query fails (graceful degradation).
+    """
+    empty = CommitmentCoverageSummary()
+    if not subscription_id:
+        return empty
+    sub_id = await _validate_owned_subscription(user, subscription_id)
+    bind_context(subscription_id=sub_id)
+    repo = get_repo()
+    if repo is None:
+        return empty
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    try:
+        records = await repo.get_focus_records(
+            sub_id,
+            tenant_id=tenant_id,
+            from_period=from_period,
+            to_period=to_period,
+        )
+    except Exception as exc:
+        logger.warning("Failed to query FOCUS records for coverage: %s", exc)
+        return empty
+    return compute_coverage(records)
+
+
+@app.get("/finops/forecast", response_model=list[SpendForecast])
+async def get_spend_forecast(
+    subscription_id: str = Query(default=""),
+    dimension: str = Query(default="sub_account"),
+    from_period: str | None = Query(default=None),
+    to_period: str | None = Query(default=None),
+    user: TokenPayload = _auth,
+) -> list[SpendForecast]:
+    """Return projected month-end / next-month spend per allocation key.
+
+    ``dimension`` is one of ``sub_account``, ``service``, or ``tag:<key>``.
+    Scoped by ``subscription_id`` + tenant; returns an empty list when no
+    subscription is selected, the repository is unavailable, the FOCUS
+    query fails, or there is no data.
+    """
+    if not subscription_id:
+        return []
+    sub_id = await _validate_owned_subscription(user, subscription_id)
+    bind_context(subscription_id=sub_id)
+    repo = get_repo()
+    if repo is None:
+        return []
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    try:
+        records = await repo.get_focus_records(
+            sub_id,
+            tenant_id=tenant_id,
+            from_period=from_period,
+            to_period=to_period,
+        )
+    except Exception as exc:
+        logger.warning("Failed to query FOCUS records for forecast: %s", exc)
+        return []
+    return forecast_spend(records, dimension=dimension)
 
 
 @app.get("/resources", response_model=list[ResourceSnapshot])
