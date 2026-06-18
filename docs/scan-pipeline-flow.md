@@ -46,14 +46,25 @@ gracefully — if it is unavailable or fails, the scan still completes.
 
 ## 2. What Triggers a Scan & How the Billing Plan Gates It
 
-A scan starts either **on-demand** (user clicks "Scan") or on an **automatic
-timer**. On-demand runs target the **selected subscription only**; the timer
-trigger fans out across **all enabled subscriptions**. How *often* a customer is
-allowed to scan is set by their plan tier.
+A scan starts from one of **three entry points** — and all of them run the
+*exact same* `ScanPipeline.run()` orchestrator (see Section 3). There is no
+longer a separate, hand-rolled scan path:
+
+| Entry point | Trigger | Scope | Returns |
+|-------------|---------|-------|---------|
+| `POST /scan` | User clicks "Scan" (synchronous) | Selected subscription | Findings **inline** in the HTTP response (180 s timeout) |
+| `POST /scan/trigger` | User clicks "Scan" (async, queued) | Selected subscription | `queued` job id; worker runs the pipeline |
+| Timer (`scan_trigger`) | Scheduled, automatic | **All enabled** subscriptions | Nothing (background) |
+
+Because every caller delegates to the one pipeline, any change to scan logic —
+tiered enrichment, policy/Defender merge, dedup, persistence, the auto-resolve
+sweep — is made in **exactly one place** and is identical no matter how the scan
+was started. How *often* a customer is allowed to scan is set by their plan
+tier.
 
 ```mermaid
 flowchart TD
-    T1["On-demand<br/>POST /scan/trigger"] --> MQ["Queue manual-scan job<br/>(selected subscription)"]
+    T1["On-demand<br/>POST /scan (sync, inline)<br/>POST /scan/trigger (async)"] --> MQ["Selected subscription"]
     MQ --> Gate
     T2["Automatic timer<br/>(scheduled)"] --> Fan["Enumerate all enabled<br/>subscriptions"]
     Fan --> Gate
@@ -83,7 +94,10 @@ flowchart TD
 
 ## 3. The Full Scan Pipeline (detailed)
 
-This is the authoritative end-to-end flow inside `ScanPipeline.run()`.
+This is the authoritative end-to-end flow inside `ScanPipeline.run()`. It is
+the **single** implementation shared by all three entry points above — the
+synchronous `POST /scan` endpoint (which returns `pipeline.last_findings`
+inline), the async `manual_scan_worker`, and the timer `scan_trigger`.
 
 ```mermaid
 flowchart TD
