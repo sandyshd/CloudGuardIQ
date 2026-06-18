@@ -196,20 +196,25 @@ class ScanPipeline:
             "defender_findings",
             "securityhub_findings",
             "scc_findings",
+            "recommender_findings",
         ):
             cloud_findings = getattr(self._adapter, source_attr, None)
             if not cloud_findings:
                 continue
-            kept = self._dedupe_cloud_native_against_native(
+            before = len(findings)
+            findings, kept = self._dedupe_cloud_native_against_native(
                 findings, cloud_findings,
             )
+            superseded = before - len(findings)
             findings.extend(kept)
             logger.info(
-                "Merged %d %s into scan %s (%d dropped as native duplicates)",
+                "Merged %d %s into scan %s (%d dropped as native duplicates, "
+                "%d heuristic finding(s) superseded by DIRECT recommendations)",
                 len(kept),
                 source_attr,
                 scan_id,
                 len(cloud_findings) - len(kept),
+                superseded,
             )
 
         # Collapse finding_id collisions from the policy merge so the
@@ -329,40 +334,66 @@ class ScanPipeline:
     def _dedupe_cloud_native_against_native(
         native_findings: list[FindingResult],
         cloud_findings: list[FindingResult],
-    ) -> list[FindingResult]:
-        """Drop cloud-native findings that duplicate a fired native rule.
+    ) -> tuple[list[FindingResult], list[FindingResult]]:
+        """Reconcile cloud-native findings against fired native rules.
 
-        Applies to Azure Defender, AWS Security Hub, and GCP Security
-        Command Center findings alike. A cloud-native finding is dropped
-        only when its evidence declares it overlaps a specific native rule
-        (``native_rule_overlap``) AND that rule actually fired for the same
-        resource (``resource_key``). Findings without a declared overlap --
-        the common case for resource types lacking native rules -- are
-        always kept.
+        Applies to Azure Defender, AWS Security Hub, GCP Security Command
+        Center, and the native cost recommenders alike. A cloud finding is
+        reconciled only when its evidence declares it overlaps a specific
+        native rule (``native_rule_overlap``) that actually fired for the
+        same resource (``resource_key``); findings without a declared
+        overlap -- the common case for resource types lacking a native rule
+        -- are always kept.
+
+        On overlap the *stronger* signal wins: a vendor-grade DIRECT
+        recommendation (``finops_method == "DIRECT"``) supersedes a heuristic
+        estimate, so the native heuristic is dropped and the recommendation
+        kept. Otherwise the native finding is the richer source (security
+        engines) and the cloud duplicate is dropped -- the original behavior.
 
         Args:
             native_findings: Findings already produced by the rule engine
-                and policy merge (the preferred source on overlap).
+                and policy merge.
             cloud_findings: Candidate cloud-native findings to merge.
 
         Returns:
-            The subset of ``cloud_findings`` to keep.
+            A ``(surviving_native, kept_cloud)`` tuple: the native findings
+            that were not superseded, and the cloud findings to append.
         """
-        native_keys: set[tuple[str, str]] = set()
+        native_index: dict[tuple[str, str], FindingResult] = {}
         for finding in native_findings:
             snap = finding.resource_snapshot
             if snap is None:
                 continue
             rkey = f"{snap.resource_group.lower()}/{snap.resource_name.lower()}"
-            native_keys.add((rkey, finding.rule_id))
+            native_index[(rkey, finding.rule_id)] = finding
+
+        superseded: set[int] = set()
         kept: list[FindingResult] = []
         for finding in cloud_findings:
             overlap = str(finding.evidence.get("native_rule_overlap") or "")
             resource_key = str(finding.evidence.get("resource_key") or "")
-            if overlap and (resource_key, overlap) in native_keys:
+            native = native_index.get((resource_key, overlap)) if overlap else None
+            if native is None:
+                # No fired native rule for this resource -> keep the cloud
+                # finding (covers resource types without a native rule).
+                kept.append(finding)
                 continue
-            kept.append(finding)
-        return kept
+            # Both describe the same (resource, issue). Keep the stronger
+            # signal: a vendor-grade DIRECT recommendation supersedes a
+            # heuristic estimate (drop the native); otherwise the native
+            # finding is richer and the cloud duplicate is dropped.
+            if (
+                finding.finops_method == "DIRECT"
+                and native.finops_method != "DIRECT"
+            ):
+                superseded.add(id(native))
+                kept.append(finding)
+
+        surviving_native = [
+            f for f in native_findings if id(f) not in superseded
+        ]
+        return surviving_native, kept
 
     async def _resolve_plan(self, tenant_id: str) -> PlanLimits:
         """Resolve the tenant's plan; defaults to FREE when unknown.

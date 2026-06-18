@@ -20,6 +20,7 @@ from cloudguardiq.adapters.base import AdapterBase, CapabilityFlags
 from cloudguardiq.adapters.gcp.gcp_policy_compliance_adapter import (
     GCPPolicyComplianceAdapter,
 )
+from cloudguardiq.adapters.recommenders.gcp import GcpRecommenderProvider
 from cloudguardiq.billing.gcp_cost_provider import GcpCostProvider
 from cloudguardiq.core.enums import (
     CloudProvider,
@@ -89,6 +90,12 @@ class GCPAdapter(AdapterBase):
         # Populated by scan() when Security Command Center is enabled;
         # merged into the pipeline's findings list alongside policy findings.
         self._scc_findings: list[FindingResult] = []
+        # Recommender API (compute rightsizing + CUD) normalized to
+        # DIRECT FinOps findings and merged via the recommender source.
+        self._recommender_provider = GcpRecommenderProvider(
+            project_id=project_id,
+        )
+        self._recommender_findings: list[FindingResult] = []
         self._cost_provider = GcpCostProvider(
             project_id=project_id,
             credentials=credentials,
@@ -1343,6 +1350,19 @@ class GCPAdapter(AdapterBase):
             len(self._scc_findings),
             self.project_id,
         )
+
+        # Recommender API findings. Best-effort; get_recommendations()
+        # returns [] on any failure so heuristic rules still run.
+        self._recommender_findings = (
+            await self._recommender_provider.get_recommendations(
+                self.project_id
+            )
+        )
+        logger.info(
+            "GCP recommender ingestion produced %d finding(s) for %s",
+            len(self._recommender_findings),
+            self.project_id,
+        )
         return snapshots
 
     async def fetch_policy_findings(self) -> list[FindingResult]:
@@ -1366,6 +1386,16 @@ class GCPAdapter(AdapterBase):
         Command Center is not enabled on the project).
         """
         return self._scc_findings
+
+    @property
+    def recommender_findings(self) -> list[FindingResult]:
+        """Native cost-recommender findings from the most recent scan().
+
+        Compute rightsizing + committed-use-discount recommendations
+        normalized to DIRECT FinOps findings, merged through the same
+        pipeline path as SCC. Empty until scan() has run.
+        """
+        return self._recommender_findings
 
     async def validate_connection(self) -> bool:
         """Return True when a lightweight project read succeeds."""

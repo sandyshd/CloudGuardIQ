@@ -27,6 +27,7 @@ from cloudguardiq.adapters.azure.microsoft_graph_iam_adapter import (
 from cloudguardiq.adapters.base import AdapterBase, CapabilityFlags
 from cloudguardiq.adapters.capability_detector import CapabilityDetector
 from cloudguardiq.adapters.native_scanner import NativeScanner
+from cloudguardiq.adapters.recommenders.azure import AzureRecommenderProvider
 from cloudguardiq.core.enums import (
     CloudProvider,
     DataTier,
@@ -112,6 +113,13 @@ class AzureAdapter(AdapterBase):
         # Populated by scan() when Defender for Cloud is present; merged
         # into the pipeline's findings list alongside policy findings.
         self._defender_findings: list[FindingResult] = []
+        # Tier 1 (free, Reader): Azure Advisor cost + reservation /
+        # savings-plan recommendations. Normalized to DIRECT FinOps
+        # findings and merged through the pipeline's recommender source.
+        self._recommender_provider = AzureRecommenderProvider(
+            credential, subscription_id,
+        )
+        self._recommender_findings: list[FindingResult] = []
 
     # ------------------------------------------------------------------
     # AdapterBase abstract methods
@@ -189,6 +197,20 @@ class AzureAdapter(AdapterBase):
             self._subscription_id,
         )
 
+        # Azure Advisor + benefit recommendations. get_recommendations()
+        # never raises (returns [] on any failure) so a recommender
+        # outage cannot break the scan or suppress the heuristic rules.
+        self._recommender_findings = (
+            await self._recommender_provider.get_recommendations(
+                f"/subscriptions/{self._subscription_id}"
+            )
+        )
+        logger.info(
+            "Recommender ingestion produced %d finding(s) for %s",
+            len(self._recommender_findings),
+            self._subscription_id,
+        )
+
         return snapshots
 
     async def fetch_policy_findings(self) -> list[FindingResult]:
@@ -226,6 +248,17 @@ class AzureAdapter(AdapterBase):
         when Defender for Cloud is not enabled on the subscription).
         """
         return self._defender_findings
+
+    @property
+    def recommender_findings(self) -> list[FindingResult]:
+        """Native cost-recommender findings from the most recent scan().
+
+        Advisor / reservation / savings-plan recommendations normalized to
+        DIRECT FinOps findings. The scan pipeline merges these through the
+        same path as the security sources, superseding the overlapping
+        heuristic rule for a resource. Empty until scan() has run.
+        """
+        return self._recommender_findings
 
     async def get_api_contract(self) -> dict[str, Any]:
         """Return current API response schema fingerprint for self-healing monitor.

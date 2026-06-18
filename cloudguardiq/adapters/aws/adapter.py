@@ -19,6 +19,7 @@ from cloudguardiq.adapters.aws.aws_policy_compliance_adapter import (
     AWSPolicyComplianceAdapter,
 )
 from cloudguardiq.adapters.base import AdapterBase, CapabilityFlags
+from cloudguardiq.adapters.recommenders.aws import AwsRecommenderProvider
 from cloudguardiq.billing.aws_cost_provider import AwsCostProvider
 from cloudguardiq.core.enums import (
     CloudProvider,
@@ -61,7 +62,7 @@ SECURITYHUB_TO_NATIVE_RULE: dict[str, str] = {}
 def _require_boto3() -> Any:
     """Import boto3 lazily; raise a friendly error when not installed."""
     try:
-        import boto3  # type: ignore[import-not-found]
+        import boto3
     except ImportError as exc:  # pragma: no cover - guarded path
         raise RuntimeError(
             "AWSAdapter requires the optional [aws] extra. "
@@ -103,6 +104,13 @@ class AWSAdapter(AdapterBase):
         # Populated by scan() when AWS Security Hub is enabled; merged into
         # the pipeline's findings list alongside policy findings.
         self._securityhub_findings: list[FindingResult] = []
+        # Cost Explorer + Compute Optimizer recommendations, normalized
+        # to DIRECT FinOps findings and merged via the recommender source.
+        self._recommender_provider = AwsRecommenderProvider(
+            account_id=account_id,
+            region=region,
+        )
+        self._recommender_findings: list[FindingResult] = []
         self._cost_provider = AwsCostProvider(
             account_id=account_id,
             region=region,
@@ -1365,6 +1373,19 @@ class AWSAdapter(AdapterBase):
             len(self._securityhub_findings),
             self.account_id,
         )
+
+        # Cost Explorer + Compute Optimizer recommendations. Best-effort;
+        # get_recommendations() returns [] on any failure so heuristics run.
+        self._recommender_findings = (
+            await self._recommender_provider.get_recommendations(
+                self.account_id
+            )
+        )
+        logger.info(
+            "AWS recommender ingestion produced %d finding(s) for %s",
+            len(self._recommender_findings),
+            self.account_id,
+        )
         return snapshots
 
     async def fetch_policy_findings(self) -> list[FindingResult]:
@@ -1388,6 +1409,17 @@ class AWSAdapter(AdapterBase):
         Security Hub is not enabled on the account).
         """
         return self._securityhub_findings
+
+    @property
+    def recommender_findings(self) -> list[FindingResult]:
+        """Native cost-recommender findings from the most recent scan().
+
+        Cost Explorer rightsizing / reservation / savings-plan and Compute
+        Optimizer recommendations normalized to DIRECT FinOps findings,
+        merged through the same pipeline path as Security Hub. Empty until
+        scan() has run.
+        """
+        return self._recommender_findings
 
     async def validate_connection(self) -> bool:
         """Return True when STS GetCallerIdentity succeeds."""
