@@ -624,6 +624,15 @@ resource "azurerm_container_app" "api" {
         name  = "CLOUDGUARDIQ_STRIPE_WEBHOOK_SECRET"
         value = var.stripe_webhook_secret
       }
+
+      # Service Bus namespace the API publishes manual-scan jobs to. The
+      # Container App authenticates with its managed identity (Azure Service
+      # Bus Data Sender, granted above). Without this the /scan/trigger
+      # endpoint cannot enqueue and the manual_scan_worker never fires.
+      env {
+        name  = "SERVICE_BUS_CONNECTION__FULLYQUALIFIEDNAMESPACE"
+        value = "${azurerm_servicebus_namespace.cloudguardiq.name}.servicebus.windows.net"
+      }
     }
   }
 

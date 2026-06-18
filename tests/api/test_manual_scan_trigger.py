@@ -86,6 +86,80 @@ async def test_trigger_scan_keeps_queued_when_queue_not_configured() -> None:
 
 
 @pytest.mark.asyncio
+async def test_trigger_scan_enqueues_with_camelcase_fqns_env() -> None:
+    """Regression: the API host must enqueue even when the Service Bus
+    namespace is provided under the camelCase binding name.
+
+    The Functions runtime expects ``SERVICE_BUS_CONNECTION__fullyQualifiedNamespace``
+    (camelCase), but the API previously only read the UPPERCASE form. On Linux
+    (Container Apps) env var names are case-sensitive, so a camelCase-only value
+    silently disabled queuing and the manual_scan_worker never fired. The
+    endpoint must accept either casing.
+    """
+
+    class _AsyncCM:
+        def __init__(self, inner):
+            self._inner = inner
+
+        async def __aenter__(self):
+            return self._inner
+
+        async def __aexit__(self, *exc):
+            return False
+
+    sender = MagicMock()
+    sender.send_messages = AsyncMock()
+
+    client = MagicMock()
+    client.get_queue_sender = MagicMock(return_value=_AsyncCM(sender))
+
+    sb_client_factory = MagicMock(return_value=_AsyncCM(client))
+
+    with (
+        patch("cloudguardiq.api.main.get_repo") as mock_repo_fn,
+        patch("cloudguardiq.api.main._validate_owned_subscription"),
+        patch("cloudguardiq.api.main._enforce_scan_frequency"),
+        patch("cloudguardiq.api.main.bind_context"),
+        patch("cloudguardiq.api.main.get_settings") as mock_settings,
+        patch("cloudguardiq.api.main.get_tenant_id") as mock_tenant_id,
+        patch("cloudguardiq.api.main.os.environ.get") as mock_env_get,
+        patch(
+            "azure.identity.aio.DefaultAzureCredential",
+            return_value=MagicMock(close=AsyncMock()),
+        ),
+        patch("azure.servicebus.aio.ServiceBusClient", sb_client_factory),
+    ):
+        mock_settings.return_value.auth_disabled = False
+        mock_tenant_id.return_value = "test-tenant"
+
+        def _env_get(key: str, default: str | None = None) -> str | None:
+            if key == "MANUAL_SCAN_MAX_ATTEMPTS":
+                return "3"
+            # Only the camelCase form is configured (Functions binding style).
+            if key == "SERVICE_BUS_CONNECTION__fullyQualifiedNamespace":
+                return "cguardiq-dev-sbus.servicebus.windows.net"
+            if key == "SERVICE_BUS_CONNECTION__FULLYQUALIFIEDNAMESPACE":
+                return None
+            return default
+
+        mock_env_get.side_effect = _env_get
+
+        mock_repo = AsyncMock()
+        mock_repo_fn.return_value = mock_repo
+
+        request = ScanRequest(subscription_id="test-sub", include_cost=True)
+        user = MagicMock(oid="user-123")
+
+        response = await trigger_scan(request, user)
+
+    # The message was actually sent to the manual-scans queue.
+    client.get_queue_sender.assert_called_once_with(queue_name="manual-scans")
+    sender.send_messages.assert_awaited_once()
+    assert response["status"] == "queued"
+    assert "scan_id" in response
+
+
+@pytest.mark.asyncio
 async def test_get_scan_status_marks_running_timeout() -> None:
     """Long-running jobs are normalized to timed_out for deterministic UI state."""
     started_at = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()

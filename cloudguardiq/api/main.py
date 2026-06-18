@@ -865,7 +865,17 @@ async def trigger_scan(
         except Exception as exc:
             logger.warning("Failed to persist queued manual scan %s: %s", scan_id, exc)
 
-    sb_fqns = os.environ.get("SERVICE_BUS_CONNECTION__FULLYQUALIFIEDNAMESPACE")
+    # Accept either casing of the Service Bus namespace env var. The Azure
+    # Functions binding convention provisions the camelCase form
+    # (SERVICE_BUS_CONNECTION__fullyQualifiedNamespace); the Container App
+    # that hosts this API runs on Linux where env var names are
+    # case-sensitive, so reading only one casing previously left queuing
+    # silently disabled and the manual_scan_worker never fired.
+    sb_fqns = os.environ.get(
+        "SERVICE_BUS_CONNECTION__FULLYQUALIFIEDNAMESPACE"
+    ) or os.environ.get(
+        "SERVICE_BUS_CONNECTION__fullyQualifiedNamespace"  # noqa: SIM112
+    )
     if not sb_fqns:
         logger.warning(
             "manual_scan_queue_unavailable scan_id=%s subscription_id=%s tenant_id=%s",
