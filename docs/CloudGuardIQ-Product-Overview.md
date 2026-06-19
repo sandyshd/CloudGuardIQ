@@ -76,8 +76,21 @@ vendor is a hard dependency at any tier.**
 ### 2.2 FinOps Cost Governance
 - Dedicated `FINOPS-*` rules (idle VMs, unattached disks, orphan IPs, AKS autoscaler, oversized SKUs).
 - **Monthly waste quantification per resource** via Azure Cost Management / Cost Explorer / Billing APIs.
-- **Projected savings** attached to every remediation card.
-- Plan-aware **cost dashboard** with savings trend lines.
+- **Projected savings** attached to every remediation card, with a `DIRECT` vs
+  `ESTIMATED` confidence stamp (DIRECT when the cloud's own advisor agrees).
+- **Native recommender integration** — Azure Advisor / AWS / GCP cost
+  recommendations merged into the same scan.
+- **FOCUS-normalized cost ledger** — Azure/AWS/GCP bills flattened into one
+  schema, powering a vendor-neutral analytics layer:
+  - **Commitment coverage & utilization** (Reservations / Savings Plans / CUDs).
+  - **Spend forecasting** — day-of-week-aware month-end and next-month projection.
+  - **Cost allocation (showback/chargeback)** by `team` / `app` / `environment` /
+    `cost_center`, with tag-coverage scoring for unallocated spend.
+  - **Budgets** with actual-vs-budget and forecast-vs-budget breach alerting.
+  - **Spend anomaly detection** — statistical (z-score) baseline alerts.
+  - **Unit economics** — cost per tenant-defined unit (customers, transactions).
+- Plan-aware **cost dashboard** with savings trend lines, plus dedicated
+  **Optimization** and **Budgets** workspaces.
 
 ### 2.3 AI-Generated Remediation
 - **GPT-5.1** (Azure OpenAI) in structured JSON mode for deterministic output.

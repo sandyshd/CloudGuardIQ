@@ -89,8 +89,13 @@ hand-crafting fixes. CloudGuardIQ collapses this stack:
 ### 2.2 FinOps Cost Governance
 - Dedicated `FINOPS-*` rules (idle VMs, unattached disks, orphan IPs, AKS autoscaler, oversized SKUs)
 - Monthly **waste quantification per resource** via Azure Cost Management / Cost Explorer / Billing APIs
-- **Projected savings** attached to every remediation card
-- Plan-aware **cost dashboard** with savings trend lines
+- **Projected savings** on every remediation card, stamped `DIRECT` vs `ESTIMATED`
+- **Native recommender integration** (Azure Advisor / AWS / GCP) merged into the scan
+- **FOCUS-normalized cost ledger** powering a vendor-neutral analytics layer:
+  commitment coverage & utilization, spend forecasting, cost allocation
+  (showback/chargeback) + tag coverage, budgets with breach alerting, statistical
+  spend-anomaly detection, and unit economics (cost per tenant-defined unit)
+- Plan-aware **cost dashboard** plus dedicated **Optimization** and **Budgets** workspaces
 
 ### 2.3 AI-Generated Remediation
 - **GPT-5.1** (Azure OpenAI) in structured JSON mode for deterministic output
@@ -350,6 +355,8 @@ cloudguardiq/
 │   ├── auth/                        # Customer-credential factory (cross-tenant)
 │   ├── billing/                     # Plan catalog, quotas, Stripe service, middleware
 │   ├── compliance/                  # Compliance scorecard service
+│   ├── finops/                      # FOCUS analytics: coverage, forecasting,
+│   │                                #   allocation, budgets, anomalies, unit economics
 │   ├── core/                        # Models, enums, config, Cosmos client, observability
 │   ├── healing/                     # Drift detector, contract monitor, repair agent
 │   ├── onboarding/                  # Cloud-connection + credential-ref + audit repos
@@ -362,8 +369,8 @@ cloudguardiq/
 │   └── __main__.py
 ├── frontend/                        # React 18 SPA (Vite + Tailwind v4)
 │   └── src/
-│       ├── pages/                   # Dashboard, Findings, FinOps, AIFix, Compliance,
-│       │                            #   SelfHeal, Settings, ComingSoon
+│       ├── pages/                   # Dashboard, Findings, FinOps, Optimization,
+│       │                            #   Budgets, AIFix, Compliance, SelfHeal, Settings
 │       ├── components/              # dashboard, findings, layout, settings (incl. wizard)
 │       ├── api/                     # Axios client with MSAL token interceptor
 │       ├── auth/                    # MSAL config + RequireAuth wrapper
@@ -918,6 +925,7 @@ no stored Azure credentials in GitHub.
 | **Phase 3 — Cross-tenant onboarding** | ✅ Shipped | Consent wizard, customer-credential factory, auto-disable |
 | **Phase 4 — Multi-cloud (AWS / GCP)** | 🟡 In progress | AWS rule pack live, GCP early access, unified V1 onboarding |
 | **Phase 5 — Self-healing GA** | 🟡 In progress | Drift detector & contract monitor live; auto-repair gated to Enterprise |
+| **FinOps “Operate” maturity** | ✅ Shipped | FOCUS ledger, native recommenders, commitment coverage, forecasting, allocation, budgets, anomalies, unit economics |
 | **Phase 6 — SIEM / SOAR integrations** | ⏳ Planned | Splunk, Sentinel, ServiceNow, PagerDuty |
 | **Phase 7 — Custom policy SDK** | ⏳ Planned | Python + Rego DSL for customer-authored rules |
 

@@ -44,6 +44,24 @@ dependency**. If a billing or pricing API is throttled, unauthorized, or down,
 the lookup degrades to an empty result and the scan still completes — no crash,
 no blank dashboard.
 
+### What shipped — the FinOps maturity stack (5 phases)
+
+CloudGuardIQ's FinOps capability landed in five incremental phases. The first two
+sit inside the **scan pipeline** (per-resource cost + waste). The last three are a
+pure **analytics layer** over a normalized cost ledger (FOCUS), exposed as its own
+`/finops/*` API and UI — none of it depends on Microsoft Defender for Cloud.
+
+| Phase | Theme | What it added | Where it lives |
+|-------|-------|---------------|----------------|
+| **1 — FOCUS ingestion** | A common cost ledger | FinOps-FOCUS-normalized billing rows for Azure/AWS/GCP, the `CostProvider` seam, the `focus_costs` container | `billing/cost_provider.py`, `core/models.py` (`FocusCostRecord`) |
+| **2 — Utilization + rightsizing** | Idle / oversized detection | Utilization metrics providers + idle/rightsizing activation feeding the FinOps rules | `billing/*_metrics_provider.py`, `adapters/rules/azure/finops.py` |
+| **3 — Native recommenders** | The cloud's own advice | Azure Advisor / AWS / GCP recommender adapters merged into the scan as **DIRECT** savings | `adapters/recommenders/*` |
+| **4 — Coverage + forecasting** | Commitments & trend | Commitment coverage/utilization analysis and day-of-week spend forecasting | `finops/commitments.py`, `finops/forecasting.py` |
+| **5 — Operate** | Allocation, budgets, anomalies, unit economics | Showback/chargeback + tag coverage, budgets (actual & forecast vs target), statistical anomaly alerting, cost-per-unit | `finops/allocation.py`, `finops/budgets.py`, `finops/anomaly.py`, `finops/unit_economics.py` |
+
+> **Sections 2–7** below cover the in-pipeline cost flow (phases 1–2). **Sections
+> 8–14** cover the analytics layer (phases 3–5).
+
 ---
 
 ## 2. The CostProvider Seam — One Contract, Three Clouds
@@ -288,7 +306,246 @@ flowchart LR
 
 ---
 
-## 8. The Guards (where cost degrades safely)
+## 8. Native Recommenders — DIRECT Savings From the Cloud's Own Advisor
+
+Phases 1–2 derive savings from **our** price math (sections 6–7). Phase 3 also
+ingests the cloud provider's **own** optimization advice — Azure Advisor, AWS
+Cost Optimization Hub / Compute Optimizer, GCP Recommender — and merges those
+findings into the same scan. Because the number comes straight from the
+provider, it is stamped as a **DIRECT** savings signal (highest confidence),
+versus the **ESTIMATED** numbers our own heuristics produce.
+
+```mermaid
+flowchart LR
+    Scan["Unified scan pipeline"] --> Own["Our findings<br/>(rules + rightsizing)<br/>method = ESTIMATED"]
+    Scan --> Rec["Native recommender adapter<br/>(Advisor / AWS / GCP)<br/>method = DIRECT"]
+    Own --> Merge["Merge by resource + rule"]
+    Rec --> Merge
+    Merge --> Out["Findings ranked by<br/>confidence + impact"]
+
+    style Scan fill:#1f2937,color:#fff
+    style Own fill:#2563eb,color:#fff
+    style Rec fill:#16a34a,color:#fff
+    style Merge fill:#7c3aed,color:#fff
+    style Out fill:#ea580c,color:#fff
+```
+
+Every `FindingResult` carries two FinOps trust fields so the dashboard and
+finance can weight a number by how it was derived:
+
+| `finops_method` | Meaning | `finops_confidence` |
+|-----------------|---------|---------------------|
+| `DIRECT` | Provider's own recommendation / billed figure | HIGH |
+| `ESTIMATED` | CloudGuardIQ heuristic (rightsizing delta, anomaly excess) | MEDIUM |
+| `NONE` | Governance finding, no dollar claim | LOW |
+
+> Recommender APIs are wrapped like every other external call — an Advisor
+> outage drops the DIRECT enrichment and the scan keeps our ESTIMATED findings.
+
+---
+
+## 9. The FOCUS Ledger — One Normalized Cost Table for Every Cloud
+
+The analytics layer never queries a cloud directly. It reads one normalized
+table: **`FocusCostRecord`** rows (FinOps Open Cost & Usage Specification)
+persisted in the `focus_costs` Cosmos container, partitioned by `/tenant_id`.
+Azure, AWS, and GCP bills are all flattened into the same shape, so allocation,
+budgets, forecasting, and anomalies are written **once** and work for all three.
+
+```mermaid
+flowchart LR
+    AZ["Azure Cost Mgmt"] --> N["Normalize to FOCUS"]
+    AWS["AWS CUR / Cost Explorer"] --> N
+    GCP["GCP BigQuery export"] --> N
+    N --> Ledger[("focus_costs<br/>partition: /tenant_id")]
+    Ledger --> Analytics["finops/* analytics<br/>(pure functions)"]
+
+    style AZ fill:#2563eb,color:#fff
+    style AWS fill:#b45309,color:#fff
+    style GCP fill:#0e7490,color:#fff
+    style N fill:#7c3aed,color:#fff
+    style Ledger fill:#1e3a8a,color:#fff
+    style Analytics fill:#16a34a,color:#fff
+```
+
+Key fields used downstream: `tenant_id`, `sub_account_id` (Azure sub / AWS
+account / GCP project), `billing_period`, `charge_period_start`, `charge_category`
+(Usage / Purchase / …), `effective_cost`, `service_name` / `service_category`,
+`commitment_discount_id`, and `tags` (the allocation dimensions). Every analytics
+function in `cloudguardiq/finops/` is a **pure function over these rows** — no
+cloud SDK, no I/O — which is why they are fully unit-tested and degrade to empty
+results when the ledger is unavailable.
+
+---
+
+## 10. Commitment Coverage & Utilization (Phase 4)
+
+`finops/commitments.py` answers two reservation questions from FOCUS rows:
+**coverage** ("what share of eligible compute is covered by a Reservation /
+Savings Plan / CUD?") and **utilization** ("of what we committed to and paid for,
+how much did we actually use?").
+
+```mermaid
+flowchart TD
+    Rows["FOCUS rows"] --> Split{"charge_category"}
+    Split -- "Purchase + commitment id" --> Comm["Committed spend"]
+    Split -- "Usage, no commitment" --> OnD["On-demand eligible spend"]
+    Comm --> Cov["coverage_pct =<br/>committed / (committed + on-demand)"]
+    OnD --> Cov
+    Comm --> Util["utilization_pct =<br/>used / purchased"]
+    Cov --> Find["FIN-CC-001 low coverage"]
+    Util --> Find2["FIN-CC-002 under-utilized"]
+
+    style Rows fill:#1f2937,color:#fff
+    style Split fill:#b45309,color:#fff
+    style Comm fill:#2563eb,color:#fff
+    style OnD fill:#0891b2,color:#fff
+    style Cov fill:#7c3aed,color:#fff
+    style Util fill:#7c3aed,color:#fff
+    style Find fill:#dc2626,color:#fff
+    style Find2 fill:#dc2626,color:#fff
+```
+
+- **`FIN-CC-001`** fires when coverage is below target and there is meaningful
+  on-demand-eligible spend — savings estimated as `eligible × assumed discount`.
+- **`FIN-CC-002`** fires when a specific commitment is utilized below the 85%
+  floor (severity escalates below 50%).
+- Surfaced at **`GET /finops/coverage`** as a `CommitmentCoverageSummary`.
+
+---
+
+## 11. Spend Forecasting (Phase 4)
+
+`finops/forecasting.py` projects month-end and next-month spend from the daily
+FOCUS series using a **trailing daily average modulated by a day-of-week
+seasonality factor** — deterministic and explainable, not a black box.
+
+$$ \text{projected month-end} = \text{MTD} + \sum_{\text{remaining days}} \text{trailing avg} \times \text{seasonality}(\text{weekday}) $$
+
+A forecast can be computed per `sub_account`, per `service`, or per `tag:<key>`,
+which is exactly what budgets (section 13) reuse to project a breach. Surfaced at
+**`GET /finops/forecast`** as a list of `SpendForecast` (trailing avg, MTD,
+projected month-end, projected next-month).
+
+---
+
+## 12. Allocation — Showback / Chargeback & Tag Coverage (Phase 5)
+
+`finops/allocation.py` groups spend by an allocation **dimension** (an allocation
+tag such as `team`, `app`, `environment`, or `cost_center`, with case-insensitive
+synonym matching) and measures how much spend can actually be attributed.
+
+```mermaid
+flowchart LR
+    Rows["FOCUS rows"] --> Group["Group by tag value<br/>(team / app / env / cost_center)"]
+    Group --> Tagged["Allocated groups"]
+    Group --> Untag["Unallocated bucket<br/>(missing tag)"]
+    Tagged --> Cov["coverage_pct =<br/>allocated / total"]
+    Untag --> Cov
+    Cov --> Find["FIN-AL-001<br/>low coverage + $ unallocated"]
+
+    style Rows fill:#1f2937,color:#fff
+    style Group fill:#2563eb,color:#fff
+    style Tagged fill:#16a34a,color:#fff
+    style Untag fill:#b45309,color:#fff
+    style Cov fill:#7c3aed,color:#fff
+    style Find fill:#dc2626,color:#fff
+```
+
+- **`allocate_spend(dimension)`** → `AllocationSummary` (groups, allocated vs
+  unallocated, coverage %). Surfaced at **`GET /finops/allocation`**.
+- **`compute_tag_coverage()`** → cost-weighted coverage per default dimension.
+  Surfaced at **`GET /finops/coverage-tags`**.
+- **`FIN-AL-001`** is a *governance* finding (no dollar claim, `method = NONE`)
+  raised when coverage is below target **and** unallocated spend clears a floor —
+  generalizing the old per-resource `MissingCostTags` rule into an account metric.
+
+---
+
+## 13. Budgets, Anomalies & Unit Economics — the "Operate" Layer (Phase 5)
+
+The final phase reaches FinOps "Operate" maturity with three more pure-model
+capabilities over the FOCUS ledger.
+
+```mermaid
+flowchart TD
+    Ledger[("focus_costs")] --> B["Budgets<br/>finops/budgets.py"]
+    Ledger --> A["Anomalies<br/>finops/anomaly.py"]
+    Ledger --> U["Unit economics<br/>finops/unit_economics.py"]
+    Budgets[("budgets<br/>partition: /tenant_id")] --> B
+
+    B --> Bf["FIN-BG-001 breach<br/>FIN-BG-002 projected breach"]
+    A --> Af["FIN-AN-001 spend spike"]
+    U --> Uf["cost per tenant-defined unit"]
+
+    style Ledger fill:#1e3a8a,color:#fff
+    style Budgets fill:#1e3a8a,color:#fff
+    style B fill:#2563eb,color:#fff
+    style A fill:#0891b2,color:#fff
+    style U fill:#7c3aed,color:#fff
+    style Bf fill:#dc2626,color:#fff
+    style Af fill:#dc2626,color:#fff
+    style Uf fill:#16a34a,color:#fff
+```
+
+- **Budgets** — a `Budget` (scoped to whole subscription, a service, or a tag
+  value) is evaluated for month-to-date actual **and** a projected month-end
+  (reusing the section-11 forecast). Status is `OK` → `WARN` (over threshold) →
+  `BREACH` (actual over) → `PROJECTED_BREACH` (forecast over), emitting
+  `FIN-BG-001` / `FIN-BG-002`. CRUD at **`POST/GET/DELETE /finops/budgets`**;
+  evaluation at **`GET /finops/budgets/status`**.
+- **Anomalies** — a rolling mean/standard-deviation baseline (default 14-day
+  window, min 7 periods) flags days whose spend exceeds a z-score threshold;
+  severity scales with deviation (z≥3 MEDIUM, ≥4 HIGH, ≥5 CRITICAL), emitting
+  `FIN-AN-001`. Surfaced at **`GET /finops/anomalies`**.
+- **Unit economics** — divides MTD and projected spend by a tenant-defined
+  denominator (active customers, transactions, …) to express cost efficiency.
+  Surfaced at **`GET /finops/unit-economics`**.
+
+---
+
+## 14. Data Stores & API Surface
+
+```mermaid
+flowchart LR
+    subgraph COSMOS["Cosmos DB (serverless)"]
+        FC[("focus_costs<br/>/tenant_id")]
+        BG[("budgets<br/>/tenant_id")]
+    end
+    subgraph API["/finops/* (tenant + subscription scoped)"]
+        E1["GET /coverage"]
+        E2["GET /forecast"]
+        E3["GET /allocation"]
+        E4["GET /coverage-tags"]
+        E5["GET /anomalies"]
+        E6["GET /unit-economics"]
+        E7["GET/POST/DELETE /budgets"]
+        E8["GET /budgets/status"]
+    end
+    FC --> API
+    BG --> E7 & E8
+    API --> UI["Frontend<br/>Cost Explorer · Optimization · Budgets"]
+
+    style COSMOS fill:#1e3a8a,color:#fff
+    style FC fill:#2563eb,color:#fff
+    style BG fill:#2563eb,color:#fff
+    style API fill:#0891b2,color:#fff
+    style UI fill:#ea580c,color:#fff
+```
+
+- **Containers** are provisioned by Terraform (`infra/main.tf`), not auto-created
+  by the app: `focus_costs` (phase 1) and `budgets` (phase 5), both partitioned
+  by `/tenant_id`.
+- **Every `/finops/*` endpoint is tenant- and subscription-scoped** and degrades
+  gracefully: no subscription, missing repository, or a Cosmos error returns an
+  empty / zeroed payload (or `[]`) instead of erroring.
+- **Frontend:** the React app surfaces this via the **Cost Explorer**,
+  **Optimization** (allocation, tag coverage, anomalies, unit economics), and
+  **Budgets** pages, all backed by `frontend/src/api/finops.ts`.
+
+---
+
+## 15. The Guards (where cost degrades safely)
 
 Every external billing/pricing touchpoint is wrapped. Failure is expected and
 handled — it is never allowed to crash a scan or blank the dashboard.
@@ -323,7 +580,7 @@ flowchart TD
 
 ---
 
-## 9. One-Page Executive Summary
+## 16. One-Page Executive Summary
 
 ```mermaid
 flowchart LR
@@ -338,15 +595,19 @@ flowchart LR
         D["AWS: Cost Explorer + Price List"]
         E["GCP: BigQuery + Catalog"]
     end
+    subgraph LEDGER["FOCUS LEDGER + ANALYTICS"]
+        L["focus_costs to coverage, forecast,<br/>allocation, budgets, anomalies, units"]
+    end
     subgraph OUT["OUTPUT"]
-        F["Per-resource cost<br/>+ rightsizing savings<br/>+ waste $ identified"]
+        F["Per-resource cost + rightsizing<br/>+ waste $ + budgets/alerts<br/>+ showback/chargeback"]
     end
 
-    A --> B --> C & D & E --> F
+    A --> B --> C & D & E --> L --> F
 
     style IN fill:#1f2937,color:#fff
     style SEAM fill:#1e3a8a,color:#fff
     style CLOUDS fill:#0891b2,color:#fff
+    style LEDGER fill:#7c3aed,color:#fff
     style OUT fill:#16a34a,color:#fff
 ```
 
@@ -357,7 +618,11 @@ flowchart LR
   comparable.
 - **Actual-first, list-price-fallback** means even brand-new resources get a
   credible cost.
-- **Rightsizing savings are real price deltas**, not flat guesses — defensible to
-  finance.
-- **Trustworthy by design** — every billing/pricing call degrades gracefully, so
-  a cost outage never crashes a scan or blanks the dashboard.
+- **Rightsizing savings are real price deltas** — and where the cloud's own
+  advisor agrees, the number is stamped **DIRECT** (highest confidence).
+- **From cost to decisions** — one FOCUS ledger powers commitment coverage,
+  spend forecasting, showback/chargeback allocation, budgets with breach alerts,
+  anomaly detection, and unit economics, identically across Azure, AWS, and GCP.
+- **Trustworthy by design** — every billing/pricing/analytics call is tenant- and
+  subscription-scoped and degrades gracefully, so an outage never crashes a scan
+  or blanks the dashboard.
