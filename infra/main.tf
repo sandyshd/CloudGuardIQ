@@ -255,6 +255,16 @@ resource "azurerm_cosmosdb_sql_container" "focus_costs" {
   partition_key_paths = ["/tenant_id"]
 }
 
+resource "azurerm_cosmosdb_sql_container" "budgets" {
+  # Phase 5 FinOps: per-tenant spend budgets evaluated against the FOCUS
+  # ledger for breach and forecast-breach alerting. One document per budget.
+  name                = "budgets"
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
+  partition_key_paths = ["/tenant_id"]
+}
+
 resource "azurerm_cosmosdb_sql_container" "tenant_consents" {
   # Phase 3.3: one document per customer Entra tenant whose admin
   # has granted consent to the multi-tenant CloudGuardIQ app.
