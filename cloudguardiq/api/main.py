@@ -75,11 +75,26 @@ from cloudguardiq.core.observability import (
     bind_context,
     install_context_filter,
 )
+from cloudguardiq.finops.allocation import (
+    AllocationSummary,
+    allocate_spend,
+    compute_tag_coverage,
+)
+from cloudguardiq.finops.anomaly import SpendAnomaly, detect_anomalies
+from cloudguardiq.finops.budgets import (
+    Budget,
+    BudgetStatus,
+    evaluate_budgets,
+)
 from cloudguardiq.finops.commitments import (
     CommitmentCoverageSummary,
     compute_coverage,
 )
 from cloudguardiq.finops.forecasting import SpendForecast, forecast_spend
+from cloudguardiq.finops.unit_economics import (
+    UnitEconomics,
+    compute_unit_economics,
+)
 from cloudguardiq.onboarding.audit_event_repository import AuditEventRepository
 from cloudguardiq.onboarding.cloud_connection_repository import CloudConnectionRepository
 from cloudguardiq.onboarding.credential_ref_repository import CredentialRefRepository
@@ -1247,6 +1262,269 @@ async def get_spend_forecast(
         logger.warning("Failed to query FOCUS records for forecast: %s", exc)
         return []
     return forecast_spend(records, dimension=dimension)
+
+
+@app.get("/finops/allocation", response_model=AllocationSummary)
+async def get_cost_allocation(
+    subscription_id: str = Query(default=""),
+    dimension: str = Query(default="team"),
+    from_period: str | None = Query(default=None),
+    to_period: str | None = Query(default=None),
+    user: TokenPayload = _auth,
+) -> AllocationSummary:
+    """Return showback/chargeback spend grouped by an allocation dimension.
+
+    ``dimension`` is an allocation tag such as ``team``, ``app``,
+    ``environment``, or ``cost_center``. Scoped by ``subscription_id`` +
+    tenant; returns an empty summary when no subscription is selected, the
+    repository is unavailable, or the FOCUS query fails.
+    """
+    empty = AllocationSummary(dimension=dimension)
+    if not subscription_id:
+        return empty
+    sub_id = await _validate_owned_subscription(user, subscription_id)
+    bind_context(subscription_id=sub_id)
+    repo = get_repo()
+    if repo is None:
+        return empty
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    try:
+        records = await repo.get_focus_records(
+            sub_id,
+            tenant_id=tenant_id,
+            from_period=from_period,
+            to_period=to_period,
+        )
+    except Exception as exc:
+        logger.warning("Failed to query FOCUS records for allocation: %s", exc)
+        return empty
+    return allocate_spend(records, dimension=dimension)
+
+
+@app.get("/finops/coverage-tags", response_model=dict[str, float])
+async def get_tag_coverage(
+    subscription_id: str = Query(default=""),
+    from_period: str | None = Query(default=None),
+    to_period: str | None = Query(default=None),
+    user: TokenPayload = _auth,
+) -> dict[str, float]:
+    """Return cost-weighted tag-coverage % per default allocation dimension.
+
+    Scoped by ``subscription_id`` + tenant; returns an empty mapping when no
+    subscription is selected, the repository is unavailable, or the FOCUS
+    query fails.
+    """
+    if not subscription_id:
+        return {}
+    sub_id = await _validate_owned_subscription(user, subscription_id)
+    bind_context(subscription_id=sub_id)
+    repo = get_repo()
+    if repo is None:
+        return {}
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    try:
+        records = await repo.get_focus_records(
+            sub_id,
+            tenant_id=tenant_id,
+            from_period=from_period,
+            to_period=to_period,
+        )
+    except Exception as exc:
+        logger.warning("Failed to query FOCUS records for tag coverage: %s", exc)
+        return {}
+    return compute_tag_coverage(records)
+
+
+@app.get("/finops/anomalies", response_model=list[SpendAnomaly])
+async def get_spend_anomalies(
+    subscription_id: str = Query(default=""),
+    z_threshold: float = Query(default=3.0, ge=1.0),
+    from_period: str | None = Query(default=None),
+    to_period: str | None = Query(default=None),
+    user: TokenPayload = _auth,
+) -> list[SpendAnomaly]:
+    """Return statistical spend anomalies over the daily FOCUS series.
+
+    Scoped by ``subscription_id`` + tenant; returns an empty list when no
+    subscription is selected, the repository is unavailable, or the FOCUS
+    query fails.
+    """
+    if not subscription_id:
+        return []
+    sub_id = await _validate_owned_subscription(user, subscription_id)
+    bind_context(subscription_id=sub_id)
+    repo = get_repo()
+    if repo is None:
+        return []
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    try:
+        records = await repo.get_focus_records(
+            sub_id,
+            tenant_id=tenant_id,
+            from_period=from_period,
+            to_period=to_period,
+        )
+    except Exception as exc:
+        logger.warning("Failed to query FOCUS records for anomalies: %s", exc)
+        return []
+    return detect_anomalies(records, z_threshold=z_threshold)
+
+
+@app.get("/finops/unit-economics", response_model=UnitEconomics)
+async def get_unit_economics(
+    subscription_id: str = Query(default=""),
+    units: float = Query(default=0.0, ge=0.0),
+    unit_label: str = Query(default="unit"),
+    from_period: str | None = Query(default=None),
+    to_period: str | None = Query(default=None),
+    user: TokenPayload = _auth,
+) -> UnitEconomics:
+    """Return month-to-date and projected cost per tenant-defined unit.
+
+    Scoped by ``subscription_id`` + tenant; returns a zeroed result when no
+    subscription is selected, the repository is unavailable, or the FOCUS
+    query fails.
+    """
+    empty = UnitEconomics(unit_label=unit_label, units=units)
+    if not subscription_id:
+        return empty
+    sub_id = await _validate_owned_subscription(user, subscription_id)
+    bind_context(subscription_id=sub_id)
+    repo = get_repo()
+    if repo is None:
+        return empty
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    try:
+        records = await repo.get_focus_records(
+            sub_id,
+            tenant_id=tenant_id,
+            from_period=from_period,
+            to_period=to_period,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to query FOCUS records for unit economics: %s", exc
+        )
+        return empty
+    return compute_unit_economics(records, units=units, unit_label=unit_label)
+
+
+@app.get("/finops/budgets", response_model=list[Budget])
+async def list_budgets(
+    subscription_id: str = Query(default=""),
+    user: TokenPayload = _auth,
+) -> list[Budget]:
+    """Return the tenant's budgets, optionally scoped to a subscription.
+
+    Degrades gracefully to an empty list when the repository is unavailable
+    or the Cosmos query fails.
+    """
+    repo = get_repo()
+    if repo is None:
+        return []
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    sub_id = ""
+    if subscription_id:
+        sub_id = await _validate_owned_subscription(user, subscription_id)
+        bind_context(subscription_id=sub_id)
+    try:
+        return await repo.list_budgets(tenant_id, subscription_id=sub_id)
+    except Exception as exc:
+        logger.warning("Failed to list budgets: %s", exc)
+        return []
+
+
+@app.post("/finops/budgets", response_model=Budget, status_code=201)
+async def create_budget(
+    body: Budget,
+    user: TokenPayload = _auth,
+) -> Budget:
+    """Create or update a budget for the caller's tenant.
+
+    The ``tenant_id`` is bound from the token; ``subscription_id`` is verified
+    against tenant ownership when present.
+    """
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    if body.subscription_id:
+        body.subscription_id = await _validate_owned_subscription(
+            user, body.subscription_id
+        )
+        bind_context(subscription_id=body.subscription_id)
+    budget = body.model_copy(update={"tenant_id": tenant_id})
+    repo = get_repo()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Storage unavailable")
+    try:
+        await repo.upsert_budget(budget)
+    except Exception as exc:
+        logger.warning("Failed to save budget: %s", exc)
+        raise HTTPException(
+            status_code=503, detail="Failed to save budget"
+        ) from exc
+    return budget
+
+
+@app.delete("/finops/budgets/{budget_id}")
+async def delete_budget(
+    budget_id: str,
+    user: TokenPayload = _auth,
+) -> Response:
+    """Delete a budget owned by the caller's tenant."""
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    repo = get_repo()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Storage unavailable")
+    try:
+        await repo.delete_budget(tenant_id, budget_id)
+    except Exception as exc:
+        logger.warning("Failed to delete budget %s: %s", budget_id, exc)
+        raise HTTPException(
+            status_code=503, detail="Failed to delete budget"
+        ) from exc
+    return Response(status_code=204)
+
+
+@app.get("/finops/budgets/status", response_model=list[BudgetStatus])
+async def get_budget_status(
+    subscription_id: str = Query(default=""),
+    from_period: str | None = Query(default=None),
+    to_period: str | None = Query(default=None),
+    user: TokenPayload = _auth,
+) -> list[BudgetStatus]:
+    """Return actual-vs-budget and forecast-vs-budget status per budget.
+
+    Scoped by ``subscription_id`` + tenant; returns an empty list when no
+    subscription is selected, the repository is unavailable, or any query
+    fails (graceful degradation).
+    """
+    if not subscription_id:
+        return []
+    sub_id = await _validate_owned_subscription(user, subscription_id)
+    bind_context(subscription_id=sub_id)
+    repo = get_repo()
+    if repo is None:
+        return []
+    settings = get_settings()
+    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    try:
+        budgets = await repo.list_budgets(tenant_id, subscription_id=sub_id)
+        records = await repo.get_focus_records(
+            sub_id,
+            tenant_id=tenant_id,
+            from_period=from_period,
+            to_period=to_period,
+        )
+    except Exception as exc:
+        logger.warning("Failed to evaluate budget status: %s", exc)
+        return []
+    return evaluate_budgets(records, budgets)
 
 
 @app.get("/resources", response_model=list[ResourceSnapshot])

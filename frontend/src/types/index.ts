@@ -143,5 +143,82 @@ export interface HealingEvent {
   details: string;
 }
 
+// ---------------------------------------------------------------------------
+// FinOps "Operate": allocation, budgets, anomalies, unit economics, forecast
+// (mirrors cloudguardiq/finops/*.py Pydantic models)
+// ---------------------------------------------------------------------------
 
+export interface AllocationGroup {
+  key: string;
+  cost: number;
+  pct: number;
+}
 
+export interface AllocationSummary {
+  dimension: string;
+  total_cost: number;
+  allocated_cost: number;
+  unallocated_cost: number;
+  coverage_pct: number;
+  groups: AllocationGroup[];
+}
+
+export type TagCoverage = Record<string, number>;
+
+export interface Budget {
+  budget_id: string;
+  tenant_id: string;
+  subscription_id: string;
+  name: string;
+  dimension: string;
+  dimension_value: string;
+  amount_monthly: number;
+  alert_threshold_pct: number;
+  created_at?: string;
+}
+
+export type BudgetStatusValue = "OK" | "WARN" | "BREACH" | "PROJECTED_BREACH";
+
+export interface BudgetStatus {
+  budget_id: string;
+  name: string;
+  dimension: string;
+  dimension_value: string;
+  amount_monthly: number;
+  actual_cost: number;
+  projected_month_end_cost: number;
+  pct_used: number;
+  projected_pct: number;
+  status: BudgetStatusValue;
+  findings: FindingResult[];
+}
+
+export interface SpendAnomaly {
+  key: string;
+  date: string;
+  observed_cost: number;
+  baseline_mean: number;
+  baseline_stdev: number;
+  z_score: number;
+  direction: "SPIKE" | "DROP";
+  severity: string;
+}
+
+export interface UnitEconomics {
+  unit_label: string;
+  units: number;
+  total_cost: number;
+  projected_month_end_cost: number;
+  cost_per_unit: number;
+  projected_cost_per_unit: number;
+}
+
+export interface SpendForecast {
+  dimension: string;
+  key: string;
+  observed_days: number;
+  trailing_daily_avg: number;
+  month_to_date_cost: number;
+  projected_month_end_cost: number;
+  projected_next_month_cost: number;
+}

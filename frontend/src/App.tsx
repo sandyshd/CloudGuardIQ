@@ -12,6 +12,8 @@ import { Settings } from "./pages/Settings";
 import { Reports } from "./pages/Reports";
 import { ComingSoon } from "./pages/ComingSoon";
 import { Resources } from "./pages/Resources";
+import { Optimization } from "./pages/Optimization";
+import { Budgets } from "./pages/Budgets";
 
 export default function App() {
   return (
@@ -25,8 +27,8 @@ export default function App() {
               <Route path="/findings/:id" element={<AIFix />} />
               <Route path="/ai-fix" element={<AIFix />} />
               <Route path="/finops" element={<FinOps />} />
-              <Route path="/finops/optimization" element={<ComingSoon />} />
-              <Route path="/finops/budgets" element={<ComingSoon />} />
+              <Route path="/finops/optimization" element={<Optimization />} />
+              <Route path="/finops/budgets" element={<Budgets />} />
               <Route path="/compliance" element={<Compliance />} />
               <Route path="/self-heal" element={<SelfHeal />} />
               <Route path="/settings" element={<Settings />} />

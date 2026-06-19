@@ -26,6 +26,7 @@ from cloudguardiq.core.models import (
     RemediationCard,
     ResourceSnapshot,
 )
+from cloudguardiq.finops.budgets import Budget
 
 logger = logging.getLogger(__name__)
 
@@ -342,6 +343,13 @@ class CosmosRepository:
             self._settings.cosmos_container_focus_costs
         )
 
+    def _budgets_container(self) -> ContainerProxy:
+        """Return the budgets container proxy."""
+        assert self._db is not None
+        return self._db.get_container_client(
+            self._settings.cosmos_container_budgets
+        )
+
     # ------------------------------------------------------------------
     # Snapshot operations  (partition key: /provider)
     # ------------------------------------------------------------------
@@ -459,6 +467,64 @@ class CosmosRepository:
                     exc.errors()[0].get("msg", str(exc)),
                 )
         return results
+
+    # ------------------------------------------------------------------
+    # Budget operations  (partition key: /tenant_id)
+    # ------------------------------------------------------------------
+
+    async def upsert_budget(self, budget: Budget) -> str:
+        """Idempotently persist a Budget. Returns the budget id."""
+        doc = budget.model_dump(mode="json")
+        doc["id"] = budget.budget_id
+        doc["tenant_id"] = budget.tenant_id
+        await self._budgets_container().upsert_item(doc)
+        logger.info(
+            "Saved budget %s (tenant=%s)",
+            budget.budget_id,
+            budget.tenant_id or "-",
+        )
+        return budget.budget_id
+
+    async def list_budgets(
+        self, tenant_id: str, *, subscription_id: str = ""
+    ) -> list[Budget]:
+        """Return budgets for a tenant, optionally scoped to a subscription.
+
+        Budgets are partitioned by ``/tenant_id``; this is a
+        single-partition query. Invalid legacy rows are skipped.
+        """
+        params: list[dict[str, object]] = [
+            {"name": "@tenant_id", "value": tenant_id},
+        ]
+        clauses = ["c.tenant_id = @tenant_id"]
+        if subscription_id:
+            params.append(
+                {"name": "@sub_id", "value": subscription_id}
+            )
+            clauses.append("c.subscription_id = @sub_id")
+        query = "SELECT * FROM c WHERE " + " AND ".join(clauses)
+        results: list[Budget] = []
+        async for item in self._budgets_container().query_items(
+            query=query, parameters=params, partition_key=tenant_id,
+        ):
+            try:
+                results.append(Budget.model_validate(item))
+            except ValidationError as exc:
+                logger.warning(
+                    "Skipping invalid budget row %s: %s",
+                    str(item.get("id", "unknown")),
+                    exc.errors()[0].get("msg", str(exc)),
+                )
+        return results
+
+    async def delete_budget(self, tenant_id: str, budget_id: str) -> None:
+        """Delete a budget by id within a tenant partition."""
+        await self._budgets_container().delete_item(
+            item=budget_id, partition_key=tenant_id,
+        )
+        logger.info(
+            "Deleted budget %s (tenant=%s)", budget_id, tenant_id or "-"
+        )
 
     # ------------------------------------------------------------------
     # Finding operations  (partition key: /subscription_id)
