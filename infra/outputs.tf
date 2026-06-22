@@ -109,6 +109,8 @@ output "frontend_env_file" {
     VITE_AZURE_TENANT_ID=${data.azurerm_client_config.current.tenant_id}
     VITE_REDIRECT_URI=http://localhost:3000
     VITE_API_BASE_URL=http://localhost:8000
+    VITE_CIAM_AUTHORITY=${var.ciam_authority}
+    VITE_CIAM_CLIENT_ID=${var.ciam_enabled ? azuread_application.ciam[0].client_id : ""}
   EOT
 }
 
@@ -121,4 +123,15 @@ output "acr_name" {
 output "acr_login_server" {
   description = "Azure Container Registry login server"
   value       = azurerm_container_registry.cloudguardiq.login_server
+}
+
+# ---------- Microsoft Entra External ID (CIAM) — Phase 4 ----------
+output "ciam_client_id" {
+  description = "CIAM (Entra External ID) app registration client ID — use for VITE_CIAM_CLIENT_ID and CLOUDGUARDIQ_CIAM_CLIENT_ID. Empty when ciam_enabled = false."
+  value       = var.ciam_enabled ? azuread_application.ciam[0].client_id : ""
+}
+
+output "ciam_authority" {
+  description = "CIAM authority URL used by the SPA and backend token validation."
+  value       = var.ciam_authority
 }

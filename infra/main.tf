@@ -284,6 +284,17 @@ resource "azurerm_cosmosdb_sql_container" "onboarding_sessions" {
   partition_key_paths = ["/operator_tenant_id"]
 }
 
+resource "azurerm_cosmosdb_sql_container" "orgs" {
+  # Phase 4 (multi-cloud login): one document per CIAM customer identity,
+  # mapping a stable subject_key (issuer|subject) to the cloud-neutral
+  # org_id that scopes all customer-owned data. Minted on first sign-in.
+  name                = "orgs"
+  resource_group_name = azurerm_resource_group.cloudguardiq.name
+  account_name        = azurerm_cosmosdb_account.cloudguardiq.name
+  database_name       = azurerm_cosmosdb_sql_database.cloudguardiq.name
+  partition_key_paths = ["/subject_key"]
+}
+
 # ==========================================================================
 # Azure OpenAI
 # ==========================================================================
@@ -557,6 +568,26 @@ resource "azurerm_container_app" "api" {
         value = azuread_application.cloudguardiq.client_id
       }
 
+      # Phase 4: Entra External ID (CIAM) sign-in for AWS/GCP customers.
+      # Empty values leave CIAM disabled; the backend derives ciam_enabled
+      # from authority + client id.
+      env {
+        name  = "CLOUDGUARDIQ_CIAM_AUTHORITY"
+        value = var.ciam_authority
+      }
+      env {
+        name  = "CLOUDGUARDIQ_CIAM_CLIENT_ID"
+        value = var.ciam_enabled ? azuread_application.ciam[0].client_id : ""
+      }
+      env {
+        name  = "CLOUDGUARDIQ_CIAM_ISSUER"
+        value = var.ciam_issuer
+      }
+      env {
+        name  = "CLOUDGUARDIQ_COSMOS_CONTAINER_ORGS"
+        value = azurerm_cosmosdb_sql_container.orgs.name
+      }
+
       env {
         name  = "CLOUDGUARDIQ_CORS_ORIGINS"
         value = "https://${azurerm_static_web_app.frontend.default_host_name},http://localhost:3000"
@@ -781,6 +812,12 @@ resource "azurerm_linux_function_app" "cloudguardiq" {
     # Azure AD
     CLOUDGUARDIQ_AZURE_TENANT_ID = data.azurerm_client_config.current.tenant_id
     CLOUDGUARDIQ_AZURE_CLIENT_ID = azuread_application.cloudguardiq.client_id
+
+    # Phase 4: Entra External ID (CIAM) sign-in for AWS/GCP customers.
+    CLOUDGUARDIQ_CIAM_AUTHORITY        = var.ciam_authority
+    CLOUDGUARDIQ_CIAM_CLIENT_ID        = var.ciam_enabled ? azuread_application.ciam[0].client_id : ""
+    CLOUDGUARDIQ_CIAM_ISSUER           = var.ciam_issuer
+    CLOUDGUARDIQ_COSMOS_CONTAINER_ORGS = azurerm_cosmosdb_sql_container.orgs.name
 
     # Billing
     CLOUDGUARDIQ_COSMOS_CONTAINER_BILLING             = azurerm_cosmosdb_sql_container.billing.name

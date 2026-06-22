@@ -105,3 +105,40 @@ variable "onboarding_template_uri" {
   type        = string
   default     = ""
 }
+
+# ==========================================================================
+# Microsoft Entra External ID (CIAM) — Phase 4
+# ==========================================================================
+# Lets AWS/GCP-only customers sign up with email or Google without an Azure
+# tenant. All CIAM resources are gated on ciam_enabled so Azure-only
+# environments deploy unchanged.
+
+variable "ciam_enabled" {
+  description = "Provision the CIAM (Entra External ID) app registration and wire CIAM settings into the backend. Requires a CIAM tenant (ciam_tenant_id)."
+  type        = bool
+  default     = false
+}
+
+variable "ciam_tenant_id" {
+  description = "Tenant ID (GUID) of the Entra External ID (CIAM) directory the customer sign-up app is registered in. Pass via TF_VAR_ciam_tenant_id."
+  type        = string
+  default     = ""
+}
+
+variable "ciam_authority" {
+  description = "CIAM authority URL used by the SPA and backend token validation, e.g. https://contoso.ciamlogin.com/<ciam-tenant-guid>."
+  type        = string
+  default     = ""
+}
+
+variable "ciam_issuer" {
+  description = "Optional explicit CIAM token issuer. When empty the backend derives it from the authority (<authority>/v2.0)."
+  type        = string
+  default     = ""
+}
+
+variable "ciam_frontend_redirect_uris" {
+  description = "Additional SPA redirect URIs for the CIAM app registration (e.g. localhost for dev)."
+  type        = list(string)
+  default     = ["http://localhost:3000/"]
+}
