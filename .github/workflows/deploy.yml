@@ -60,6 +60,11 @@ jobs:
           VITE_AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           VITE_REDIRECT_URI: ${{ secrets.FRONTEND_URL }}
           VITE_API_BASE_URL: ${{ secrets.API_URL }}
+          # Entra External ID (CIAM) sign-in. Leave these secrets unset to
+          # ship with only the Microsoft work-account button (ciamEnabled is
+          # decided at build time from these values).
+          VITE_CIAM_AUTHORITY: ${{ secrets.CIAM_AUTHORITY }}
+          VITE_CIAM_CLIENT_ID: ${{ secrets.CIAM_CLIENT_ID }}
         run: npm run build
 
       - name: Deploy to Azure Static Web App
