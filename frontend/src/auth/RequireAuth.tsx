@@ -1,13 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
-import { loginRequest } from "./msalConfig";
+import { ciamEnabled } from "./msalConfig";
+import { loginWithCiam, loginWithMicrosoft } from "./instances";
 import { Button } from "../components/ui/button";
 import { getConfig } from "../api/config";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
   const isAuthenticated = useIsAuthenticated();
-  const { instance, inProgress } = useMsal();
+  const { inProgress } = useMsal();
   const [demoMode, setDemoMode] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -38,13 +39,27 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }
 
   if (!isAuthenticated) {
-    return <LoginScreen onSignIn={() => instance.loginRedirect(loginRequest)} />;
+    return (
+      <LoginScreen
+        onSignIn={loginWithMicrosoft}
+        onSignInCiam={loginWithCiam}
+        ciamEnabled={ciamEnabled}
+      />
+    );
   }
 
   return <>{children}</>;
 }
 
-function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
+function LoginScreen({
+  onSignIn,
+  onSignInCiam,
+  ciamEnabled,
+}: {
+  onSignIn: () => void;
+  onSignInCiam: () => void;
+  ciamEnabled: boolean;
+}) {
   return (
     <div className="flex min-h-screen flex-col bg-[hsl(var(--sidebar-background))] text-[hsl(var(--foreground))]">
       {/* Top bar (dark, sidebar color) -- logo lives here */}
@@ -126,7 +141,9 @@ function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
                     Welcome back
                   </h2>
                   <p className="text-sm text-[hsl(var(--muted-foreground))]">
-                    Sign in with your work account to access your tenant.
+                    {ciamEnabled
+                      ? "Sign in with your work account, or sign up with email or Google."
+                      : "Sign in with your work account to access your tenant."}
                   </p>
                 </div>
 
@@ -139,9 +156,32 @@ function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
                     <MicrosoftLogo className="h-4 w-4" />
                     Sign in with Microsoft
                   </Button>
-                  <p className="text-center text-xs text-[hsl(var(--muted-foreground))]">
-                    Single sign-on via Microsoft Entra ID
-                  </p>
+                  {ciamEnabled && (
+                    <>
+                      <div className="flex items-center gap-3 text-[10px] uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
+                        <span className="h-px flex-1 bg-[hsl(var(--border))]" />
+                        <span>or</span>
+                        <span className="h-px flex-1 bg-[hsl(var(--border))]" />
+                      </div>
+                      <Button
+                        size="lg"
+                        variant="outline"
+                        className="w-full gap-2"
+                        onClick={onSignInCiam}
+                      >
+                        <GoogleLogo className="h-4 w-4" />
+                        Sign up with email or Google
+                      </Button>
+                      <p className="text-center text-xs text-[hsl(var(--muted-foreground))]">
+                        For AWS &amp; GCP customers — no Azure account needed
+                      </p>
+                    </>
+                  )}
+                  {!ciamEnabled && (
+                    <p className="text-center text-xs text-[hsl(var(--muted-foreground))]">
+                      Single sign-on via Microsoft Entra ID
+                    </p>
+                  )}
                 </div>
 
                 <div className="my-6 flex items-center gap-3 text-[10px] uppercase tracking-wider text-[hsl(var(--muted-foreground))]">
@@ -185,6 +225,17 @@ function LoginScreen({ onSignIn }: { onSignIn: () => void }) {
         <span className="text-[hsl(var(--sidebar-muted))]">SOC2 · CIS · NIST · PCI · ISO · HIPAA ready</span>
       </footer>
     </div>
+  );
+}
+
+function GoogleLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 48 48" className={className} aria-hidden>
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+    </svg>
   );
 }
 

@@ -1,7 +1,9 @@
 import axios from "axios";
-import { msalInstance } from "../main";
-import { apiScopes } from "../auth/msalConfig";
 import { InteractionRequiredAuthError } from "@azure/msal-browser";
+import {
+  getActiveMsalInstance,
+  getActiveApiScopes,
+} from "../auth/instances";
 
 const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "/api",
@@ -11,6 +13,8 @@ const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use(async (config) => {
+  const msalInstance = getActiveMsalInstance();
+  const apiScopes = getActiveApiScopes();
   const accounts = msalInstance.getAllAccounts();
   if (accounts.length > 0) {
     try {

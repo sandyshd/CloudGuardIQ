@@ -1,8 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { PublicClientApplication, EventType } from "@azure/msal-browser";
 import { MsalProvider } from "@azure/msal-react";
-import { msalConfig } from "./auth/msalConfig";
+import {
+  getActiveMsalInstance,
+  initializeMsal,
+} from "./auth/instances";
 import App from "./App";
 import { ThemeProvider } from "./components/layout/ThemeProvider";
 import { DensityProvider } from "./components/layout/DensityProvider";
@@ -28,33 +30,12 @@ export const PENDING_CONSENT_CALLBACK_KEY = "cguardiq.pendingConsentCallback";
   }
 })();
 
-export const msalInstance = new PublicClientApplication(msalConfig);
+// The active MSAL instance reflects the persisted provider choice
+// (workforce or CIAM) and is stable for the lifetime of a page load.
+export const msalInstance = getActiveMsalInstance();
 
 async function startApp() {
-  await msalInstance.initialize();
-
-  try {
-    const response = await msalInstance.handleRedirectPromise();
-    if (response?.account) {
-      msalInstance.setActiveAccount(response.account);
-    }
-  } catch (error) {
-    console.error("Redirect error:", error);
-  }
-
-  const accounts = msalInstance.getAllAccounts();
-  if (accounts.length > 0 && !msalInstance.getActiveAccount()) {
-    msalInstance.setActiveAccount(accounts[0]);
-  }
-
-  msalInstance.addEventCallback((event) => {
-    if (event.eventType === EventType.LOGIN_SUCCESS && event.payload) {
-      const payload = event.payload as {
-        account: Parameters<typeof msalInstance.setActiveAccount>[0];
-      };
-      msalInstance.setActiveAccount(payload.account);
-    }
-  });
+  await initializeMsal();
 
   const root = document.getElementById("root");
   if (root) {
@@ -75,4 +56,3 @@ async function startApp() {
 }
 
 startApp();
-
