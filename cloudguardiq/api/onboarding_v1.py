@@ -23,7 +23,7 @@ from cloudguardiq.adapters.gcp.gcp_policy_compliance_adapter import (
     GCPPolicyComplianceAdapter,
 )
 from cloudguardiq.api import subscriptions as subscriptions_module
-from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
+from cloudguardiq.api.auth import TokenPayload, get_org_id, verify_token
 from cloudguardiq.core.config import Settings, get_settings
 from cloudguardiq.core.enums import CloudProvider as CloudProvider_enum
 from cloudguardiq.onboarding.audit_event_repository import (
@@ -332,13 +332,13 @@ def _to_v1_response(
 def _aws_session_key(user: TokenPayload, session_id: str) -> tuple[str, str]:
     """Return in-memory key for one tenant-scoped AWS onboarding session."""
 
-    return (get_tenant_id(user).lower(), session_id)
+    return (get_org_id(user).lower(), session_id)
 
 
 def _gcp_session_key(user: TokenPayload, session_id: str) -> tuple[str, str]:
     """Return in-memory key for one tenant-scoped GCP onboarding session."""
 
-    return (get_tenant_id(user).lower(), session_id)
+    return (get_org_id(user).lower(), session_id)
 
 
 def _aws_session_to_response(
@@ -595,7 +595,7 @@ async def _append_audit_event(
     if repo is None:
         return
     try:
-        tenant_id = get_tenant_id(user)
+        tenant_id = get_org_id(user)
         actor_id = user.oid or user.sub or ""
         await repo.append(
             AuditEventRecord(
@@ -630,7 +630,7 @@ async def _upsert_connection_and_credentials(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Cloud connection repository not configured",
         )
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     now = datetime.now(timezone.utc)
     rec = CloudConnectionRecord(
         connection_id=uuid.uuid4().hex,
@@ -686,7 +686,7 @@ async def _mirror_connected_scopes_for_operator(
         logger.warning("Subscriptions repository unavailable for mirror step: %s", exc)
         return
 
-    caller_tenant_id = get_tenant_id(user)
+    caller_tenant_id = get_org_id(user)
     for raw_scope in scopes:
         sub_id = raw_scope.strip().lower()
         if not sub_id:
@@ -739,7 +739,7 @@ async def _mirror_aws_account_for_operator(
         )
         return
 
-    caller_tenant_id = get_tenant_id(user)
+    caller_tenant_id = get_org_id(user)
     try:
         existing = await repo.get(caller_tenant_id, account_id)
         if existing is None:
@@ -790,7 +790,7 @@ async def _mirror_gcp_project_for_operator(
         )
         return
 
-    caller_tenant_id = get_tenant_id(user)
+    caller_tenant_id = get_org_id(user)
     try:
         existing = await repo.get(caller_tenant_id, project_id)
         if existing is None:
@@ -864,7 +864,7 @@ async def create_onboarding_session_v1(
                     "message": "target_scope.account_id must be a 12-digit AWS account id.",
                 },
             )
-        operator_tenant_id = get_tenant_id(user).lower()
+        operator_tenant_id = get_org_id(user).lower()
         session_id = uuid.uuid4().hex
         region = (body.target_scope.region or "us-east-1").strip().lower()
         if not re.match(r"^[a-z]{2}-[a-z]+-\d$", region):
@@ -906,7 +906,7 @@ async def create_onboarding_session_v1(
                     "message": "target_scope.project_id must be a valid GCP project id.",
                 },
             )
-        operator_tenant_id = get_tenant_id(user).lower()
+        operator_tenant_id = get_org_id(user).lower()
         session_id = uuid.uuid4().hex
         gcp_session = GcpOnboardingSession(
             session_id=session_id,
@@ -1316,7 +1316,7 @@ async def list_cloud_connections(user: TokenPayload = _auth) -> list[CloudConnec
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Cloud connection repository not configured",
         )
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     records = await repo.list(tenant_id)
     return [_connection_response(r) for r in records]
 
@@ -1337,7 +1337,7 @@ async def get_cloud_connection(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Cloud connection repository not configured",
         )
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     rec = await repo.get(tenant_id, connection_id)
     if rec is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
@@ -1360,7 +1360,7 @@ async def refresh_cloud_connection(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Cloud connection repository not configured",
         )
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     rec = await repo.get(tenant_id, connection_id)
     if rec is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
@@ -1403,7 +1403,7 @@ async def disconnect_cloud_connection(
             detail="Cloud connection repository not configured",
         )
 
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     rec = await conn_repo.get(tenant_id, connection_id)
     if rec is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")

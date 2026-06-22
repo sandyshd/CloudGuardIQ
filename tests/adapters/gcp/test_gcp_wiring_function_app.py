@@ -141,7 +141,7 @@ async def test_mirror_gcp_project_creates_subscription_record(
     fake_user.tenant_id = "operator-tenant"
     fake_user.tid = "operator-tenant"
     monkeypatch.setattr(
-        onboarding_v1, "get_tenant_id", lambda _u: "operator-tenant"
+        onboarding_v1, "get_org_id", lambda _u: "operator-tenant"
     )
 
     await onboarding_v1._mirror_gcp_project_for_operator(
@@ -185,7 +185,7 @@ async def test_mirror_gcp_project_restores_removed_record(monkeypatch) -> None:
         lambda: _StubRepo(),
     )
     monkeypatch.setattr(
-        onboarding_v1, "get_tenant_id", lambda _u: "operator-tenant"
+        onboarding_v1, "get_org_id", lambda _u: "operator-tenant"
     )
 
     await onboarding_v1._mirror_gcp_project_for_operator(
