@@ -12,6 +12,10 @@ from jwt import PyJWKClient
 from pydantic import BaseModel
 
 from cloudguardiq.core.config import get_settings
+from cloudguardiq.core.identity import (
+    ANONYMOUS_ORG_ID,
+    derive_org_id_from_tid,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +32,9 @@ class TokenPayload(BaseModel):
     sub: str
     aud: str = ""
     iss: str = ""
-    tid: str = ""  # Azure AD tenant id (multi-tenant scoping)
+    tid: str = ""  # Azure AD tenant id (Azure scan correlation only)
     oid: str = ""  # Object id (per-user audit log)
+    org_id: str = ""  # Canonical cloud-neutral customer/data scope
 
 
 def get_tenant_id(user: TokenPayload) -> str:
@@ -43,6 +48,30 @@ def get_tenant_id(user: TokenPayload) -> str:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Tenant id (tid) missing from token",
         )
+    return user.tid
+
+
+def get_org_id(user: TokenPayload) -> str:
+    """Return the canonical ``org_id`` (customer data scope) for *user*.
+
+    This is the value every customer-owned repository must scope by.
+    Raises HTTPException(401) when it cannot be resolved.
+    """
+    if not user.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="org_id missing from token",
+        )
+    return user.org_id
+
+
+def get_azure_tenant_id(user: TokenPayload) -> str:
+    """Return the Azure Entra ``tid`` for cross-tenant scan correlation.
+
+    Unlike :func:`get_org_id`, this is NOT a customer data scope; it is
+    used only to authenticate against the customer Azure tenant when
+    scanning their subscriptions. Empty for non-Azure (CIAM) logins.
+    """
     return user.tid
 
 
@@ -136,7 +165,9 @@ async def verify_token(
     settings = get_settings()
 
     if settings.auth_disabled:
-        return TokenPayload(sub="anonymous", tid="anonymous")
+        return TokenPayload(
+            sub="anonymous", tid="anonymous", org_id=ANONYMOUS_ORG_ID,
+        )
 
     if credentials is None:
         raise HTTPException(
@@ -174,10 +205,12 @@ async def verify_token(
             detail="Token verification failed",
         ) from None
 
+    tid = payload.get("tid", "")
     return TokenPayload(
         sub=payload.get("sub", ""),
         aud=payload.get("aud", ""),
         iss=payload.get("iss", ""),
-        tid=payload.get("tid", ""),
+        tid=tid,
         oid=payload.get("oid", ""),
+        org_id=derive_org_id_from_tid(tid),
     )

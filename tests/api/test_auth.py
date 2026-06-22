@@ -182,3 +182,62 @@ class TestGetSigningKeys:
         assert keys1 == keys2
         assert mock_jwk_cls.call_count == 1
         _jwks_cache.clear()
+
+
+class TestOrgIdentity:
+    @pytest.mark.asyncio
+    @patch("cloudguardiq.api.auth.get_settings")
+    async def test_auth_disabled_sets_anonymous_org_id(
+        self, mock_settings: MagicMock,
+    ) -> None:
+        from cloudguardiq.api.auth import verify_token
+        from cloudguardiq.core.identity import ANONYMOUS_ORG_ID
+
+        settings = MagicMock()
+        settings.auth_disabled = True
+        mock_settings.return_value = settings
+        payload = await verify_token(None)
+        assert payload.org_id == ANONYMOUS_ORG_ID
+
+    @pytest.mark.asyncio
+    @patch("cloudguardiq.api.auth._decode_token")
+    @patch("cloudguardiq.api.auth.get_settings")
+    async def test_valid_token_derives_org_id_from_tid(
+        self, mock_settings: MagicMock, mock_decode: MagicMock,
+    ) -> None:
+        from fastapi.security import HTTPAuthorizationCredentials
+
+        from cloudguardiq.api.auth import verify_token
+
+        settings = MagicMock()
+        settings.auth_disabled = False
+        settings.azure_client_id = _TEST_CLIENT_ID
+        settings.azure_tenant_id = _TEST_TENANT
+        mock_settings.return_value = settings
+        mock_decode.return_value = {
+            "sub": "u", "aud": _TEST_CLIENT_ID,
+            "iss": "iss", "tid": _TEST_TENANT, "oid": "oid-1",
+        }
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="x")
+        payload = await verify_token(creds)
+        assert payload.org_id == _TEST_TENANT
+        assert payload.tid == _TEST_TENANT
+
+    def test_get_org_id_returns_org_id(self) -> None:
+        from cloudguardiq.api.auth import TokenPayload, get_org_id
+
+        assert get_org_id(TokenPayload(sub="u", org_id="o-1")) == "o-1"
+
+    def test_get_org_id_missing_raises_401(self) -> None:
+        from fastapi import HTTPException
+
+        from cloudguardiq.api.auth import TokenPayload, get_org_id
+
+        with pytest.raises(HTTPException) as exc:
+            get_org_id(TokenPayload(sub="u"))
+        assert exc.value.status_code == 401
+
+    def test_get_azure_tenant_id_returns_tid(self) -> None:
+        from cloudguardiq.api.auth import TokenPayload, get_azure_tenant_id
+
+        assert get_azure_tenant_id(TokenPayload(sub="u", tid="t-9")) == "t-9"
