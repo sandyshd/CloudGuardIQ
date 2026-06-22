@@ -11,11 +11,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
 from pydantic import BaseModel
 
-from cloudguardiq.core.config import get_settings
+from cloudguardiq.core.config import Settings, get_settings
 from cloudguardiq.core.identity import (
     ANONYMOUS_ORG_ID,
     derive_org_id_from_tid,
 )
+from cloudguardiq.orgs.repository import OrgRecord, OrgRepository
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,131 @@ def _decode_token(
     raise jwt.InvalidTokenError("No valid signing key found")
 
 
+# Org identity store (Phase 2) -- resolves a stable org_id for CIAM logins.
+# Wired from the FastAPI startup hook via configure_auth(); unset by default
+# so Azure workforce auth is unaffected.
+_org_repo: OrgRepository | None = None
+
+
+def configure_auth(*, org_repository: OrgRepository | None) -> None:
+    """Wire the org identity store used to resolve CIAM ``org_id``.
+
+    Called from the application startup hook. When unset, CIAM tokens
+    cannot be provisioned and yield ``503``; Azure workforce tokens are
+    unaffected.
+    """
+    global _org_repo  # noqa: PLW0603
+    _org_repo = org_repository
+
+
+def _get_ciam_signing_keys(jwks_uri: str) -> list[Any]:
+    """Fetch and cache CIAM (Entra External ID) JWKS signing keys."""
+    cache_key = f"ciam::{jwks_uri}"
+    if cache_key not in _jwks_cache:
+        client = PyJWKClient(jwks_uri)
+        _jwks_cache[cache_key] = client.get_signing_keys()
+    return _jwks_cache[cache_key]
+
+
+def _is_ciam_issuer(iss: str, settings: Settings) -> bool:
+    """Return ``True`` when *iss* identifies a CIAM (External ID) token."""
+    if not iss:
+        return False
+    if (
+        settings.ciam_effective_issuer
+        and iss == settings.ciam_effective_issuer
+    ):
+        return True
+    return "ciamlogin.com" in iss
+
+
+def _decode_ciam_token(token: str, settings: Settings) -> dict[str, Any]:
+    """Decode and validate a CIAM JWT against the External ID JWKS.
+
+    Validates signature, audience (``ciam_client_id``) and issuer
+    (``ciam_effective_issuer``). Raises a :mod:`jwt` error on failure.
+    """
+    signing_keys = _get_ciam_signing_keys(settings.ciam_jwks_uri)
+    issuer = settings.ciam_effective_issuer
+    audience = settings.ciam_client_id
+    last_error: Exception | None = None
+    for key in signing_keys:
+        try:
+            decoded: dict[str, Any] = jwt.decode(
+                token,
+                key.key,
+                algorithms=["RS256"],
+                audience=audience,
+                issuer=issuer,
+            )
+            return decoded
+        except jwt.InvalidSignatureError:
+            continue
+        except jwt.InvalidTokenError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise jwt.InvalidTokenError("No valid CIAM signing key found")
+
+
+async def _provision_org_from_ciam(payload: dict[str, Any]) -> OrgRecord:
+    """Resolve (creating if new) the org record for a CIAM identity."""
+    if _org_repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Org identity store not configured",
+        )
+    email = str(
+        payload.get("email") or payload.get("preferred_username") or "",
+    )
+    return await _org_repo.provision(
+        issuer=str(payload.get("iss", "")),
+        subject=str(payload.get("sub", "")),
+        email=email,
+    )
+
+
+async def _verify_ciam_token(token: str, settings: Settings) -> TokenPayload:
+    """Validate a CIAM token and resolve its canonical ``org_id``.
+
+    CIAM logins have no customer Azure tenant, so ``tid`` is left empty
+    and the data scope comes solely from the provisioned ``org_id``.
+    """
+    try:
+        payload = _decode_ciam_token(token, settings)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+        ) from None
+    except (jwt.InvalidAudienceError, jwt.InvalidIssuerError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token claims: {exc}",
+        ) from None
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {exc}",
+        ) from None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("CIAM token verification failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token verification failed",
+        ) from None
+
+    org = await _provision_org_from_ciam(payload)
+    return TokenPayload(
+        sub=str(payload.get("sub", "")),
+        aud=str(payload.get("aud", "")),
+        iss=str(payload.get("iss", "")),
+        tid="",
+        oid=str(payload.get("oid", "")),
+        org_id=org.org_id,
+    )
+
+
 async def verify_token(
     credentials: HTTPAuthorizationCredentials | None = _bearer_dep,
 ) -> TokenPayload:
@@ -179,6 +305,19 @@ async def verify_token(
         )
 
     token = credentials.credentials
+
+    if settings.ciam_enabled:
+        unverified: dict[str, Any] = {}
+        try:
+            unverified = jwt.decode(
+                token, options={"verify_signature": False},
+            )
+        except jwt.InvalidTokenError:
+            unverified = {}
+        if _is_ciam_issuer(
+            str(unverified.get("iss") or "").strip(), settings,
+        ):
+            return await _verify_ciam_token(token, settings)
 
     try:
         payload = _decode_token(

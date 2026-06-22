@@ -37,6 +37,7 @@ from cloudguardiq.adapters.rules.azure.storage import (
     StorageHttpsOnlyRule,
     StoragePublicAccessRule,
 )
+from cloudguardiq.api import auth as auth_module
 from cloudguardiq.api import billing as billing_module
 from cloudguardiq.api import subscriptions as subscriptions_module
 from cloudguardiq.api.auth import TokenPayload, get_org_id, verify_token
@@ -98,6 +99,7 @@ from cloudguardiq.finops.unit_economics import (
 from cloudguardiq.onboarding.audit_event_repository import AuditEventRepository
 from cloudguardiq.onboarding.cloud_connection_repository import CloudConnectionRepository
 from cloudguardiq.onboarding.credential_ref_repository import CredentialRefRepository
+from cloudguardiq.orgs.repository import OrgRepository
 from cloudguardiq.pipeline.scan_pipeline import ScanPipeline
 from cloudguardiq.policy.engine import (
     PolicyEngine,
@@ -235,6 +237,12 @@ async def lifespan(
         settings,
         cosmos_db=_repo._db if _repo is not None else None,
     )
+    auth_module.configure_auth(
+        org_repository=OrgRepository(
+            settings,
+            cosmos_db=_repo._db if _repo is not None else None,
+        ),
+    )
     subscriptions_module.configure(
         repository=_subs_repo,
         billing_repository=_billing_repo,
@@ -332,6 +340,13 @@ subscriptions_module.configure(
     settings=get_settings(),
     consent_repository=_bootstrap_consent_repo,
     onboarding_session_repository=_bootstrap_onboarding_session_repo,
+)
+
+# Wire the org identity store (in-memory) so tests that never run
+# lifespan can still validate CIAM tokens. Lifespan swaps in the
+# Cosmos-backed repo.
+auth_module.configure_auth(
+    org_repository=OrgRepository(get_settings(), cosmos_db=None),
 )
 
 # Billing routes
