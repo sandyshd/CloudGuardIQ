@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from cloudguardiq.core.config import Settings
+from cloudguardiq.core.enums import CloudProvider
 from cloudguardiq.subscriptions.repository import (
     SubscriptionRecord,
     SubscriptionsRepository,
@@ -81,3 +82,46 @@ async def test_repo_list_returns_only_own_tenant(repo: SubscriptionsRepository) 
     b = await repo.list("B")
     assert {r.tenant_id for r in a} == {"A"}
     assert {r.tenant_id for r in b} == {"B"}
+
+
+def test_aws_role_fields_default_empty() -> None:
+    """New records default the AWS assume-role fields to empty strings."""
+    rec = SubscriptionRecord(
+        tenant_id="A",
+        subscription_id="123456789012",
+    )
+    assert rec.aws_role_arn == ""
+    assert rec.aws_external_id == ""
+
+
+def test_aws_role_fields_round_trip() -> None:
+    """aws_role_arn / aws_external_id survive a to_document/from_document cycle."""
+    rec = SubscriptionRecord(
+        tenant_id="A",
+        subscription_id="123456789012",
+        provider=CloudProvider.AWS,
+        aws_account_id="123456789012",
+        aws_region="us-east-1",
+        aws_role_arn="arn:aws:iam::123456789012:role/CloudGuardIQScanner",
+        aws_external_id="cgiq-abc123",
+    )
+    doc = rec.to_document()
+    assert doc["aws_role_arn"] == "arn:aws:iam::123456789012:role/CloudGuardIQScanner"
+    assert doc["aws_external_id"] == "cgiq-abc123"
+
+    restored = SubscriptionRecord.from_document(doc)
+    assert restored.aws_role_arn == rec.aws_role_arn
+    assert restored.aws_external_id == rec.aws_external_id
+
+
+def test_from_document_missing_aws_role_fields_defaults_empty() -> None:
+    """Legacy documents without the AWS assume-role keys deserialise to ''."""
+    legacy = {
+        "tenant_id": "A",
+        "subscription_id": "123456789012",
+        "provider": "AWS",
+        "aws_account_id": "123456789012",
+    }
+    restored = SubscriptionRecord.from_document(legacy)
+    assert restored.aws_role_arn == ""
+    assert restored.aws_external_id == ""

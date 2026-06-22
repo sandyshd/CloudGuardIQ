@@ -36,6 +36,12 @@ class SubscriptionRecord(BaseModel):
     # AWS-specific fields. Empty for non-AWS rows.
     aws_account_id: str = ""
     aws_region: str = ""
+    # AWS cross-account assume-role wiring (Phase 1 storage layer). The
+    # control plane assumes ``aws_role_arn`` using ``aws_external_id`` as the
+    # STS ExternalId. Empty until the onboarding flow persists them; no
+    # runtime consumer yet (behaviour-neutral).
+    aws_role_arn: str = ""
+    aws_external_id: str = ""
     # GCP-specific field. Empty for non-GCP rows.
     gcp_project_id: str = ""
     # The Azure tenant that owns this subscription. For self-service in
@@ -70,6 +76,8 @@ class SubscriptionRecord(BaseModel):
             "provider": self.provider.value,
             "aws_account_id": self.aws_account_id,
             "aws_region": self.aws_region,
+            "aws_role_arn": self.aws_role_arn,
+            "aws_external_id": self.aws_external_id,
             "gcp_project_id": self.gcp_project_id,
             "display_name": self.display_name,
             "state": self.state,
@@ -111,6 +119,8 @@ class SubscriptionRecord(BaseModel):
             provider=provider_enum,
             aws_account_id=str(doc.get("aws_account_id", "") or ""),
             aws_region=str(doc.get("aws_region", "") or ""),
+            aws_role_arn=str(doc.get("aws_role_arn", "") or ""),
+            aws_external_id=str(doc.get("aws_external_id", "") or ""),
             gcp_project_id=str(doc.get("gcp_project_id", "") or ""),
             display_name=str(doc.get("display_name", "")),
             state=str(doc.get("state", "Enabled")),
