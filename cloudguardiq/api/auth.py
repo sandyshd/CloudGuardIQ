@@ -57,12 +57,15 @@ def get_org_id(user: TokenPayload) -> str:
     This is the value every customer-owned repository must scope by.
     Raises HTTPException(401) when it cannot be resolved.
     """
-    if not user.org_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="org_id missing from token",
-        )
-    return user.org_id
+    if user.org_id:
+        return user.org_id
+    if user.tid:
+        # Entra workforce identities derive org_id verbatim from tid.
+        return derive_org_id_from_tid(user.tid)
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="org_id missing from token",
+    )
 
 
 def get_azure_tenant_id(user: TokenPayload) -> str:

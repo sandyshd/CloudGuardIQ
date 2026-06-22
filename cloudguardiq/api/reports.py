@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 
-from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
+from cloudguardiq.api.auth import TokenPayload, get_org_id, verify_token
 from cloudguardiq.core.config import get_settings
 from cloudguardiq.core.observability import bind_context
 from cloudguardiq.reports.models import ReportRecord
@@ -81,7 +81,7 @@ async def generate_report(
     bind_context(subscription_id=sub_id, provider="azure")
 
     settings = get_settings()
-    tenant_id_filter = None if settings.auth_disabled else get_tenant_id(user)
+    tenant_id_filter = None if settings.auth_disabled else get_org_id(user)
     tenant_id_persist = "" if settings.auth_disabled else (tenant_id_filter or "")
     generated_by = user.oid or user.sub or ""
 
@@ -133,7 +133,7 @@ async def list_reports(
     service = _require_service()
     sub_id = await _validate_owned_subscription(user, subscription_id)
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     records = await service.list_for_subscription(
         subscription_id=sub_id,
         tenant_id=tenant_id,
@@ -160,7 +160,7 @@ async def download_report(
     await _validate_owned_subscription(user, record.subscription_id)
     settings = get_settings()
     if not settings.auth_disabled:
-        tenant_id = get_tenant_id(user)
+        tenant_id = get_org_id(user)
         if record.tenant_id and record.tenant_id != tenant_id:
             raise HTTPException(status_code=404, detail="Report not found")
 

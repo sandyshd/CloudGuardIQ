@@ -39,7 +39,7 @@ from cloudguardiq.adapters.rules.azure.storage import (
 )
 from cloudguardiq.api import billing as billing_module
 from cloudguardiq.api import subscriptions as subscriptions_module
-from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
+from cloudguardiq.api.auth import TokenPayload, get_org_id, verify_token
 from cloudguardiq.auth.customer_credential import build_default_factory
 from cloudguardiq.billing.middleware import TierEnforcementMiddleware
 from cloudguardiq.billing.pricing import (
@@ -158,7 +158,7 @@ async def _validate_owned_subscription(
     settings = get_settings()
     if settings.auth_disabled:
         return subscription_id.lower()
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     repo = subscriptions_module._repository  # noqa: SLF001
     if repo is None:
         logger.warning(
@@ -734,7 +734,7 @@ async def _enforce_scan_frequency(
     settings = get_settings()
     if settings.auth_disabled or _billing_repo is None:
         return
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     repo = get_repo()
     quota = await check_scan_frequency_quota(
         tenant_id,
@@ -837,7 +837,7 @@ async def trigger_scan(
     await _validate_owned_subscription(user, request.subscription_id)
     await _enforce_scan_frequency(user, request.subscription_id)
 
-    tenant_id = "" if get_settings().auth_disabled else get_tenant_id(user)
+    tenant_id = "" if get_settings().auth_disabled else get_org_id(user)
     requested_by = str(getattr(user, "oid", "") or "")
     scan_id = str(uuid.uuid4())
     queued_at = datetime.now(timezone.utc)
@@ -1068,7 +1068,7 @@ async def _scan_subscription_impl(
 
     settings_obj = get_settings()
     tenant_id_for_scan = (
-        "" if settings_obj.auth_disabled else get_tenant_id(user)
+        "" if settings_obj.auth_disabled else get_org_id(user)
     )
 
     repo = get_repo()
@@ -1165,7 +1165,7 @@ async def list_findings(
         sub_id = await _validate_owned_subscription(user, subscription_id)
         bind_context(subscription_id=sub_id, provider="azure")
     settings = get_settings()
-    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = None if settings.auth_disabled else get_org_id(user)
     if repo is not None and sub_id:
         try:
             findings = await repo.get_findings(
@@ -1213,7 +1213,7 @@ async def get_commitment_coverage(
     if repo is None:
         return empty
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     try:
         records = await repo.get_focus_records(
             sub_id,
@@ -1250,7 +1250,7 @@ async def get_spend_forecast(
     if repo is None:
         return []
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     try:
         records = await repo.get_focus_records(
             sub_id,
@@ -1288,7 +1288,7 @@ async def get_cost_allocation(
     if repo is None:
         return empty
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     try:
         records = await repo.get_focus_records(
             sub_id,
@@ -1323,7 +1323,7 @@ async def get_tag_coverage(
     if repo is None:
         return {}
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     try:
         records = await repo.get_focus_records(
             sub_id,
@@ -1359,7 +1359,7 @@ async def get_spend_anomalies(
     if repo is None:
         return []
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     try:
         records = await repo.get_focus_records(
             sub_id,
@@ -1397,7 +1397,7 @@ async def get_unit_economics(
     if repo is None:
         return empty
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     try:
         records = await repo.get_focus_records(
             sub_id,
@@ -1427,7 +1427,7 @@ async def list_budgets(
     if repo is None:
         return []
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     sub_id = ""
     if subscription_id:
         sub_id = await _validate_owned_subscription(user, subscription_id)
@@ -1450,7 +1450,7 @@ async def create_budget(
     against tenant ownership when present.
     """
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     if body.subscription_id:
         body.subscription_id = await _validate_owned_subscription(
             user, body.subscription_id
@@ -1477,7 +1477,7 @@ async def delete_budget(
 ) -> Response:
     """Delete a budget owned by the caller's tenant."""
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     repo = get_repo()
     if repo is None:
         raise HTTPException(status_code=503, detail="Storage unavailable")
@@ -1512,7 +1512,7 @@ async def get_budget_status(
     if repo is None:
         return []
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     try:
         budgets = await repo.list_budgets(tenant_id, subscription_id=sub_id)
         records = await repo.get_focus_records(
@@ -1545,7 +1545,7 @@ async def list_resources(
         sub_id = await _validate_owned_subscription(user, subscription_id)
         bind_context(subscription_id=sub_id, provider="azure")
     settings = get_settings()
-    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = None if settings.auth_disabled else get_org_id(user)
     if repo is not None and sub_id:
         try:
             return await repo.get_snapshots(
@@ -1576,7 +1576,7 @@ async def get_finding(
     if subscription_id:
         sub_id = await _validate_owned_subscription(user, subscription_id)
     settings = get_settings()
-    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = None if settings.auth_disabled else get_org_id(user)
     if repo is not None:
         try:
             finding = await repo.get_finding(
@@ -1620,7 +1620,7 @@ async def _mutate_finding_status(
     delegates to the repository's atomic update method."""
     sub_id = await _validate_owned_subscription(user, body.subscription_id)
     settings = get_settings()
-    tenant_id = "" if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = "" if settings.auth_disabled else get_org_id(user)
     bind_context(subscription_id=sub_id, provider="azure")
 
     repo = get_repo()
@@ -1735,7 +1735,7 @@ async def generate_finding_remediation(
     repo = get_repo()
 
     # --- Plan quota: AI remediations per calendar month ---------------
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     if _billing_repo is not None:
         quota = await check_ai_quota(
             tenant_id, billing_repo=_billing_repo, usage_repo=_usage_repo,
@@ -1894,7 +1894,7 @@ async def _providers_for_scope(
         repo = subscriptions_module._repository  # noqa: SLF001
         if repo is None:
             return None
-        tenant_id = get_tenant_id(user)
+        tenant_id = get_org_id(user)
         record = await repo.get(tenant_id, subscription_id.lower())
         if record is None:
             return None
@@ -1939,7 +1939,7 @@ async def get_compliance_scorecard(
         sub_id = await _validate_owned_subscription(user, subscription_id)
         bind_context(subscription_id=sub_id, provider="azure")
     settings = get_settings()
-    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = None if settings.auth_disabled else get_org_id(user)
 
     findings: list[FindingResult] = []
     if repo is not None and sub_id:
@@ -1993,7 +1993,7 @@ async def get_posture_score(
         sub_id = await _validate_owned_subscription(user, subscription_id)
         bind_context(subscription_id=sub_id, provider="azure")
     settings = get_settings()
-    tenant_id = None if settings.auth_disabled else get_tenant_id(user)
+    tenant_id = None if settings.auth_disabled else get_org_id(user)
 
     findings: list[FindingResult] = []
     if repo is not None and sub_id:

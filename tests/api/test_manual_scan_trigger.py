@@ -53,7 +53,7 @@ async def test_trigger_scan_keeps_queued_when_queue_not_configured() -> None:
         patch("cloudguardiq.api.main._enforce_scan_frequency"),
         patch("cloudguardiq.api.main.bind_context"),
         patch("cloudguardiq.api.main.get_settings") as mock_settings,
-        patch("cloudguardiq.api.main.get_tenant_id") as mock_tenant_id,
+        patch("cloudguardiq.api.main.get_org_id") as mock_tenant_id,
         patch("cloudguardiq.api.main.os.environ.get") as mock_env_get,
     ):
         mock_settings.return_value.auth_disabled = False
@@ -121,7 +121,7 @@ async def test_trigger_scan_enqueues_with_camelcase_fqns_env() -> None:
         patch("cloudguardiq.api.main._enforce_scan_frequency"),
         patch("cloudguardiq.api.main.bind_context"),
         patch("cloudguardiq.api.main.get_settings") as mock_settings,
-        patch("cloudguardiq.api.main.get_tenant_id") as mock_tenant_id,
+        patch("cloudguardiq.api.main.get_org_id") as mock_tenant_id,
         patch("cloudguardiq.api.main.os.environ.get") as mock_env_get,
         patch(
             "azure.identity.aio.DefaultAzureCredential",
