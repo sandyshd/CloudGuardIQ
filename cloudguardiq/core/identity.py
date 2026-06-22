@@ -19,6 +19,8 @@ used as the customer data scope.
 
 from __future__ import annotations
 
+import uuid
+
 from pydantic import BaseModel
 
 #: Sentinel ``org_id`` used when authentication is disabled (local/dev).
@@ -36,6 +38,20 @@ def derive_org_id_from_tid(tid: str) -> str:
     :returns: The canonical ``org_id`` string.
     """
     return tid.strip()
+
+
+def mint_org_id() -> str:
+    """Return a fresh, provider-independent ``org_id``.
+
+    Used the first time a Microsoft Entra External ID (CIAM) user
+    signs in. AWS/GCP-only customers have no Azure tenant to derive a
+    scope from, so a new opaque 32-char hex GUID is minted and stored
+    in the org record. Subsequent logins resolve the same ``org_id``
+    from that record.
+
+    :returns: A new 32-character hexadecimal ``org_id``.
+    """
+    return uuid.uuid4().hex
 
 
 class OrgIdentity(BaseModel):

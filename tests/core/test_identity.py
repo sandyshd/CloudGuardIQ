@@ -6,6 +6,7 @@ from cloudguardiq.core.identity import (
     ANONYMOUS_ORG_ID,
     OrgIdentity,
     derive_org_id_from_tid,
+    mint_org_id,
 )
 
 
@@ -38,3 +39,13 @@ def test_org_identity_full() -> None:
     )
     assert ident.azure_tenant_id == "t-1"
     assert ident.object_id == "oid-1"
+
+
+def test_mint_org_id_is_32_hex() -> None:
+    org_id = mint_org_id()
+    assert len(org_id) == 32
+    int(org_id, 16)  # raises if not hex
+
+
+def test_mint_org_id_is_unique() -> None:
+    assert mint_org_id() != mint_org_id()

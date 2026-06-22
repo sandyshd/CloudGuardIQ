@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     cosmos_container_audit_events: str = "audit_events"
     cosmos_container_focus_costs: str = "focus_costs"
     cosmos_container_budgets: str = "budgets"
+    cosmos_container_orgs: str = "orgs"
 
     # Azure OpenAI
     azure_openai_endpoint: str = ""
@@ -89,6 +90,23 @@ class Settings(BaseSettings):
 
     # Authentication
     auth_disabled: bool = False
+
+    # Authentication provider. ``entra_workforce`` (default) validates
+    # Azure AD work/school tokens. ``entra_external_id`` additionally
+    # accepts Microsoft Entra External ID (CIAM) tokens so AWS/GCP-only
+    # customers can sign up without an Azure tenant. Both providers can
+    # be active at once -- tokens are routed by their ``iss`` claim.
+    auth_provider: str = "entra_workforce"
+
+    # Microsoft Entra External ID (CIAM) -- Phase 2. ``ciam_authority``
+    # is the tenant authority, e.g.
+    # ``https://contoso.ciamlogin.com/<tenant-guid>``. ``ciam_client_id``
+    # is the API application (audience) the SPA requests a token for.
+    ciam_authority: str = ""
+    ciam_client_id: str = ""
+    # Optional explicit issuer override; derived as
+    # ``{ciam_authority}/v2.0`` when empty.
+    ciam_issuer: str = ""
 
     # Stripe billing
     stripe_api_key: str = ""
@@ -131,6 +149,27 @@ class Settings(BaseSettings):
     azure_storage_account_url: str = ""
     reports_blob_container: str = "cloudguardiq-reports"
 
+
+    @property
+    def ciam_enabled(self) -> bool:
+        """Return ``True`` when CIAM (Entra External ID) is configured."""
+        return bool(self.ciam_authority and self.ciam_client_id)
+
+    @property
+    def ciam_jwks_uri(self) -> str:
+        """Return the CIAM JWKS endpoint derived from ``ciam_authority``."""
+        if not self.ciam_authority:
+            return ""
+        return f"{self.ciam_authority.rstrip('/')}/discovery/v2.0/keys"
+
+    @property
+    def ciam_effective_issuer(self) -> str:
+        """Return the expected CIAM token issuer (``iss`` claim)."""
+        if self.ciam_issuer:
+            return self.ciam_issuer
+        if not self.ciam_authority:
+            return ""
+        return f"{self.ciam_authority.rstrip('/')}/v2.0"
 
 @lru_cache
 def get_settings() -> Settings:
