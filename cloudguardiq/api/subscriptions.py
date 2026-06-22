@@ -20,7 +20,12 @@ from cloudguardiq.adapters.access_probe import (
     AccessProbeResult,
     probe_subscription_access,
 )
-from cloudguardiq.api.auth import TokenPayload, get_tenant_id, verify_token
+from cloudguardiq.api.auth import (
+    TokenPayload,
+    get_azure_tenant_id,
+    get_org_id,
+    verify_token,
+)
 from cloudguardiq.api.onboarding import OnboardingInfo
 from cloudguardiq.auth.graph_principal_resolver import (
     PrincipalLookupError,
@@ -306,7 +311,7 @@ async def list_subscriptions(
     user: TokenPayload = _auth,
 ) -> list[SubscriptionResponse]:
     """Return subscriptions visible to the caller tenant."""
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     repo = _get_repo()
     records = await repo.list(tenant_id)
 
@@ -367,7 +372,7 @@ async def add_subscription(
     Enforces the per-tier cap. The route returns ``402 upgrade_required``
     when the tenant is at its plan limit.
     """
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_azure_tenant_id(user)
     raw_customer_tid = (body.customer_tenant_id or tenant_id).strip()
     customer_tid = (
         raw_customer_tid.lower()
@@ -529,7 +534,7 @@ async def patch_subscription(
     user: TokenPayload = _auth,
 ) -> Any:
     """Rename or enable/disable a linked subscription."""
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     repo = _get_repo()
     rec = await repo.get(tenant_id, subscription_id.lower())
     if rec is None:
@@ -553,7 +558,7 @@ async def delete_subscription(
     user: TokenPayload = _auth,
 ) -> None:
     """Unlink a subscription from the caller's tenant."""
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     repo = _get_repo()
     existed = await repo.delete(tenant_id, subscription_id.lower())
     if not existed:
@@ -638,7 +643,7 @@ async def _get_session_or_404(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Onboarding session repository not configured",
         )
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     session = await repo.get(tenant_id, session_id)
     if session is None:
         raise HTTPException(
@@ -724,12 +729,12 @@ async def create_onboarding_session(
             },
         )
 
-    tenant_id = get_tenant_id(user)
+    tenant_id = get_org_id(user)
     settings = _get_settings()
     consent_repo = _get_consent_repo()
     has_consent = (
         settings.auth_disabled
-        or customer_tid == tenant_id.lower()
+        or customer_tid == get_azure_tenant_id(user).lower()
         or (
             consent_repo is not None
             and await consent_repo.has_active_consent(customer_tid)
@@ -951,7 +956,7 @@ async def consent_callback(
     )
 
     onboarding_repo = _get_onboarding_repo()
-    caller_tid = get_tenant_id(user)
+    caller_tid = get_org_id(user)
     if onboarding_repo is not None and state:
         session = await onboarding_repo.get(caller_tid, state.strip())
         if session is not None:
@@ -1295,7 +1300,7 @@ async def discover_subscriptions(
     Reader role assignment is found yet -- the response includes the
     deploy URL so the frontend can surface it inline.
     """
-    caller_tid = get_tenant_id(user)
+    caller_tid = get_azure_tenant_id(user)
     customer_tid = (tenant_id or caller_tid).strip().lower()
     settings = _get_settings()
 
@@ -1499,7 +1504,7 @@ async def get_onboarding_template(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="scope must be 'subscription' or 'managementGroup'.",
         )
-    caller_tid = get_tenant_id(user)
+    caller_tid = get_azure_tenant_id(user)
     customer_tid = (tenant_id or caller_tid).strip().lower()
     settings = _get_settings()
     template_uri = _resolve_template_uri(settings)
@@ -1561,7 +1566,7 @@ async def get_available_initiatives(
     ``definition_id`` values are exactly what the Deploy-to-Azure flow
     assigns when ``assign_frameworks`` is used.
     """
-    caller_tid = get_tenant_id(user)
+    caller_tid = get_azure_tenant_id(user)
     customer_tid = (tenant_id or caller_tid).strip().lower()
     initiatives = await _resolve_available_initiatives(
         customer_tid=customer_tid,
